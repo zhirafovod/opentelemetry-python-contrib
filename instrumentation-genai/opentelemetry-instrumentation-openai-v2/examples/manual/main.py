@@ -4,25 +4,32 @@ import os
 from openai import OpenAI
 
 # NOTE: OpenTelemetry Python Logs and Events APIs are in beta
-from opentelemetry import _events, _logs, trace
+from opentelemetry import _events, _logs, trace, metrics
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
     OTLPLogExporter,
 )
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
     OTLPSpanExporter,
 )
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+
 from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
 from opentelemetry.sdk._events import EventLoggerProvider
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
 # configure tracing
 trace.set_tracer_provider(TracerProvider())
 trace.get_tracer_provider().add_span_processor(
     BatchSpanProcessor(OTLPSpanExporter())
 )
+
+metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter())
+metrics.set_meter_provider(MeterProvider(metric_readers=[metric_reader]))
 
 # configure logging and events
 _logs.set_logger_provider(LoggerProvider())
