@@ -91,7 +91,6 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         elapsed = time.time() - self.spans[run_id].start_time
         attributes = {
             GenAI.GEN_AI_SYSTEM: "langchain",
-            # If you have an official "LANGCHAIN" enum, use that. Else just store as string.
         }
         if model_name:
              attributes[GenAI.GEN_AI_RESPONSE_MODEL] = model_name
