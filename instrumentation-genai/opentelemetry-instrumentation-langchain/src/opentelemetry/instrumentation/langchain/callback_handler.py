@@ -94,9 +94,9 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             # If you have an official "LANGCHAIN" enum, use that. Else just store as string.
         }
         if model_name:
-            attributes[GenAI.GEN_AI_RESPONSE_MODEL] = model_name
+             attributes[GenAI.GEN_AI_RESPONSE_MODEL] = model_name
 
-        self._duration_histogram.record(value=elapsed, attributes=attributes)
+        self._duration_histogram.record(elapsed, attributes=attributes)
 
     def _record_token_usage(self, token_count: int, model_name: Optional[str], token_type: str):
         """
@@ -209,6 +209,16 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         if not state:
             return
 
+        finish_reasons = []
+        for generation in getattr(response, "generations", []):
+            for chat_generation in generation:
+                generation_info = chat_generation.generation_info
+                if generation_info is not None:
+                    finish_reason = generation_info.get("finish_reason")
+                    if finish_reason is not None and state.span.is_recording():
+                        finish_reasons.append(finish_reason or "error")
+        state.span.set_attribute(GenAI.GEN_AI_RESPONSE_FINISH_REASONS, finish_reasons)
+
         # If the LLM result includes usage:
         if response.llm_output is not None:
             model_name = response.llm_output.get("model_name") or response.llm_output.get("model")
@@ -216,6 +226,10 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                 state.span.set_attribute(GenAI.GEN_AI_RESPONSE_MODEL, model_name)
                 if state.request_model is None:
                     state.span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, model_name)
+
+            response_id = response.llm_output.get("id")
+            if response_id and state.span.is_recording():
+                state.span.set_attribute(GenAI.GEN_AI_RESPONSE_ID, response_id)
 
             # usage
             usage = response.llm_output.get("usage") or response.llm_output.get("token_usage")
@@ -233,14 +247,6 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                 # Record metrics
                 self._record_token_usage(prompt_tokens, model_name, GenAI.GenAiTokenTypeValues.INPUT.value)
                 self._record_token_usage(completion_tokens, model_name, GenAI.GenAiTokenTypeValues.COMPLETION.value)
-
-            # Record final content, if desired:
-            if should_collect_content():
-                # We'll store the output text
-                for i, generations in enumerate(response.generations):
-                    for gen in generations:
-                        if gen.text:
-                            state.span.set_attribute(f"langchain.completions.{i}", gen.text)
 
         # End the LLM span
         self._end_span(run_id)
@@ -269,7 +275,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         name = serialized.get("name") or kwargs.get("name") or "ChatLLM"
         span = self._start_span(
             name=f"{name}.chat",
-            kind=SpanKind.SERVER,
+            kind=SpanKind.CLIENT,
             parent_run_id=parent_run_id,
         )
         span_state = _SpanState(span=span, span_context=get_current())
@@ -278,14 +284,9 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         if parent_run_id is not None and parent_run_id in self.spans:
             self.spans[parent_run_id].children.append(run_id)
 
-        if should_collect_content():
-            # record each message’s content and role
-            idx = 0
-            for message_list in messages:
-                for m in message_list:
-                    span.set_attribute(f"langchain.chat_prompts.{idx}.role", m.type)
-                    span.set_attribute(f"langchain.chat_prompts.{idx}.content", m.content)
-                    idx += 1
+        span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.CHAT.value)
+        # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
+        span.set_attribute(GenAI.GEN_AI_SYSTEM, "langchain")
 
     @dont_throw
     def on_tool_start(

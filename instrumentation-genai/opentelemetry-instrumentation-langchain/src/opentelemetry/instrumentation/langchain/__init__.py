@@ -58,12 +58,12 @@ class LangChainInstrumentor(BaseInstrumentor):
 
         # Create shared metrics: a duration histogram and a token-usage histogram
         duration_histogram = meter.create_histogram(
-            name="genai.langchain.operation_duration",
+            name="gen_ai.client.operation_duration",
             unit="s",
             description="Duration of LLM/Chain/Tool operations within LangChain",
         )
         token_histogram = meter.create_histogram(
-            name="genai.langchain.token_usage",
+            name="gen_ai.client.token_usage",
             unit="token",
             description="Number of input and output tokens used by LLMs in LangChain",
         )
