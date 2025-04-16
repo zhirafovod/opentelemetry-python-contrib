@@ -51,9 +51,12 @@ def test_langchain_call(
     # TODO: fix the cod to ensure we emit 2 correct logs
     # assert len(logs) == 2
 
+    # TODO: metrics - we should get 2 metrics
 
 ### Utils ###
 # TDDO: modify to do the correct assertion. This is a copy paste from the openai
+# We should get the same telemetry from the openai and langchain, with the only difference that
+# gen_ai.system is either 'openai' or 'langchain'
 def assert_completion_attributes(
     span: ReadableSpan,
     request_model: str,
