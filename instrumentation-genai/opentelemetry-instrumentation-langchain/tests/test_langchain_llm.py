@@ -25,7 +25,7 @@ from opentelemetry.semconv._incubating.metrics import gen_ai_metrics
 # fixtures deinfed in conftest.py
 @pytest.mark.vcr()
 def test_langchain_call(
-    span_exporter, log_exporter, openai_client, instrument_no_content
+    span_exporter, log_exporter, openai_client, instrument_with_content
 ):
     llm_model_value = "gpt-3.5-turbo"
     llm = ChatOpenAI(model=llm_model_value)
@@ -38,6 +38,7 @@ def test_langchain_call(
     response = llm.invoke(messages)
     assert response.content == "The capital of France is Paris."
 
+    # verify spans
     spans = span_exporter.get_finished_spans()
     print(f"spans: {spans}")
     for span in spans:
@@ -46,10 +47,32 @@ def test_langchain_call(
     # TODO: fix the code and ensure the assertions are correct
     assert_completion_attributes(spans[0], llm_model_value, response)
 
+    # verify logs
     logs = log_exporter.get_finished_logs()
     print(f"logs: {logs}")
-    # TODO: fix the cod to ensure we emit 2 correct logs
-    # assert len(logs) == 2
+    for log in logs:
+        print(f"log: {log}")
+        print(f"log attributes: {log.log_record.attributes}")
+        print(f"log body: {log.log_record.body}")
+    system_message = {"content": messages[0].content}
+    human_message = {"content": messages[1].content}
+    assert len(logs) == 3
+    assert_message_in_logs(
+        logs[0], "gen_ai.system.message", system_message, spans[0]
+    )
+    assert_message_in_logs(
+        logs[1], "gen_ai.human.message", human_message, spans[0]
+    )
+
+    chat_generation_event = {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+            "content": response.content,
+            "type": "ChatGeneration"
+        }
+    }
+    assert_message_in_logs(logs[2], "gen_ai.chat_generation", chat_generation_event, spans[0])
 
     # TODO: metrics - we should get 2 metrics
 
@@ -112,4 +135,42 @@ def assert_all_attributes(
     else:
         assert (
             GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS not in span.attributes
+        )
+
+def assert_message_in_logs(log, event_name, expected_content, parent_span):
+    assert log.log_record.attributes[EventAttributes.EVENT_NAME] == event_name
+    assert (
+        # TODO: use constant from GenAIAttributes.GenAiSystemValues after it is added there
+        log.log_record.attributes[GenAIAttributes.GEN_AI_SYSTEM]
+        == "langchain"
+    )
+
+    if not expected_content:
+        assert not log.log_record.body
+    else:
+        assert log.log_record.body
+        assert dict(log.log_record.body) == remove_none_values(
+            expected_content
+        )
+    assert_log_parent(log, parent_span)
+
+def remove_none_values(body):
+    result = {}
+    for key, value in body.items():
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            result[key] = remove_none_values(value)
+        elif isinstance(value, list):
+            result[key] = [remove_none_values(i) for i in value]
+        else:
+            result[key] = value
+    return result
+
+def assert_log_parent(log, span):
+    if span:
+        assert log.log_record.trace_id == span.get_span_context().trace_id
+        assert log.log_record.span_id == span.get_span_context().span_id
+        assert (
+            log.log_record.trace_flags == span.get_span_context().trace_flags
         )

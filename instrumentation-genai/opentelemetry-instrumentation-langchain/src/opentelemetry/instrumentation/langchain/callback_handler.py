@@ -9,7 +9,8 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import LLMResult
 
-from opentelemetry.trace import Span, SpanKind, set_span_in_context
+from opentelemetry._events import EventLogger
+from opentelemetry.trace import Span, SpanKind, set_span_in_context, Tracer, use_span
 from opentelemetry.metrics import Histogram
 from opentelemetry.trace.status import Status, StatusCode
 from opentelemetry.context import get_current, Context, set_value
@@ -21,7 +22,10 @@ from opentelemetry.instrumentation.langchain.utils import (
 from opentelemetry.instrumentation.langchain.config import Config
 
 from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as GenAI
-
+from .utils import (
+    chat_generation_to_event,
+    message_to_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +50,13 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         tracer,
         duration_histogram: Histogram,
         token_histogram: Histogram,
+        event_logger: EventLogger,
     ) -> None:
         super().__init__()
         self._tracer = tracer
         self._duration_histogram = duration_histogram
         self._token_histogram = token_histogram
+        self._event_logger = event_logger
 
         # Map from run_id -> _SpanState, to keep track of spans and parent/child relationships
         self.spans: Dict[UUID, _SpanState] = {}
@@ -210,7 +216,8 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
 
         finish_reasons = []
         for generation in getattr(response, "generations", []):
-            for chat_generation in generation:
+            for index, chat_generation in enumerate(generation):
+                self._event_logger.emit(chat_generation_to_event(chat_generation, state, index))
                 generation_info = chat_generation.generation_info
                 if generation_info is not None:
                     finish_reason = generation_info.get("finish_reason")
@@ -286,6 +293,10 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.CHAT.value)
         # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
         span.set_attribute(GenAI.GEN_AI_SYSTEM, "langchain")
+
+        for sub_messages in messages:
+            for message in sub_messages:
+                self._event_logger.emit(message_to_event(message, span_state))
 
     @dont_throw
     def on_tool_start(

@@ -54,7 +54,7 @@ class LangChainInstrumentor(BaseInstrumentor):
 
         tracer = get_tracer(__name__, __version__, tracer_provider)
         meter = get_meter(__name__, __version__, meter_provider)
-        event_logger_provider = get_event_logger(__name__, __version__, meter_provider)
+        event_logger = get_event_logger(__name__, __version__, event_logger_provider=event_logger_provider)
 
         # Create shared metrics: a duration histogram and a token-usage histogram
         duration_histogram = meter.create_histogram(
@@ -72,6 +72,7 @@ class LangChainInstrumentor(BaseInstrumentor):
             tracer=tracer,
             duration_histogram=duration_histogram,
             token_histogram=token_histogram,
+            event_logger = event_logger,
         )
 
         # Hook BaseCallbackManager init so that our OTel handler is added
