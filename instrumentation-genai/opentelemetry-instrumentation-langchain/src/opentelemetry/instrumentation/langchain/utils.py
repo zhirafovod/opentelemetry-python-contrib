@@ -50,7 +50,7 @@ def get_property_value(obj, property_name):
 
     return getattr(obj, property_name, None)
 
-def message_to_event(message, state):
+def message_to_event(message):
     content = get_property_value(message, "content")
     if should_collect_content() and content:
         type = get_property_value(message, "type")
@@ -60,22 +60,14 @@ def message_to_event(message, state):
             GenAI.GEN_AI_SYSTEM: "langchain"
         }
 
-        span_context = state.span.get_span_context() if state.span and state.span.get_span_context else None
-        trace_id = span_context.trace_id if span_context.trace_id else None
-        span_id = span_context.span_id if span_context.span_id else None
-        trace_flags = span_context.trace_flags if span_context.trace_flags else None
-
         return Event(
             name=f"gen_ai.{type}.message",
             attributes=attributes,
             body=body if body else None,
-            trace_id=trace_id,
-            span_id=span_id,
-            trace_flags=trace_flags,
         )
 
 
-def chat_generation_to_event(chat_generation, state, index):
+def chat_generation_to_event(chat_generation, index):
     if should_collect_content() and chat_generation.message:
         content = get_property_value(chat_generation.message, "content")
         if content:
@@ -98,18 +90,10 @@ def chat_generation_to_event(chat_generation, state, index):
                 "message": message
             }
 
-            span_context = state.span.get_span_context() if state.span and state.span.get_span_context else None
-            trace_id = span_context.trace_id if span_context.trace_id else None
-            span_id = span_context.span_id if span_context.span_id else None
-            trace_flags = span_context.trace_flags if span_context.trace_flags else None
-
             return Event(
                 name="gen_ai.chat_generation",
                 attributes=attributes,
                 body=body,
-                trace_id=trace_id,
-                span_id=span_id,
-                trace_flags=trace_flags,
             )
 
 class CallbackFilteredJSONEncoder(json.JSONEncoder):

@@ -18,6 +18,8 @@ from opentelemetry.metrics import get_meter
 from opentelemetry.trace import get_tracer
 from opentelemetry._events import get_event_logger
 
+from opentelemetry.semconv._incubating.metrics import gen_ai_metrics
+
 # todo: fix me! newer versions are not backward compatible
 _instruments = (
     "langchain >= 0.0.346",
@@ -58,14 +60,14 @@ class LangChainInstrumentor(BaseInstrumentor):
 
         # Create shared metrics: a duration histogram and a token-usage histogram
         duration_histogram = meter.create_histogram(
-            name="gen_ai.client.operation_duration",
+            name=gen_ai_metrics.GEN_AI_CLIENT_OPERATION_DURATION,
             unit="s",
-            description="Duration of LLM/Chain/Tool operations within LangChain",
+            description="GenAI operation duration",
         )
         token_histogram = meter.create_histogram(
-            name="gen_ai.client.token_usage",
-            unit="token",
-            description="Number of input and output tokens used by LLMs in LangChain",
+            name=gen_ai_metrics.GEN_AI_CLIENT_TOKEN_USAGE,
+            unit="{token}",
+            description="Measures number of input and output tokens used",
         )
 
         otel_callback_handler = OpenTelemetryLangChainCallbackHandler(

@@ -12,20 +12,19 @@ from opentelemetry.semconv._incubating.attributes import (
 from opentelemetry.semconv._incubating.attributes import (
     event_attributes as EventAttributes,
 )
-from opentelemetry.semconv._incubating.attributes import (
-    gen_ai_attributes as GenAIAttributes,
-)
+
 from opentelemetry.semconv._incubating.attributes import (
     server_attributes as ServerAttributes,
 )
 from opentelemetry.semconv._incubating.metrics import gen_ai_metrics
+from opentelemetry.semconv._incubating.attributes import gen_ai_attributes
 
 
 # span_exporter, log_exporter, openai_client, instrument_no_content are coming from
 # fixtures deinfed in conftest.py
 @pytest.mark.vcr()
 def test_langchain_call(
-    span_exporter, log_exporter, openai_client, instrument_with_content
+    span_exporter, log_exporter, metric_reader, openai_client, instrument_with_content
 ):
     llm_model_value = "gpt-3.5-turbo"
     llm = ChatOpenAI(model=llm_model_value)
@@ -74,7 +73,16 @@ def test_langchain_call(
     }
     assert_message_in_logs(logs[2], "gen_ai.chat_generation", chat_generation_event, spans[0])
 
-    # TODO: metrics - we should get 2 metrics
+    metrics = metric_reader.get_metrics_data().resource_metrics
+    print(f"metrics: {metrics}")
+    assert len(metrics) == 1
+
+    metric_data = metrics[0].scope_metrics[0].metrics
+    for m in metric_data:
+        if m.name == gen_ai_metrics.GEN_AI_CLIENT_OPERATION_DURATION:
+            assert_duration_metric(m, spans[0])
+        if m.name == gen_ai_metrics.GEN_AI_CLIENT_TOKEN_USAGE:
+            assert_token_usage_metric(m, spans[0])
 
 
 ### Utils ###
@@ -109,39 +117,39 @@ def assert_all_attributes(
 ):
     assert span.name == span_name
 
-    assert operation_name == span.attributes[GenAIAttributes.GEN_AI_OPERATION_NAME]
+    assert operation_name == span.attributes[gen_ai_attributes.GEN_AI_OPERATION_NAME]
 
-    assert system == span.attributes[GenAIAttributes.GEN_AI_SYSTEM]
+    assert system == span.attributes[gen_ai_attributes.GEN_AI_SYSTEM]
 
     assert request_model == "gpt-3.5-turbo"
 
     assert response_model == "gpt-3.5-turbo-0125"
 
-    assert GenAIAttributes.GEN_AI_RESPONSE_ID in span.attributes
+    assert gen_ai_attributes.GEN_AI_RESPONSE_ID in span.attributes
 
     if input_tokens:
         assert (
             input_tokens
-            == span.attributes[GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS]
+            == span.attributes[gen_ai_attributes.GEN_AI_USAGE_INPUT_TOKENS]
         )
     else:
-        assert GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS not in span.attributes
+        assert gen_ai_attributes.GEN_AI_USAGE_INPUT_TOKENS not in span.attributes
 
     if output_tokens:
         assert (
             output_tokens
-            == span.attributes[GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS]
+            == span.attributes[gen_ai_attributes.GEN_AI_USAGE_OUTPUT_TOKENS]
         )
     else:
         assert (
-            GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS not in span.attributes
+            gen_ai_attributes.GEN_AI_USAGE_OUTPUT_TOKENS not in span.attributes
         )
 
 def assert_message_in_logs(log, event_name, expected_content, parent_span):
     assert log.log_record.attributes[EventAttributes.EVENT_NAME] == event_name
     assert (
         # TODO: use constant from GenAIAttributes.GenAiSystemValues after it is added there
-        log.log_record.attributes[GenAIAttributes.GEN_AI_SYSTEM]
+        log.log_record.attributes[gen_ai_attributes.GEN_AI_SYSTEM]
         == "langchain"
     )
 
@@ -174,3 +182,42 @@ def assert_log_parent(log, span):
         assert (
             log.log_record.trace_flags == span.get_span_context().trace_flags
         )
+
+def assert_duration_metric(metric, parent_span):
+    assert metric is not None
+    assert len(metric.data.data_points) == 1
+    assert metric.data.data_points[0].sum > 0
+
+    assert_duration_metric_attributes(metric.data.data_points[0].attributes)
+    assert_exemplars(metric.data.data_points[0].exemplars, metric.data.data_points[0].sum, parent_span)
+
+def assert_duration_metric_attributes(attributes):
+    assert len(attributes) == 3
+    assert attributes.get(gen_ai_attributes.GEN_AI_SYSTEM) == "langchain"
+    assert attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME) == gen_ai_attributes.GenAiOperationNameValues.CHAT.value
+
+
+def assert_token_usage_metric(metric, parent_span):
+    assert metric is not None
+    assert len(metric.data.data_points) == 2
+
+    assert metric.data.data_points[0].sum > 0
+    assert_token_usage_metric_attributes(metric.data.data_points[0].attributes)
+    assert_exemplars(metric.data.data_points[0].exemplars, metric.data.data_points[0].sum, parent_span)
+
+    assert metric.data.data_points[1].sum > 0
+    assert_token_usage_metric_attributes(metric.data.data_points[1].attributes)
+    assert_exemplars(metric.data.data_points[1].exemplars, metric.data.data_points[1].sum, parent_span)
+
+
+def assert_token_usage_metric_attributes(attributes):
+    assert len(attributes) == 4
+    assert attributes.get(gen_ai_attributes.GEN_AI_SYSTEM) == "langchain"
+    assert attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME) == gen_ai_attributes.GenAiOperationNameValues.CHAT.value
+
+def assert_exemplars(exemplars, sum, parent_span):
+    assert len(exemplars) == 1
+    assert exemplars[0].value == sum
+    assert exemplars[0].span_id == parent_span.get_span_context().span_id
+    assert exemplars[0].trace_id == parent_span.get_span_context().trace_id
+
