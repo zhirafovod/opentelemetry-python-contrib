@@ -188,13 +188,19 @@ def assert_duration_metric(metric, parent_span):
     assert len(metric.data.data_points) == 1
     assert metric.data.data_points[0].sum > 0
 
-    assert_duration_metric_attributes(metric.data.data_points[0].attributes)
+    assert_duration_metric_attributes(metric.data.data_points[0].attributes, parent_span)
     assert_exemplars(metric.data.data_points[0].exemplars, metric.data.data_points[0].sum, parent_span)
 
-def assert_duration_metric_attributes(attributes):
-    assert len(attributes) == 3
+def assert_duration_metric_attributes(attributes, parent_span):
+    assert len(attributes) == 4
     assert attributes.get(gen_ai_attributes.GEN_AI_SYSTEM) == "langchain"
     assert attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME) == gen_ai_attributes.GenAiOperationNameValues.CHAT.value
+    assert attributes.get(gen_ai_attributes.GEN_AI_REQUEST_MODEL) == parent_span.attributes[
+        gen_ai_attributes.GEN_AI_REQUEST_MODEL
+    ]
+    assert attributes.get(gen_ai_attributes.GEN_AI_RESPONSE_MODEL) == parent_span.attributes[
+        gen_ai_attributes.GEN_AI_RESPONSE_MODEL
+    ]
 
 
 def assert_token_usage_metric(metric, parent_span):
@@ -202,18 +208,24 @@ def assert_token_usage_metric(metric, parent_span):
     assert len(metric.data.data_points) == 2
 
     assert metric.data.data_points[0].sum > 0
-    assert_token_usage_metric_attributes(metric.data.data_points[0].attributes)
+    assert_token_usage_metric_attributes(metric.data.data_points[0].attributes, parent_span)
     assert_exemplars(metric.data.data_points[0].exemplars, metric.data.data_points[0].sum, parent_span)
 
     assert metric.data.data_points[1].sum > 0
-    assert_token_usage_metric_attributes(metric.data.data_points[1].attributes)
+    assert_token_usage_metric_attributes(metric.data.data_points[1].attributes, parent_span)
     assert_exemplars(metric.data.data_points[1].exemplars, metric.data.data_points[1].sum, parent_span)
 
 
-def assert_token_usage_metric_attributes(attributes):
-    assert len(attributes) == 4
+def assert_token_usage_metric_attributes(attributes, parent_span):
+    assert len(attributes) == 5
     assert attributes.get(gen_ai_attributes.GEN_AI_SYSTEM) == "langchain"
     assert attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME) == gen_ai_attributes.GenAiOperationNameValues.CHAT.value
+    assert attributes.get(gen_ai_attributes.GEN_AI_REQUEST_MODEL) == parent_span.attributes[
+        gen_ai_attributes.GEN_AI_REQUEST_MODEL
+    ]
+    assert attributes.get(gen_ai_attributes.GEN_AI_RESPONSE_MODEL) == parent_span.attributes[
+        gen_ai_attributes.GEN_AI_RESPONSE_MODEL
+    ]
 
 def assert_exemplars(exemplars, sum, parent_span):
     assert len(exemplars) == 1

@@ -61,6 +61,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         # Map from run_id -> _SpanState, to keep track of spans and parent/child relationships
         self.spans: Dict[UUID, _SpanState] = {}
         self.run_inline = True  # for synchronous usage
+        self.request_model: Optional[str] = None
 
     def _start_span(
         self,
@@ -87,7 +88,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         if state.span.end_time is None:
             state.span.end()
 
-    def _record_duration_metric(self, run_id: UUID, model_name: Optional[str], operation_name: str):
+    def _record_duration_metric(self, run_id: UUID, request_model: Optional[str], response_model: Optional[str], operation_name: str):
         """
         Records a histogram measurement for how long the operation took.
         """
@@ -99,12 +100,14 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             GenAI.GEN_AI_SYSTEM: "langchain",
             GenAI.GEN_AI_OPERATION_NAME: operation_name
         }
-        if model_name:
-             attributes[GenAI.GEN_AI_RESPONSE_MODEL] = model_name
+        if request_model:
+            attributes[GenAI.GEN_AI_REQUEST_MODEL] = request_model
+        if response_model:
+             attributes[GenAI.GEN_AI_RESPONSE_MODEL] = response_model
 
         self._duration_histogram.record(elapsed, attributes=attributes)
 
-    def _record_token_usage(self, token_count: int, model_name: Optional[str], token_type: str, operation_name: str):
+    def _record_token_usage(self, token_count: int, request_model: Optional[str], response_model: Optional[str], token_type: str, operation_name: str):
         """
         Record usage of input or output tokens to a histogram.
         """
@@ -115,8 +118,10 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             GenAI.GEN_AI_TOKEN_TYPE: token_type,
             GenAI.GEN_AI_OPERATION_NAME: operation_name
         }
-        if model_name:
-            attributes[GenAI.GEN_AI_RESPONSE_MODEL] = model_name
+        if request_model:
+            attributes[GenAI.GEN_AI_REQUEST_MODEL] = request_model
+        if response_model:
+            attributes[GenAI.GEN_AI_RESPONSE_MODEL] = response_model
 
         self._token_histogram.record(token_count, attributes=attributes)
 
@@ -255,8 +260,8 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                         # state.span.set_attribute(GenAI.GEN_AI_USAGE_TOTAL_TOKENS, total_tokens)
 
                     # Record metrics
-                    self._record_token_usage(prompt_tokens, model_name, GenAI.GenAiTokenTypeValues.INPUT.value, GenAI.GenAiOperationNameValues.CHAT.value)
-                    self._record_token_usage(completion_tokens, model_name, GenAI.GenAiTokenTypeValues.COMPLETION.value, GenAI.GenAiOperationNameValues.CHAT.value)
+                    self._record_token_usage(prompt_tokens, self.request_model, model_name, GenAI.GenAiTokenTypeValues.INPUT.value, GenAI.GenAiOperationNameValues.CHAT.value)
+                    self._record_token_usage(completion_tokens, self.request_model, model_name, GenAI.GenAiTokenTypeValues.COMPLETION.value, GenAI.GenAiOperationNameValues.CHAT.value)
 
             # End the LLM span
             self._end_span(run_id)
@@ -267,7 +272,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                 if response.llm_output
                 else None
             )
-            self._record_duration_metric(run_id, model_for_metric, GenAI.GenAiOperationNameValues.CHAT.value)
+            self._record_duration_metric(run_id, self.request_model, model_for_metric, GenAI.GenAiOperationNameValues.CHAT.value)
 
     @dont_throw
     def on_chat_model_start(
@@ -294,6 +299,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         ) as span:
             span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.CHAT.value)
             request_model = kwargs.get("invocation_params").get("model_name") if kwargs.get("invocation_params") and kwargs.get("invocation_params").get("model_name") else None
+            self.request_model = request_model
             span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
             # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
             span.set_attribute(GenAI.GEN_AI_SYSTEM, "langchain")
