@@ -71,7 +71,7 @@ def test_langchain_call(
             "type": "ChatGeneration"
         }
     }
-    assert_message_in_logs(logs[2], "gen_ai.chat_generation", chat_generation_event, spans[0])
+    assert_message_in_logs(logs[2], "gen_ai.choice", chat_generation_event, spans[0])
 
     metrics = metric_reader.get_metrics_data().resource_metrics
     print(f"metrics: {metrics}")

@@ -61,7 +61,6 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         # Map from run_id -> _SpanState, to keep track of spans and parent/child relationships
         self.spans: Dict[UUID, _SpanState] = {}
         self.run_inline = True  # for synchronous usage
-        self.request_model: Optional[str] = None
 
     def _start_span(
         self,
@@ -260,8 +259,8 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                         # state.span.set_attribute(GenAI.GEN_AI_USAGE_TOTAL_TOKENS, total_tokens)
 
                     # Record metrics
-                    self._record_token_usage(prompt_tokens, self.request_model, model_name, GenAI.GenAiTokenTypeValues.INPUT.value, GenAI.GenAiOperationNameValues.CHAT.value)
-                    self._record_token_usage(completion_tokens, self.request_model, model_name, GenAI.GenAiTokenTypeValues.COMPLETION.value, GenAI.GenAiOperationNameValues.CHAT.value)
+                    self._record_token_usage(prompt_tokens, state.request_model, model_name, GenAI.GenAiTokenTypeValues.INPUT.value, GenAI.GenAiOperationNameValues.CHAT.value)
+                    self._record_token_usage(completion_tokens, state.request_model, model_name, GenAI.GenAiTokenTypeValues.COMPLETION.value, GenAI.GenAiOperationNameValues.CHAT.value)
 
             # End the LLM span
             self._end_span(run_id)
@@ -272,7 +271,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                 if response.llm_output
                 else None
             )
-            self._record_duration_metric(run_id, self.request_model, model_for_metric, GenAI.GenAiOperationNameValues.CHAT.value)
+            self._record_duration_metric(run_id, state.request_model, model_for_metric, GenAI.GenAiOperationNameValues.CHAT.value)
 
     @dont_throw
     def on_chat_model_start(
@@ -299,12 +298,11 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         ) as span:
             span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.CHAT.value)
             request_model = kwargs.get("invocation_params").get("model_name") if kwargs.get("invocation_params") and kwargs.get("invocation_params").get("model_name") else None
-            self.request_model = request_model
             span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
             # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
             span.set_attribute(GenAI.GEN_AI_SYSTEM, "langchain")
 
-            span_state = _SpanState(span=span, span_context=get_current())
+            span_state = _SpanState(span=span, span_context=get_current(), request_model=request_model)
             self.spans[run_id] = span_state
 
             for sub_messages in messages:

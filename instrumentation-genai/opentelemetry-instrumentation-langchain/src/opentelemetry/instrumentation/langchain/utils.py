@@ -52,7 +52,7 @@ def get_property_value(obj, property_name):
 
 def message_to_event(message):
     content = get_property_value(message, "content")
-    if should_collect_content() and content:
+    if should_collect_content() and content is not None:
         type = get_property_value(message, "type")
         body = {}
         body["content"] = content
@@ -70,7 +70,7 @@ def message_to_event(message):
 def chat_generation_to_event(chat_generation, index):
     if should_collect_content() and chat_generation.message:
         content = get_property_value(chat_generation.message, "content")
-        if content:
+        if content is not None:
             attributes = {
                 GenAI.GEN_AI_SYSTEM: "langchain"
             }
@@ -91,7 +91,7 @@ def chat_generation_to_event(chat_generation, index):
             }
 
             return Event(
-                name="gen_ai.chat_generation",
+                name="gen_ai.choice",
                 attributes=attributes,
                 body=body,
             )
