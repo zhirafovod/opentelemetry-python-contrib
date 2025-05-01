@@ -4,10 +4,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
+from collections.abc import Sequence
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import LLMResult
+from langchain_core.documents import Document
 
 from opentelemetry._events import EventLogger
 from opentelemetry.trace import Span, SpanKind, set_span_in_context, use_span
@@ -353,6 +355,74 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             return
 
         self._end_span(run_id)
+
+    @dont_throw
+    def on_retriever_start(
+        self,
+        serialized: dict,
+        query: str,
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        tags: Optional[list[str]] = None,
+        metadata: Optional[dict[str, Any]] = None,
+        **kwargs,
+    ):
+        if Config.is_instrumentation_suppressed():
+            return
+
+        request_model = kwargs.get("name")
+        operation_name = "retrieval"
+        span_name = f"{operation_name} {request_model}"
+        span = self._start_span(
+            name=f"{span_name}",
+            kind=SpanKind.CLIENT,
+            parent_run_id=parent_run_id,
+        )
+        with use_span(
+            span,
+            end_on_exit=False,
+        ) as span:
+            span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
+            span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, operation_name)
+            # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
+            span.set_attribute(GenAI.GEN_AI_SYSTEM, "langchain")
+
+            vector_store_provider =  metadata.get("ls_vector_store_provider")
+            embedding_provider = metadata.get("ls_embedding_provider")
+            span.set_attribute("langchain.retriever", f"{vector_store_provider} {embedding_provider}")
+            span_state = _SpanState(span=span, span_context=get_current(), request_model=request_model)
+            self.spans[run_id] = span_state
+
+            if parent_run_id is not None and parent_run_id in self.spans:
+                self.spans[parent_run_id].children.append(run_id)
+
+    @dont_throw
+    def on_retriever_end(
+            self,
+            documents: Sequence[Document],
+            *,
+            run_id: UUID,
+            parent_run_id: Optional[UUID] = None,
+            **kwargs,
+    ):
+        if Config.is_instrumentation_suppressed():
+            return
+
+        state = self.spans.get(run_id)
+        if not state:
+            return
+
+        with use_span(
+            state.span,
+            end_on_exit=False,
+        ) as span:
+            # End the LLM span
+            self._end_span(run_id)
+
+            # record metrics
+            self._record_duration_metric(run_id, state.request_model, state.request_model,"retrieval")
+
 
     @dont_throw
     def on_tool_error(
