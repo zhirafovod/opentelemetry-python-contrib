@@ -139,20 +139,24 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         if Config.is_instrumentation_suppressed():
             return
 
-        chain_name = serialized.get("name") or kwargs.get("name") or "Chain"
+        chain_name = kwargs.get("name") or "Chain"
         span = self._start_span(
             name=f"{chain_name}",
             kind=SpanKind.INTERNAL,
             parent_run_id=parent_run_id,
         )
-        span_state = _SpanState(span=span, span_context=get_current())
-        self.spans[run_id] = span_state
+        with use_span(
+                span,
+                end_on_exit=False,
+        ) as span:
+            if should_collect_content():
+                span.set_attribute("langchain.entity_input", json.dumps(inputs, cls=CallbackFilteredJSONEncoder))
 
-        if parent_run_id is not None and parent_run_id in self.spans:
-            self.spans[parent_run_id].children.append(run_id)
+            span_state = _SpanState(span=span, span_context=get_current())
+            self.spans[run_id] = span_state
 
-        if should_collect_content():
-            span.set_attribute("langchain.entity_input", json.dumps(inputs, cls=CallbackFilteredJSONEncoder))
+            if parent_run_id is not None and parent_run_id in self.spans:
+                self.spans[parent_run_id].children.append(run_id)
 
     @dont_throw
     def on_chain_end(
@@ -170,10 +174,14 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         if not state:
             return
 
-        if should_collect_content():
-            state.span.set_attribute("langchain.entity_output", json.dumps(outputs, cls=CallbackFilteredJSONEncoder))
+        with use_span(
+            state.span,
+            end_on_exit=False,
+        ) as span:
+            if should_collect_content():
+                span.set_attribute("langchain.entity_output", json.dumps(outputs, cls=CallbackFilteredJSONEncoder))
 
-        self._end_span(run_id=run_id)
+            self._end_span(run_id=run_id)
 
     @dont_throw
     def on_llm_start(
