@@ -38,6 +38,7 @@ class _SpanState:
     span_context: Context
     start_time: float = field(default_factory=time.time)
     request_model: Optional[str] = None
+    db_system: Optional[str] = None
     children: List[UUID] = field(default_factory=list)
 
 
@@ -105,6 +106,27 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             attributes[GenAI.GEN_AI_REQUEST_MODEL] = request_model
         if response_model:
              attributes[GenAI.GEN_AI_RESPONSE_MODEL] = response_model
+
+        self._duration_histogram.record(elapsed, attributes=attributes)
+
+    def _record_duration_metric_db(self, run_id: UUID, request_model: Optional[str], response_model: Optional[str], operation_name: str, db_system: Optional[str]):
+        """
+        Records a histogram measurement for how long the operation took.
+        """
+        if run_id not in self.spans:
+            return
+
+        elapsed = time.time() - self.spans[run_id].start_time
+        attributes = {
+            GenAI.GEN_AI_SYSTEM: "langchain",
+            GenAI.GEN_AI_OPERATION_NAME: operation_name
+        }
+        if request_model:
+            attributes[GenAI.GEN_AI_REQUEST_MODEL] = request_model
+        if response_model:
+             attributes[GenAI.GEN_AI_RESPONSE_MODEL] = response_model
+        if db_system:
+            attributes["db.system"] = db_system
 
         self._duration_histogram.record(elapsed, attributes=attributes)
 
@@ -398,8 +420,10 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
 
             vector_store_provider =  metadata.get("ls_vector_store_provider")
             embedding_provider = metadata.get("ls_embedding_provider")
+            db_system="weaviate" if vector_store_provider == "WeaviateVectorStore" else "chroma"
+            span.set_attribute("db.system",db_system)
             span.set_attribute("langchain.retriever", f"{vector_store_provider} {embedding_provider}")
-            span_state = _SpanState(span=span, span_context=get_current(), request_model=request_model)
+            span_state = _SpanState(span=span, span_context=get_current(), request_model=request_model, db_system=db_system)
             self.spans[run_id] = span_state
 
             if parent_run_id is not None and parent_run_id in self.spans:
@@ -429,7 +453,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             self._end_span(run_id)
 
             # record metrics
-            self._record_duration_metric(run_id, state.request_model, state.request_model,"retrieval")
+            self._record_duration_metric_db(run_id, state.request_model, state.request_model,"retrieval", state.db_system)
 
 
     @dont_throw
