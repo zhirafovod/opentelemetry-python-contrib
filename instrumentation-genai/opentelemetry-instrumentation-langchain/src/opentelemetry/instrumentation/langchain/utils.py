@@ -66,7 +66,6 @@ def message_to_event(message):
             body=body if body else None,
         )
 
-
 def chat_generation_to_event(chat_generation, index):
     if should_collect_content() and chat_generation.message:
         content = get_property_value(chat_generation.message, "content")
@@ -92,6 +91,44 @@ def chat_generation_to_event(chat_generation, index):
 
             return Event(
                 name="gen_ai.choice",
+                attributes=attributes,
+                body=body,
+            )
+
+def query_to_event(query):
+    if should_collect_content() and query is not None:
+        body = {}
+        body["content"] = query
+        attributes = {
+            GenAI.GEN_AI_SYSTEM: "langchain",
+            GenAI.GEN_AI_PROMPT: query
+        }
+
+        return Event(
+            name="gen_ai.content.prompt",
+            attributes=attributes,
+            body=body if body else None,
+        )
+
+def document_to_event(document, index):
+    if should_collect_content() and document.page_content is not None:
+        if document.page_content is not None:
+            attributes = {
+                GenAI.GEN_AI_SYSTEM: "langchain"
+            }
+
+            message = {
+                "content": document.page_content,
+                "type": document.type,
+                "metadata": document.metadata
+            }
+            body = {
+                "index": index,
+                "message": message
+            }
+
+            return Event(
+                name="gen_ai.retrieval.content",
                 attributes=attributes,
                 body=body,
             )

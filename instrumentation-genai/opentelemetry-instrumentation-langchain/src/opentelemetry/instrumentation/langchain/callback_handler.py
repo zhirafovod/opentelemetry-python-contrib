@@ -27,6 +27,8 @@ from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as Ge
 from .utils import (
     chat_generation_to_event,
     message_to_event,
+    query_to_event,
+    document_to_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -401,9 +403,9 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         if Config.is_instrumentation_suppressed():
             return
 
-        request_model = kwargs.get("name")
+        name = kwargs.get("name")
         operation_name = "retrieval"
-        span_name = f"{operation_name} {request_model}"
+        span_name = f"{operation_name} {name}"
         span = self._start_span(
             name=f"{span_name}",
             kind=SpanKind.CLIENT,
@@ -413,16 +415,20 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             span,
             end_on_exit=False,
         ) as span:
-            span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
             span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, operation_name)
             # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
             span.set_attribute(GenAI.GEN_AI_SYSTEM, "langchain")
 
+            request_model = metadata.get("ls_embedding_provider")
+            span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
             vector_store_provider =  metadata.get("ls_vector_store_provider")
-            embedding_provider = metadata.get("ls_embedding_provider")
             db_system="weaviate" if vector_store_provider == "WeaviateVectorStore" else "chroma"
             span.set_attribute("db.system",db_system)
-            span.set_attribute("langchain.retriever", f"{vector_store_provider} {embedding_provider}")
+            span.set_attribute("langchain.retriever", f"{vector_store_provider} {request_model}")
+            if should_collect_content():
+                span.set_attribute("db.query", query)
+                self._event_logger.emit(query_to_event(query))
+
             span_state = _SpanState(span=span, span_context=get_current(), request_model=request_model, db_system=db_system)
             self.spans[run_id] = span_state
 
@@ -449,6 +455,9 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             state.span,
             end_on_exit=False,
         ) as span:
+            for index, document in enumerate(documents):
+                self._event_logger.emit(document_to_event(document, index))
+
             # End the LLM span
             self._end_span(run_id)
 
