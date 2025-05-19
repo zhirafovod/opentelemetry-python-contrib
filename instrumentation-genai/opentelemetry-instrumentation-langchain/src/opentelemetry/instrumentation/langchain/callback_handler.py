@@ -422,8 +422,12 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             request_model = metadata.get("ls_embedding_provider")
             span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
             vector_store_provider =  metadata.get("ls_vector_store_provider")
-            db_system="weaviate" if vector_store_provider == "WeaviateVectorStore" else "chroma"
-            span.set_attribute("db.system",db_system)
+            if vector_store_provider == "WeaviateVectorStore":
+                span.set_attribute("db.system", "weaviate")
+            elif vector_store_provider == "Chroma":
+                span.set_attribute("db.system", "chroma")
+            elif vector_store_provider == "Milvus":
+                span.set_attribute("db.system", "milvus")
             span.set_attribute("langchain.retriever", f"{vector_store_provider} {request_model}")
             if should_collect_content():
                 span.set_attribute("db.query", query)
