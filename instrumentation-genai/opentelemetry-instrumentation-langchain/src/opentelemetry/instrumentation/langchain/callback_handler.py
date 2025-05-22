@@ -29,6 +29,10 @@ from .utils import (
     message_to_event,
     query_to_event,
     document_to_event,
+    input_to_event,
+    output_to_event,
+    chat_generation_tool_calls_attributes,
+    get_property_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -129,6 +133,21 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
              attributes[GenAI.GEN_AI_RESPONSE_MODEL] = response_model
         if db_system:
             attributes["db.system"] = db_system
+
+        self._duration_histogram.record(elapsed, attributes=attributes)
+
+    def _record_duration_metric_tool(self, run_id: UUID, operation_name: str):
+        """
+        Records a histogram measurement for how long the operation took.
+        """
+        if run_id not in self.spans:
+            return
+
+        elapsed = time.time() - self.spans[run_id].start_time
+        attributes = {
+            GenAI.GEN_AI_SYSTEM: "langchain",
+            GenAI.GEN_AI_OPERATION_NAME: operation_name
+        }
 
         self._duration_histogram.record(elapsed, attributes=attributes)
 
@@ -259,15 +278,26 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             end_on_exit=False,
         ) as span:
             finish_reasons = []
+            tool_calls_attributes = {}
             for generation in getattr(response, "generations", []):
                 for index, chat_generation in enumerate(generation):
-                    self._event_logger.emit(chat_generation_to_event(chat_generation, index))
+                    prefix = f"{GenAI.GEN_AI_COMPLETION}.{index}"
+                    tool_calls = chat_generation.message.additional_kwargs.get("tool_calls")
+                    if tool_calls is not None:
+                        tool_calls_attributes.update(
+                            chat_generation_tool_calls_attributes(tool_calls, prefix)
+                        )
+                    self._event_logger.emit(chat_generation_to_event(chat_generation, index, prefix))
                     generation_info = chat_generation.generation_info
                     if generation_info is not None:
                         finish_reason = generation_info.get("finish_reason")
                         if finish_reason is not None and span.is_recording():
                             finish_reasons.append(finish_reason or "error")
-            span.set_attribute(GenAI.GEN_AI_RESPONSE_FINISH_REASONS, finish_reasons)
+
+                    span.set_attribute(f"{GenAI.GEN_AI_RESPONSE_FINISH_REASONS}.{index}", finish_reasons)
+
+            if should_collect_content():
+                span.set_attributes(tool_calls_attributes)
 
             # If the LLM result includes usage:
             if response.llm_output is not None:
@@ -333,6 +363,15 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.CHAT.value)
             request_model = kwargs.get("invocation_params").get("model_name") if kwargs.get("invocation_params") and kwargs.get("invocation_params").get("model_name") else None
             span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
+
+            tools = kwargs.get("invocation_params").get("tools") if kwargs.get("invocation_params") else None
+            if tools is not None:
+                for index, tool in enumerate(tools):
+                    function = tool.get("function")
+                    if function is not None:
+                        span.set_attribute(f"gen_ai.request.function.{index}.name",function.get("name"))
+                        span.set_attribute(f"gen_ai.request.function.{index}.description", function.get("description"))
+                        span.set_attribute(f"gen_ai.request.function.{index}.parameters", str(function.get("parameters")))
             # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
             span.set_attribute(GenAI.GEN_AI_SYSTEM, "langchain")
 
@@ -340,8 +379,29 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             self.spans[run_id] = span_state
 
             for sub_messages in messages:
-                for message in sub_messages:
-                    self._event_logger.emit(message_to_event(message))
+                for index, message in enumerate(sub_messages):
+                    content = get_property_value(message, "content")
+                    type = get_property_value(message, "type")
+                    if should_collect_content():
+                        if type == "human" and len(sub_messages) > 1:
+                            span.set_attribute(f"gen_ai.prompt.{index}.content", content)
+                            span.set_attribute(f"gen_ai.prompt.{index}.role", "human")
+                        elif type == "tool":
+                            span.set_attribute(f"gen_ai.prompt.{index}.content", content)
+                            span.set_attribute(f"gen_ai.prompt.{index}.role", "tool")
+                            span.set_attribute(f"gen_ai.prompt.{index}.tool_call_id", get_property_value(message, "tool_call_id"))
+                        elif type == "ai":
+                            span.set_attribute(f"gen_ai.prompt.{index}.role", "ai")
+                            additional_kwargs = get_property_value(message, "additional_kwargs")
+                            tool_calls = get_property_value(additional_kwargs, "tool_calls")
+                            if tool_calls is not None:
+                                for index2, tool_call in enumerate(tool_calls):
+                                    span.set_attribute(f"gen_ai.prompt.{index}.tool_calls.{index2}.id",tool_call.get("id"))
+                                    function = tool_call.get("function")
+                                    span.set_attribute(f"gen_ai.prompt.{index}.tool_calls.{index2}.arguments",function.get("arguments"))
+                                    span.set_attribute(f"gen_ai.prompt.{index}.tool_calls.{index2}.name",function.get("name"))
+
+                    self._event_logger.emit(message_to_event(message, tools, content, type))
 
             if parent_run_id is not None and parent_run_id in self.spans:
                 self.spans[parent_run_id].children.append(run_id)
@@ -360,19 +420,28 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         if Config.is_instrumentation_suppressed():
             return
 
-        tool_name = serialized.get("name") or kwargs.get("name") or "Tool"
+        tool_name = serialized.get("name") or kwargs.get("name") or "execute_tool"
         span = self._start_span(
             name=f"{tool_name}",
             kind=SpanKind.INTERNAL,
             parent_run_id=parent_run_id,
         )
-        span_state = _SpanState(span=span, span_context=get_current())
-        self.spans[run_id] = span_state
-        if parent_run_id is not None and parent_run_id in self.spans:
-            self.spans[parent_run_id].children.append(run_id)
+        with use_span(
+            span,
+            end_on_exit=False,
+        ) as span:
+            description = serialized.get("description")
+            span.set_attribute("gen_ai.tool.description", description)
+            span.set_attribute(GenAI.GEN_AI_TOOL_NAME, tool_name)
+            span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.EXECUTE_TOOL.value)
 
-        if should_collect_content():
-            span.set_attribute("langchain.tool_input", input_str)
+            span_state = _SpanState(span=span, span_context=get_current())
+            self.spans[run_id] = span_state
+            if parent_run_id is not None and parent_run_id in self.spans:
+                self.spans[parent_run_id].children.append(run_id)
+
+            if should_collect_content():
+                self._event_logger.emit(input_to_event(input_str))
 
     @dont_throw
     def on_tool_end(
@@ -385,8 +454,22 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
     ):
         if Config.is_instrumentation_suppressed():
             return
+        state = self.spans.get(run_id)
+        if not state:
+            return
 
-        self._end_span(run_id)
+        with use_span(
+            state.span,
+            end_on_exit=False,
+        ) as span:
+            if should_collect_content():
+                span.set_attribute(GenAI.GEN_AI_TOOL_CALL_ID, output.tool_call_id)
+                self._event_logger.emit(output_to_event(output))
+
+            self._end_span(run_id)
+
+            self._record_duration_metric_tool(run_id, GenAI.GenAiOperationNameValues.EXECUTE_TOOL.value)
+
 
     @dont_throw
     def on_retriever_start(

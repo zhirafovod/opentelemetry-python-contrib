@@ -50,15 +50,40 @@ def get_property_value(obj, property_name):
 
     return getattr(obj, property_name, None)
 
-def message_to_event(message):
-    content = get_property_value(message, "content")
+def message_to_event(message, tools, content, type):
     if should_collect_content() and content is not None:
-        type = get_property_value(message, "type")
-        body = {}
-        body["content"] = content
         attributes = {
             GenAI.GEN_AI_SYSTEM: "langchain"
         }
+        body = {}
+        if type == "tool":
+            name = get_property_value(message, "name")
+            tool_call_id = get_property_value(message, "tool_call_id")
+            body.update([
+                ("content",content),
+                ("name",name),
+                ("tool_call_id",tool_call_id)]
+            )
+        elif type == "ai":
+            tool_calls = message.tool_calls
+            body.update([
+                ("content",content),
+                ("tool_calls",str(tool_calls))
+            ])
+        elif type == "human":
+            body.update([
+                ("content",content)
+            ])
+
+        if tools is not None:
+            for index, tool in enumerate(tools):
+                function = tool.get("function")
+                if function is not None:
+                    attributes.update([
+                        (f"gen_ai.request.function.{index}.name", function.get("name")),
+                        (f"gen_ai.request.function.{index}.description", function.get("description")),
+                        (f"gen_ai.request.function.{index}.parameters", str(function.get("parameters"))),
+                    ])
 
         return Event(
             name=f"gen_ai.{type}.message",
@@ -66,7 +91,7 @@ def message_to_event(message):
             body=body if body else None,
         )
 
-def chat_generation_to_event(chat_generation, index):
+def chat_generation_to_event(chat_generation, index, prefix):
     if should_collect_content() and chat_generation.message:
         content = get_property_value(chat_generation.message, "content")
         if content is not None:
@@ -88,6 +113,12 @@ def chat_generation_to_event(chat_generation, index):
                 "finish_reason": finish_reason or "error",
                 "message": message
             }
+
+            tool_calls = chat_generation.message.additional_kwargs.get("tool_calls")
+            if tool_calls is not None:
+                attributes.update(
+                    chat_generation_tool_calls_attributes(tool_calls, prefix)
+                )
 
             return Event(
                 name="gen_ai.choice",
@@ -132,6 +163,48 @@ def document_to_event(document, index):
                 attributes=attributes,
                 body=body,
             )
+
+def input_to_event(input):
+    if should_collect_content() and input is not None:
+        body = {
+            "content" : input,
+            "role": "tool",
+        }
+        attributes = {
+            GenAI.GEN_AI_SYSTEM: "langchain",
+        }
+
+        return Event(
+            name="gen_ai.tool.message",
+            attributes=attributes,
+            body=body if body else None,
+        )
+
+def output_to_event(output):
+    if should_collect_content() and output is not None:
+        body = {
+            "content":output.content,
+            "id":output.tool_call_id,
+            "role":"tool",
+        }
+        attributes = {
+            GenAI.GEN_AI_SYSTEM: "langchain",
+        }
+
+        return Event(
+            name="gen_ai.tool.message",
+            attributes=attributes,
+            body=body if body else None,
+        )
+
+def chat_generation_tool_calls_attributes(tool_calls, prefix):
+    attributes = {}
+    for idx, tool_call in enumerate(tool_calls):
+        tool_call_prefix = f"{prefix}.tool_calls.{idx}"
+        attributes[f"{tool_call_prefix}.id"] = tool_call.get("id")
+        attributes[f"{tool_call_prefix}.name"] = tool_call.get("function").get("name")
+        attributes[f"{tool_call_prefix}.arguments"] = tool_call.get("function").get("arguments")
+    return attributes
 
 class CallbackFilteredJSONEncoder(json.JSONEncoder):
     """
