@@ -1,13 +1,14 @@
+import dataclasses
+import datetime
 import json
 import logging
 import os
 import traceback
-import dataclasses
-import datetime
+from time import time_ns
 
+from langchain_core.documents import Document
 from opentelemetry._events import Event
 from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as GenAI
-
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -110,28 +111,18 @@ def query_to_event(query):
             body=body if body else None,
         )
 
-def document_to_event(document, index):
-    if should_collect_content() and document.page_content is not None:
-        if document.page_content is not None:
-            attributes = {
-                GenAI.GEN_AI_SYSTEM: "langchain"
-            }
-
-            message = {
-                "content": document.page_content,
-                "type": document.type,
-                "metadata": document.metadata
-            }
-            body = {
-                "index": index,
-                "message": message
-            }
-
-            return Event(
-                name="gen_ai.retrieval.content",
-                attributes=attributes,
-                body=body,
-            )
+def document_to_event(document: Document, index: int) -> Event:
+    # Build the semantic attributes you want on the event:
+    attrs = {
+        "retrieval.document.rank": index,
+        "retrieval.document.content": document.page_content,
+        **{f"doc.meta.{k}": v for k, v in document.metadata.items()},
+    }
+    return Event(
+        name="langchain.retriever.document",
+        timestamp=time_ns(),
+        attributes=attrs,
+    )
 
 class CallbackFilteredJSONEncoder(json.JSONEncoder):
     """
