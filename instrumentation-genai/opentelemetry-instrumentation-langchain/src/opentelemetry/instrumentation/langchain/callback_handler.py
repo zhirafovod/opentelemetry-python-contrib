@@ -1,29 +1,28 @@
 import json
-import time
 import logging
+import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
-from collections.abc import Sequence
 
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import LLMResult
-from langchain_core.documents import Document
-
 from opentelemetry._events import EventLogger
-from opentelemetry.trace import Span, SpanKind, set_span_in_context, use_span
+from opentelemetry.context import get_current, Context
 from opentelemetry.metrics import Histogram
+from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as GenAI
+from opentelemetry.trace import Span, SpanKind, set_span_in_context, use_span
 from opentelemetry.trace.status import Status, StatusCode
-from opentelemetry.context import get_current, Context, set_value
+
+from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.utils import (
     dont_throw,
     should_collect_content,
     CallbackFilteredJSONEncoder,
 )
-from opentelemetry.instrumentation.langchain.config import Config
-
-from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as GenAI
 from .utils import (
     chat_generation_to_event,
     message_to_event,
@@ -224,7 +223,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             if should_collect_content():
                 span.set_attribute("langchain.entity_output", json.dumps(outputs, cls=CallbackFilteredJSONEncoder))
 
-            self._end_span(run_id=run_id)
+        self._end_span(run_id=run_id)
 
     @dont_throw
     def on_llm_start(
@@ -486,9 +485,20 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         if Config.is_instrumentation_suppressed():
             return
 
-        name = kwargs.get("name")
+        provider = metadata.get("ls_vector_store_provider") if metadata else "unknown"
+        if provider == "WeaviateVectorStore":
+            db_system = "weaviate"
+        elif provider == "Chroma":
+            db_system = "chroma"
+        elif provider == "Milvus":
+            db_system = "milvus"
+        else:
+            db_system = provider
+
+        langchain_name = kwargs.get("name") # VectorStoreRetrival
         operation_name = "retrieval"
-        span_name = f"{operation_name} {name}"
+        span_name = f"LangChain:{langchain_name}({db_system})" # i.e. LangChain:VectorStoreRetrival(milvus)
+
         span = self._start_span(
             name=f"{span_name}",
             kind=SpanKind.CLIENT,
@@ -499,21 +509,18 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             end_on_exit=False,
         ) as span:
             span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, operation_name)
-            # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
-            span.set_attribute(GenAI.GEN_AI_SYSTEM, "langchain")
 
             request_model = metadata.get("ls_embedding_provider")
             span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
-            vector_store_provider =  metadata.get("ls_vector_store_provider")
-            if vector_store_provider == "WeaviateVectorStore":
-                span.set_attribute("db.system", "weaviate")
-            elif vector_store_provider == "Chroma":
-                span.set_attribute("db.system", "chroma")
-            elif vector_store_provider == "Milvus":
-                span.set_attribute("db.system", "milvus")
-            span.set_attribute("langchain.retriever", f"{vector_store_provider} {request_model}")
+            span.set_attribute("gen_ai.framework", "langchain")
+
+            if db_system:
+                span.set_attribute("gen_ai.langchain.db.system", db_system)
+
+            span.set_attribute(GenAI.GEN_AI_SYSTEM, f"{span_name}")
+
             if should_collect_content():
-                span.set_attribute("db.query", query)
+                span.set_attribute("db.query.text", query)
                 self._event_logger.emit(query_to_event(query))
 
             span_state = _SpanState(span=span, span_context=get_current(), request_model=request_model, db_system=db_system)
@@ -545,11 +552,13 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             for index, document in enumerate(documents):
                 self._event_logger.emit(document_to_event(document, index))
 
-            # End the LLM span
-            self._end_span(run_id)
-
             # record metrics
-            self._record_duration_metric_db(run_id, state.request_model, state.request_model,"retrieval", state.db_system)
+            self._record_duration_metric_db(run_id, state.request_model, state.request_model, "retrieval",
+                                            state.db_system)
+
+        # End the LLM span
+        self._end_span(run_id)
+
 
 
     @dont_throw
