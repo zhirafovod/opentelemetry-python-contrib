@@ -191,6 +191,8 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                 span,
                 end_on_exit=False,
         ) as span:
+            span.set_attribute("gen_ai.framework","langchain")
+
             if should_collect_content():
                 span.set_attribute("langchain.entity_input", json.dumps(inputs, cls=CallbackFilteredJSONEncoder))
 
@@ -355,6 +357,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             kind=SpanKind.CLIENT,
             parent_run_id=parent_run_id,
         )
+
         with use_span(
             span,
             end_on_exit=False,
@@ -372,7 +375,8 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                         span.set_attribute(f"gen_ai.request.function.{index}.description", function.get("description"))
                         span.set_attribute(f"gen_ai.request.function.{index}.parameters", str(function.get("parameters")))
             # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
-            span.set_attribute(GenAI.GEN_AI_SYSTEM, "langchain")
+            span.set_attribute(GenAI.GEN_AI_SYSTEM, f"LangChain:{name}")
+
 
             span_state = _SpanState(span=span, span_context=get_current(), request_model=request_model)
             self.spans[run_id] = span_state
@@ -430,6 +434,9 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             end_on_exit=False,
         ) as span:
             description = serialized.get("description")
+            span.set_attribute("gen_ai.framework","langchain")
+            span.set_attribute(GenAI.GEN_AI_SYSTEM, tool_name)
+
             span.set_attribute("gen_ai.tool.description", description)
             span.set_attribute(GenAI.GEN_AI_TOOL_NAME, tool_name)
             span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.EXECUTE_TOOL.value)
