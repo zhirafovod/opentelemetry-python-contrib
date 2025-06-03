@@ -282,25 +282,42 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             tool_calls_attributes = {}
             for generation in getattr(response, "generations", []):
                 for index, chat_generation in enumerate(generation):
+                    # changes for bedrock start
+                    if chat_generation.message and chat_generation.message.usage_metadata:
+                        input_tokens = chat_generation.message.usage_metadata.get("input_tokens", 0)
+                        output_tokens = chat_generation.message.usage_metadata.get("output_tokens", 0)
+                        span.set_attribute(GenAI.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
+                        span.set_attribute(GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
+                    # changes for bedrock end
+
                     prefix = f"{GenAI.GEN_AI_COMPLETION}.{index}"
                     tool_calls = chat_generation.message.additional_kwargs.get("tool_calls")
                     if tool_calls is not None:
                         tool_calls_attributes.update(
                             chat_generation_tool_calls_attributes(tool_calls, prefix)
                         )
-                    self._event_logger.emit(chat_generation_to_event(chat_generation, index, prefix))
                     generation_info = chat_generation.generation_info
                     if generation_info is not None:
                         finish_reason = generation_info.get("finish_reason")
                         if finish_reason is not None and span.is_recording():
                             finish_reasons.append(finish_reason or "error")
+                    # changes for bedrock start
+                    elif chat_generation.message and chat_generation.message.response_metadata:
+                        finish_reason = chat_generation.message.response_metadata.get("stopReason")
+                        if finish_reason is not None and span.is_recording():
+                            finish_reasons.append(finish_reason or "error")
+                    # changes for bedrock end
 
                     span.set_attribute(f"{GenAI.GEN_AI_RESPONSE_FINISH_REASONS}.{index}", finish_reasons)
+                    # changes for bedrock start
+                    self._event_logger.emit(chat_generation_to_event(chat_generation, index, prefix))
 
             if should_collect_content():
                 span.set_attributes(tool_calls_attributes)
 
             # If the LLM result includes usage:
+            # changes for bedrock start
+            model_name = None
             if response.llm_output is not None:
                 model_name = response.llm_output.get("model_name") or response.llm_output.get("model")
                 if model_name and span.is_recording():
@@ -311,32 +328,23 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                     span.set_attribute(GenAI.GEN_AI_RESPONSE_ID, response_id)
 
                 # usage
-                usage = response.llm_output.get("usage") or response.llm_output.get("token_usage")
-                if usage:
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-                    total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
+                # changes for bedrock start
+            #
+            if model_name is None:
+                model_name = state.request_model
+                span.set_attribute(GenAI.GEN_AI_RESPONSE_MODEL, model_name)
 
-                    if span.is_recording():
-                        span.set_attribute(GenAI.GEN_AI_USAGE_INPUT_TOKENS, prompt_tokens)
-                        span.set_attribute(GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, completion_tokens)
-                        # TODO: fix GEN_AI_USAGE_COMPLETION_TOKENS to semantic convention
-                        # state.span.set_attribute(GenAI.GEN_AI_USAGE_TOTAL_TOKENS, total_tokens)
-
-                    # Record metrics
-                    self._record_token_usage(prompt_tokens, state.request_model, model_name, GenAI.GenAiTokenTypeValues.INPUT.value, GenAI.GenAiOperationNameValues.CHAT.value)
-                    self._record_token_usage(completion_tokens, state.request_model, model_name, GenAI.GenAiTokenTypeValues.COMPLETION.value, GenAI.GenAiOperationNameValues.CHAT.value)
+            # Record metrics
+            #
+            self._record_token_usage(input_tokens, state.request_model, model_name, GenAI.GenAiTokenTypeValues.INPUT.value, GenAI.GenAiOperationNameValues.CHAT.value)
+            self._record_token_usage(output_tokens, state.request_model, model_name, GenAI.GenAiTokenTypeValues.COMPLETION.value, GenAI.GenAiOperationNameValues.CHAT.value)
 
             # End the LLM span
             self._end_span(run_id)
 
             # Record overall duration metric
-            model_for_metric = (
-                response.llm_output.get("model_name")
-                if response.llm_output
-                else None
-            )
-            self._record_duration_metric(run_id, state.request_model, model_for_metric, GenAI.GenAiOperationNameValues.CHAT.value)
+            # changes for bedrock end
+            self._record_duration_metric(run_id, state.request_model, model_name, GenAI.GenAiOperationNameValues.CHAT.value)
 
     @dont_throw
     def on_chat_model_start(
@@ -363,8 +371,20 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             end_on_exit=False,
         ) as span:
             span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.CHAT.value)
-            request_model = kwargs.get("invocation_params").get("model_name") if kwargs.get("invocation_params") and kwargs.get("invocation_params").get("model_name") else None
-            span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
+
+            # changes for bedrock start
+            invocation_params = kwargs.get("invocation_params")
+            if invocation_params:
+                model_name = invocation_params.get("model_name")
+                if model_name:
+                    request_model = model_name
+                    span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
+                else:
+                    model_id = invocation_params.get("model_id")
+                    if model_id:
+                        request_model = model_id
+                        span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
+            # changes for bedrock end
 
             tools = kwargs.get("invocation_params").get("tools") if kwargs.get("invocation_params") else None
             if tools is not None:
@@ -385,7 +405,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                 for index, message in enumerate(sub_messages):
                     content = get_property_value(message, "content")
                     type = get_property_value(message, "type")
-                    if should_collect_content():
+                    if tools and should_collect_content():
                         if type == "human" and len(sub_messages) > 1:
                             span.set_attribute(f"gen_ai.prompt.{index}.content", content)
                             span.set_attribute(f"gen_ai.prompt.{index}.role", "human")

@@ -2,6 +2,10 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langchain_aws import ChatBedrock
+
+import boto3
+
 import pytest
 from typing import Optional
 
@@ -44,7 +48,7 @@ def test_langchain_call(
         print(f"span: {span}")
         print(f"span attributes: {span.attributes}")
     # TODO: fix the code and ensure the assertions are correct
-    assert_completion_attributes(spans[0], llm_model_value, response)
+    assert_openai_completion_attributes(spans[0], llm_model_value, response)
 
     # verify logs
     logs = log_exporter.get_finished_logs()
@@ -84,18 +88,91 @@ def test_langchain_call(
         if m.name == gen_ai_metrics.GEN_AI_CLIENT_TOKEN_USAGE:
             assert_token_usage_metric(m, spans[0])
 
+@pytest.mark.vcr()
+def test_langchain_bedrock(
+    span_exporter, log_exporter, metric_reader, instrument_with_content
+):
+    llm_model_value = "arn:aws:bedrock:us-west-2:906383545488:inference-profile/us.amazon.nova-lite-v1:0"
+    llm = ChatBedrock(
+        model_id=llm_model_value,
+          client=boto3.client(
+              "bedrock-runtime",
+              aws_access_key_id="test_key",
+              aws_secret_access_key="test_secret",
+              region_name="us-west-2",
+              aws_account_id="906383545488",
+          ),
+        provider="amazon",
+        )
+
+    messages = [
+        SystemMessage(content="You are a helpful assistant!"),
+        HumanMessage(content="What is the capital of France?"),
+    ]
+
+    result = llm.invoke(messages)
+
+    # response = llm.invoke(messages)
+    assert result.content.find("The capital of France is Paris") != -1
+
+    # verify spans
+    spans = span_exporter.get_finished_spans()
+    print(f"spans: {spans}")
+    for span in spans:
+        print(f"span: {span}")
+        print(f"span attributes: {span.attributes}")
+    # TODO: fix the code and ensure the assertions are correct
+    assert_bedrock_completion_attributes(spans[0], llm_model_value, result)
+
+    # verify logs
+    logs = log_exporter.get_finished_logs()
+    print(f"logs: {logs}")
+    for log in logs:
+        print(f"log: {log}")
+        print(f"log attributes: {log.log_record.attributes}")
+        print(f"log body: {log.log_record.body}")
+    system_message = {"content": messages[0].content}
+    human_message = {"content": messages[1].content}
+    assert len(logs) == 3
+    assert_message_in_logs(
+        logs[0], "gen_ai.system.message", system_message, spans[0]
+    )
+    assert_message_in_logs(
+        logs[1], "gen_ai.human.message", human_message, spans[0]
+    )
+
+    chat_generation_event = {
+        "index": 0,
+        "finish_reason": "end_turn",
+        "message": {
+            "content": result.content,
+            "type": "ChatGeneration"
+        }
+    }
+    assert_message_in_logs(logs[2], "gen_ai.choice", chat_generation_event, spans[0])
+
+    metrics = metric_reader.get_metrics_data().resource_metrics
+    print(f"metrics: {metrics}")
+    assert len(metrics) == 1
+
+    metric_data = metrics[0].scope_metrics[0].metrics
+    for m in metric_data:
+        if m.name == gen_ai_metrics.GEN_AI_CLIENT_OPERATION_DURATION:
+            assert_duration_metric(m, spans[0])
+        if m.name == gen_ai_metrics.GEN_AI_CLIENT_TOKEN_USAGE:
+            assert_token_usage_metric(m, spans[0])
 
 ### Utils ###
 # TDDO: modify to do the correct assertion. This is a copy paste from the openai
 # We should get the same telemetry from the openai and langchain, with the only difference that
 # gen_ai.system is either 'openai' or 'langchain'
-def assert_completion_attributes(
+def assert_openai_completion_attributes(
     span: ReadableSpan,
     request_model: str,
     response: Optional,
     operation_name: str = "chat",
 ):
-    return assert_all_attributes(
+    return assert_all_openai_attributes(
         span,
         request_model,
         response.response_metadata.get("model_name"),
@@ -104,8 +181,22 @@ def assert_completion_attributes(
         operation_name,
     )
 
+def assert_bedrock_completion_attributes(
+    span: ReadableSpan,
+    request_model: str,
+    response: Optional,
+    operation_name: str = "chat",
+):
+    return assert_all_bedrock_attributes(
+        span,
+        request_model,
+        response.usage_metadata.get("input_tokens"),
+        response.usage_metadata.get("output_tokens"),
+        operation_name,
+    )
+
 # this is a sample assertion copied from openai
-def assert_all_attributes(
+def assert_all_openai_attributes(
     span: ReadableSpan,
     request_model: str,
     response_model: str = "gpt-3.5-turbo-0125",
@@ -113,7 +204,7 @@ def assert_all_attributes(
     output_tokens: Optional[int] = None,
     operation_name: str = "chat",
     span_name: str = "ChatOpenAI.chat",
-    system: str = "langchain",
+    system: str = "LangChain:ChatOpenAI",
 ):
     assert span.name == span_name
 
@@ -126,6 +217,41 @@ def assert_all_attributes(
     assert response_model == "gpt-3.5-turbo-0125"
 
     assert gen_ai_attributes.GEN_AI_RESPONSE_ID in span.attributes
+
+    if input_tokens:
+        assert (
+            input_tokens
+            == span.attributes[gen_ai_attributes.GEN_AI_USAGE_INPUT_TOKENS]
+        )
+    else:
+        assert gen_ai_attributes.GEN_AI_USAGE_INPUT_TOKENS not in span.attributes
+
+    if output_tokens:
+        assert (
+            output_tokens
+            == span.attributes[gen_ai_attributes.GEN_AI_USAGE_OUTPUT_TOKENS]
+        )
+    else:
+        assert (
+            gen_ai_attributes.GEN_AI_USAGE_OUTPUT_TOKENS not in span.attributes
+        )
+
+def assert_all_bedrock_attributes(
+    span: ReadableSpan,
+    request_model: str,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    operation_name: str = "chat",
+    span_name: str = "ChatBedrock.chat",
+    system: str = "LangChain:ChatBedrock",
+):
+    assert span.name == span_name
+
+    assert operation_name == span.attributes[gen_ai_attributes.GEN_AI_OPERATION_NAME]
+
+    assert system == span.attributes[gen_ai_attributes.GEN_AI_SYSTEM]
+
+    assert request_model == "arn:aws:bedrock:us-west-2:906383545488:inference-profile/us.amazon.nova-lite-v1:0"
 
     if input_tokens:
         assert (

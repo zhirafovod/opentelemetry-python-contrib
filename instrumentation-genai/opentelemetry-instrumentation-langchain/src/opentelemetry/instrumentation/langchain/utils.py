@@ -71,7 +71,8 @@ def message_to_event(message, tools, content, type):
                 ("content",content),
                 ("tool_calls",str(tool_calls))
             ])
-        elif type == "human":
+        # changes for bedrock start
+        elif type == "human" or type == "system":
             body.update([
                 ("content",content)
             ])
@@ -104,6 +105,9 @@ def chat_generation_to_event(chat_generation, index, prefix):
             generation_info = chat_generation.generation_info
             if generation_info is not None:
                 finish_reason = generation_info.get("finish_reason")
+            # changes for bedrock start
+            elif chat_generation.message and chat_generation.message.response_metadata:
+                finish_reason = chat_generation.message.response_metadata.get("stopReason")
 
             message = {
                 "content": content,
