@@ -28,8 +28,16 @@ classifiers = [
 dependencies = [
   "opentelemetry-api ~= 1.30",
   "opentelemetry-instrumentation ~= 0.51b0",
-  "opentelemetry-semantic-conventions ~= 0.51b0"
+  "opentelemetry-semantic-conventions ~= 0.51b0",
+  "opentelemetry-api>=1.31.0",
+  "opentelemetry-sdk>=1.31.0",
 ]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=7.0.0",
+]
+# evaluation = ["deepevals>=0.1.0", "openlit-sdk>=0.1.0"]
 
 [project.urls]
 Homepage = "https://github.com/open-telemetry/opentelemetry-python-contrib/tree/main/instrumentation-genai/opentelemetry-genai-sdk"

@@ -48,7 +48,7 @@ class SpanMetricEventExporter(BaseExporter):
         )
 
 
-class SpanMetricsExporter(BaseExporter):
+class SpanMetricExporter(BaseExporter):
     """
     Emits only spans and metrics (no events).
     """
