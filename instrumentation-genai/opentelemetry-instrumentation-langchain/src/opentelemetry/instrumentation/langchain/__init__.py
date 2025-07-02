@@ -18,15 +18,9 @@ from opentelemetry.trace import get_tracer
 from opentelemetry._events import get_event_logger
 from opentelemetry.semconv._incubating.metrics import gen_ai_metrics
 
-# === New imports from our GenAI SDK ===
-from opentelemetry.genai.sdk.api import (
-    llm_start,
-    llm_stop,
-    llm_fail,
-    tool_start,
-    tool_stop,
-)
-from opentelemetry.genai.sdk.exporters import SpanMetricEventExporter
+# === Now we delegate to our GenAI SDK ===
+from opentelemetry.genai.sdk.api import get_telemetry_client
+from opentelemetry.genai.sdk.api import TelemetryClient
 
 # todo: fix me! newer versions are not backward compatible
 _instruments = (
@@ -39,22 +33,22 @@ class LangChainInstrumentor(BaseInstrumentor):
     """
     OpenTelemetry instrumentor for LangChain.
 
-    This adds a custom callback handler to the LangChain callback manager
-    to capture chain, LLM, and tool events. It also wraps the internal
-    OpenAI invocation points to inject W3C trace headers.
+    Delegates all GenAI spans/metrics/events to the GenAI SDK's TelemetryClient.
     """
 
     def __init__(self, disable_trace_injection: bool = False):
         super().__init__()
         self._disable_trace_injection = disable_trace_injection
         self._logger = logging.getLogger(__name__)
-        # will hold our SDK exporter
-        self._sdk_exporter = None
+
+        self._telemetry: TelemetryClient | None = None
 
     def instrumentation_dependencies(self) -> Collection[str]:
         return _instruments
 
     def _instrument(self, **kwargs):
+        # TODO: need to move telemetry provider instantiation to the TelemetryClient client we should pass kwargs context into the TelemetryClient._instrument(class_name ,kwargs) additionally in TelemetryClient we need to check if these providers are not instantiated by instrumentation frameworks higher in the stack call and instantiate it them (use case - when TelemetryClient is used from LiteLLM Opentelemetry Integration
+        ## move from here ->
         tracer_provider = kwargs.get("tracer_provider")
         meter_provider = kwargs.get("meter_provider")
         event_logger_provider = kwargs.get("event_logger_provider")
@@ -64,81 +58,60 @@ class LangChainInstrumentor(BaseInstrumentor):
         event_logger = get_event_logger(
             __name__, __version__, event_logger_provider=event_logger_provider
         )
+        ### <- to here
 
-        # Create shared metrics: duration + token histograms
-        duration_histogram = meter.create_histogram(
-            name=gen_ai_metrics.GEN_AI_CLIENT_OPERATION_DURATION,
-            unit="s",
-            description="GenAI operation duration",
-        )
-        token_histogram = meter.create_histogram(
-            name=gen_ai_metrics.GEN_AI_CLIENT_TOKEN_USAGE,
-            unit="{token}",
-            description="Measures number of input and output tokens used",
-        )
+        # Instantiate a singleton TelemetryClient bound to our tracer & meter
+        self._telemetry = get_telemetry_client(tracer=tracer, meter=meter, exporter_type="full")
 
-        # === Instantiate our GenAI SDK exporter ===
-        self._sdk_exporter = SpanMetricEventExporter(tracer=tracer, meter=meter)
-
-        # Create OTel callback handler and attach our exporter to it:
-        otel_callback_handler = OpenTelemetryLangChainCallbackHandler(
+        # Create OTel callback handler and attach our telemetry client
+        handler = OpenTelemetryLangChainCallbackHandler(
             tracer=tracer,
-            duration_histogram=duration_histogram,
-            token_histogram=token_histogram,
+            duration_histogram=meter.create_histogram(
+                name=gen_ai_metrics.GEN_AI_CLIENT_OPERATION_DURATION,
+                unit="s",
+                description="GenAI operation duration",
+            ),
+            token_histogram=meter.create_histogram(
+                name=gen_ai_metrics.GEN_AI_CLIENT_TOKEN_USAGE,
+                unit="{token}",
+                description="Number of tokens used",
+            ),
             event_logger=event_logger,
         )
-        # monkey-patch so handler can call into sdk_exporter
-        otel_callback_handler.sdk_exporter = self._sdk_exporter
+        # allow the handler to call telemetry.start/stop
+        handler.telemetry_client = self._telemetry
 
-        # Hook BaseCallbackManager so our handler is registered:
+        # Hook BaseCallbackManager so our handler is registered
         wrap_function_wrapper(
             module="langchain_core.callbacks",
             name="BaseCallbackManager.__init__",
-            wrapper=_BaseCallbackManagerInitWrapper(otel_callback_handler),
+            wrapper=_BaseCallbackManagerInitWrapper(handler),
         )
 
-        # Optionally wrap LangChain's OpenAI entrypoints for trace injection:
+        # Trace-context injection wrappers (unchanged)…
         if not self._disable_trace_injection:
-            wrap_function_wrapper(
-                module="langchain_openai.llms.base",
-                name="BaseOpenAI._generate",
-                wrapper=_OpenAITraceInjectionWrapper(otel_callback_handler),
-            )
-            wrap_function_wrapper(
-                module="langchain_openai.llms.base",
-                name="BaseOpenAI._agenerate",
-                wrapper=_OpenAITraceInjectionWrapper(otel_callback_handler),
-            )
-            wrap_function_wrapper(
-                module="langchain_openai.llms.base",
-                name="BaseOpenAI._stream",
-                wrapper=_OpenAITraceInjectionWrapper(otel_callback_handler),
-            )
-            wrap_function_wrapper(
-                module="langchain_openai.llms.base",
-                name="BaseOpenAI._astream",
-                wrapper=_OpenAITraceInjectionWrapper(otel_callback_handler),
-            )
-            wrap_function_wrapper(
-                module="langchain_openai.chat_models.base",
-                name="BaseChatOpenAI._generate",
-                wrapper=_OpenAITraceInjectionWrapper(otel_callback_handler),
-            )
-            wrap_function_wrapper(
-                module="langchain_openai.chat_models.base",
-                name="BaseChatOpenAI._agenerate",
-                wrapper=_OpenAITraceInjectionWrapper(otel_callback_handler),
-            )
+            for mod, fn in [
+                ("langchain_openai.llms.base", "BaseOpenAI._generate"),
+                ("langchain_openai.llms.base", "BaseOpenAI._agenerate"),
+                ("langchain_openai.llms.base", "BaseOpenAI._stream"),
+                ("langchain_openai.llms.base", "BaseOpenAI._astream"),
+                ("langchain_openai.chat_models.base", "BaseChatOpenAI._generate"),
+                ("langchain_openai.chat_models.base", "BaseChatOpenAI._agenerate"),
+            ]:
+                wrap_function_wrapper(module=mod, name=fn, wrapper=_OpenAITraceInjectionWrapper(handler))
 
     def _uninstrument(self, **kwargs):
         unwrap("langchain_core.callbacks.base", "BaseCallbackManager.__init__")
         if not self._disable_trace_injection:
-            unwrap("langchain_openai.llms.base", "BaseOpenAI._generate")
-            unwrap("langchain_openai.llms.base", "BaseOpenAI._agenerate")
-            unwrap("langchain_openai.llms.base", "BaseOpenAI._stream")
-            unwrap("langchain_openai.llms.base", "BaseOpenAI._astream")
-            unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._generate")
-            unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._agenerate")
+            for mod, fn in [
+                ("langchain_openai.llms.base", "BaseOpenAI._generate"),
+                ("langchain_openai.llms.base", "BaseOpenAI._agenerate"),
+                ("langchain_openai.llms.base", "BaseOpenAI._stream"),
+                ("langchain_openai.llms.base", "BaseOpenAI._astream"),
+                ("langchain_openai.chat_models.base", "BaseChatOpenAI._generate"),
+                ("langchain_openai.chat_models.base", "BaseChatOpenAI._agenerate"),
+            ]:
+                unwrap(mod, fn)
 
 
 class _BaseCallbackManagerInitWrapper:
