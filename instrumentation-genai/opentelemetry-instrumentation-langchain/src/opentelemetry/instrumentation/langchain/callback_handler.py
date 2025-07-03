@@ -46,13 +46,18 @@ class _SpanState:
     db_system: Optional[str] = None
     children: List[UUID] = field(default_factory=list)
 
-
+# TODO:
+#  1. for POC leave just LLM Invocation support ONLY (on_llm_start, on_llm_end)
+#  2. move all of the telemetry creation to opentelemetry-genai-sdk.exporter implementations
+#  3. replace opentelemetry.sdk in the code here with opentelemetry-genai-sdk.api.* calls
+#
 class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
     """
     A callback handler for LangChain that uses OpenTelemetry to create spans
     for chains, LLM calls, and tools.
     """
 
+    # TODO: pass telemetryClient from the LangChainInstrumentor class
     def __init__(
         self,
         tracer,
@@ -227,6 +232,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
 
         self._end_span(run_id=run_id)
 
+    # TODO: replace telemetry creation with opentelemetry.genai.sdk.api.on_llm_start
     @dont_throw
     def on_llm_start(
         self,
@@ -258,6 +264,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             for i, p in enumerate(prompts):
                 span.set_attribute(f"langchain.prompts.{i}", p)
 
+    # TODO: replace telemetry creation with opentelemetry.genai.sdk.api.on_llm_stop
     @dont_throw
     def on_llm_end(
         self,
