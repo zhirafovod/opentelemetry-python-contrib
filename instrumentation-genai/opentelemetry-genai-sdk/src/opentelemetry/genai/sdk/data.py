@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-
+from typing import Optional
 
 @dataclass
 class Message:
@@ -10,7 +10,7 @@ class Message:
 class ChatGeneration:
     content: str
     type: str
-    finish_reason: str = None
+    finish_reason: Optional[str] = None
 
 @dataclass
 class Error:
