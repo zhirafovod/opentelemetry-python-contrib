@@ -63,8 +63,6 @@ def _configure_telemetry():
         #     BatchLogRecordProcessor(OTLPLogExporter())
         # )
         # _events.set_event_logger_provider(EventLoggerProvider())
-        
-        print("OpenTelemetry providers configured successfully")
     except Exception as e:
         print(f"Warning: Failed to configure OpenTelemetry providers - {e}")
 
