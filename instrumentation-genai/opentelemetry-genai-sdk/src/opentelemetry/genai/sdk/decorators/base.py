@@ -26,47 +26,23 @@ from opentelemetry.genai.sdk.exporters import _get_property_value
 
 from opentelemetry.genai.sdk.api import get_telemetry_client
 
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-    OTLPSpanExporter,
-)
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-from opentelemetry import trace, metrics
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry import trace
 
-# Configure OpenTelemetry providers (add this after imports)
-def _configure_telemetry():
-    """Configure OpenTelemetry providers if not already configured"""
-    # Check if providers are already configured
-    try:
-        # Configure tracing
-        tracer_provider = TracerProvider()
-        trace.set_tracer_provider(tracer_provider)
-        
-        # Check environment variable to decide which exporter to use
-        span_exporter = OTLPSpanExporter()
-        
-        span_processor = BatchSpanProcessor(span_exporter)
-        tracer_provider.add_span_processor(span_processor)
-        
-        # Configure metrics
-        metric_exporter = OTLPMetricExporter()
-        metric_reader = PeriodicExportingMetricReader(metric_exporter)
-        meter_provider = MeterProvider(metric_readers=[metric_reader])
-        metrics.set_meter_provider(meter_provider)
+def _ensure_tracer_provider():
+    # Only set a default TracerProvider if one isn't set
+    if type(trace.get_tracer_provider()).__name__ == "ProxyTracerProvider":
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        exporter_protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
+        if exporter_protocol == "http" or exporter_protocol == "http/protobuf":
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        else:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        provider = TracerProvider()
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        trace.set_tracer_provider(provider)
 
-        # configure logging and events
-        # _logs.set_logger_provider(LoggerProvider())
-        # _logs.get_logger_provider().add_log_record_processor(
-        #     BatchLogRecordProcessor(OTLPLogExporter())
-        # )
-        # _events.set_event_logger_provider(EventLoggerProvider())
-    except Exception as e:
-        print(f"Warning: Failed to configure OpenTelemetry providers - {e}")
-
-_configure_telemetry()
+_ensure_tracer_provider()
 
 
 P = ParamSpec("P")
@@ -320,13 +296,11 @@ def entity_method(
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
     def decorate(fn: F) -> F:
-        # Unwrap StructuredTool if present
         fn = _unwrap_structured_tool(fn)
         is_async = _is_async_method(fn)
         entity_name = name or _get_original_function_name(fn)
         if is_async:
             if _is_async_generator(fn):
-
                 @wraps(fn)
                 async def async_gen_wrap(*args: Any, **kwargs: Any) -> Any:
                     
@@ -336,7 +310,6 @@ def entity_method(
 
                 return async_gen_wrap
             else:
-
                 @wraps(fn)
                 async def async_wrap(*args, **kwargs):
                     try:
@@ -351,7 +324,6 @@ def entity_method(
 
             decorated = async_wrap
         else:
-
             @wraps(fn)
             def sync_wrap(*args: Any, **kwargs: Any) -> Any:
                 try:
