@@ -79,33 +79,37 @@ def _should_send_prompts():
 def _handle_llm_span_attributes(tlp_span_kind, args, kwargs, res=None):
     """Add GenAI-specific attributes to span for LLM operations by delegating to TelemetryClient logic."""
     if tlp_span_kind != ObserveSpanKindValues.LLM:
-        return
+        return None
 
     # Import here to avoid circular import issues
     from uuid import uuid4
-    import contextlib
 
     # Extract messages and attributes as before
     messages = _extract_messages_from_args_kwargs(args, kwargs)
-    attributes = _extract_llm_attributes_from_args_kwargs(args, kwargs, res)
+    # attributes = _extract_llm_attributes_from_args_kwargs(args, kwargs, res)
     run_id = uuid4()
 
-    # Pass the current span to TelemetryClient via context
-    # context_api.set_value("active_llm_span", span)
-
     try:
-        telemetry.start_llm(prompts=messages, run_id=run_id, **attributes)
+        telemetry.start_llm(prompts=messages, run_id=run_id)
+        return run_id  # Return run_id so it can be used later
     except Exception as e:
         print(f"Warning: TelemetryClient.start_llm failed: {e}")
-        return
+        return None
 
+
+def _finish_llm_span(run_id, res, **attributes):
+    """Finish the LLM span with response data"""
+    if not run_id:
+        return
     if res:
-        chat_generations = _extract_chat_generations_from_response(res)
-        try:
-            with contextlib.suppress(Exception):
-                telemetry.stop_llm(run_id=run_id, chat_generations=chat_generations)
-        except Exception as e:
-            print(f"Warning: TelemetryClient.stop_llm failed: {e}")
+        _extract_response_attributes(res, attributes)
+    chat_generations = _extract_chat_generations_from_response(res)
+    try:
+        import contextlib
+        with contextlib.suppress(Exception):
+            telemetry.stop_llm(run_id, chat_generations, **attributes)
+    except Exception as e:
+        print(f"Warning: TelemetryClient.stop_llm failed: {e}")
 
 
 def _extract_messages_from_args_kwargs(args, kwargs):
@@ -229,7 +233,6 @@ def _extract_response_attributes(res, attributes):
         # Extract response ID
         if hasattr(res, 'id'):
             attributes['response_id'] = res.id
-            
     except Exception:
         # Silently ignore errors in extracting response attributes
         pass
@@ -307,16 +310,27 @@ def entity_method(
                     # add entity_name to kwargs
                     kwargs["system"] = entity_name
                     _handle_llm_span_attributes(tlp_span_kind, args, kwargs)
+                    async for item in fn(*args, **kwargs):
+                        yield item
 
                 return async_gen_wrap
             else:
                 @wraps(fn)
                 async def async_wrap(*args, **kwargs):
                     try:
-                        res = await fn(*args, **kwargs)
+                        # Start LLM span before the call
+                        run_id = None
+                        if tlp_span_kind == ObserveSpanKindValues.LLM:
+                            run_id = _handle_llm_span_attributes(tlp_span_kind, args, kwargs)
 
-                        # Add GenAI-specific attributes from response for LLM spans
-                        _handle_llm_span_attributes(tlp_span_kind, args, kwargs, res)                        
+                        res = await fn(*args, **kwargs)
+                        if tlp_span_kind == ObserveSpanKindValues.LLM and run_id:
+                            kwargs["system"] = entity_name
+                            # Extract attributes from args and kwargs
+                            attributes = _extract_llm_attributes_from_args_kwargs(args, kwargs, res)
+
+                        _finish_llm_span(run_id, res, **attributes)
+                                    
                     except Exception as e:
                         print(traceback.format_exc())
                         raise e
@@ -327,12 +341,22 @@ def entity_method(
             @wraps(fn)
             def sync_wrap(*args: Any, **kwargs: Any) -> Any:
                 try:
+                    # Start LLM span before the call
+                    run_id = None
+                    if tlp_span_kind == ObserveSpanKindValues.LLM:
+                        # Handle LLM span attributes
+                        run_id = _handle_llm_span_attributes(tlp_span_kind, args, kwargs)
+
                     res = fn(*args, **kwargs)
-                    # Add entity_name to kwargs
-                    kwargs["system"] = entity_name
-                    # Add GenAI-specific attributes from response for LLM spans
-                    _handle_llm_span_attributes(tlp_span_kind, args, kwargs, res)
                     
+                    # Finish LLM span after the call
+                    if tlp_span_kind == ObserveSpanKindValues.LLM and run_id:
+                        kwargs["system"] = entity_name
+                        # Extract attributes from args and kwargs
+                        attributes = _extract_llm_attributes_from_args_kwargs(args, kwargs, res)
+
+                        _finish_llm_span(run_id, res, **attributes)
+
                 except Exception as e:
                     print(traceback.format_exc())
                     raise e
