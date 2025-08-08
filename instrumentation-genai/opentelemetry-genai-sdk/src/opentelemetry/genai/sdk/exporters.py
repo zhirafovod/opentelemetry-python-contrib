@@ -225,16 +225,6 @@ class SpanMetricEventExporter(BaseExporter):
             if completion_tokens is not None:
                 span.set_attribute(GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, completion_tokens)
 
-            for index, message in enumerate(invocation.messages):
-                content = message.content
-                type = message.type
-                span.set_attribute(f"gen_ai.prompt.{index}.content", content)
-                span.set_attribute(f"gen_ai.prompt.{index}.role", type)
-
-            for index, chat_generation in enumerate(invocation.chat_generations):
-                span.set_attribute(f"gen_ai.completion.{index}.content", chat_generation.content)
-                span.set_attribute(f"gen_ai.completion.{index}.role", chat_generation.type)
-
             metric_attributes = _get_metric_attributes(request_model, response_model, GenAI.GenAiOperationNameValues.CHAT.value, system, framework)
 
             # Record token usage metrics
