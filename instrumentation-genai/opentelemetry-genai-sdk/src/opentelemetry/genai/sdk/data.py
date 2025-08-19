@@ -2,7 +2,6 @@
 from dataclasses import dataclass, field
 from typing import Optional, List
 
-
 @dataclass
 class ToolOutput:
     tool_call_id: str
