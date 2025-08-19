@@ -70,6 +70,10 @@ exporter_type_full = should_emit_events()
 telemetry = get_telemetry_client(exporter_type_full)
 
 
+def _get_parent_run_id():
+    # Placeholder for parent run ID logic; return None if not available
+    return None
+
 def _should_send_prompts():
     return (
         os.getenv("OBSERVE_TRACE_CONTENT") or "true"
@@ -86,11 +90,15 @@ def _handle_llm_span_attributes(tlp_span_kind, args, kwargs, res=None):
 
     # Extract messages and attributes as before
     messages = _extract_messages_from_args_kwargs(args, kwargs)
-    # attributes = _extract_llm_attributes_from_args_kwargs(args, kwargs, res)
+    tool_functions = _extract_tool_functions_from_args_kwargs(args, kwargs)
     run_id = uuid4()
 
     try:
-        telemetry.start_llm(prompts=messages, run_id=run_id)
+        telemetry.start_llm(prompts=messages, 
+                            tool_functions=tool_functions, 
+                            run_id=run_id, 
+                            parent_run_id=_get_parent_run_id(), 
+                            **_extract_llm_attributes_from_args_kwargs(args, kwargs, res))
         return run_id  # Return run_id so it can be used later
     except Exception as e:
         print(f"Warning: TelemetryClient.start_llm failed: {e}")
@@ -143,10 +151,72 @@ def _extract_messages_from_args_kwargs(args, kwargs):
             msg_type = "user" if msg_type == "human" else msg_type
             
             if content and msg_type:
-                messages.append(Message(content=str(content), type=str(msg_type)))
+                # Provide default values for required arguments
+                messages.append(Message(
+                    content=str(content), 
+                    name="",  # Default empty name
+                    type=str(msg_type),
+                    tool_call_id=""  # Default empty tool_call_id
+                ))
     
     return messages
 
+
+def _extract_tool_functions_from_args_kwargs(args, kwargs):
+    """Extract tool functions from function arguments"""
+    from opentelemetry.genai.sdk.data import ToolFunction
+    
+    tool_functions = []
+    
+    # Try to find tools in various places
+    tools = None
+    
+    # Check kwargs for tools
+    if kwargs.get('tools'):
+        tools = kwargs['tools']
+    elif kwargs.get('functions'):
+        tools = kwargs['functions']
+    
+    # Check args for objects that might have tools
+    if not tools and len(args) > 0:
+        for arg in args:
+            if hasattr(arg, 'tools'):
+                tools = getattr(arg, 'tools', [])
+                break
+            elif hasattr(arg, 'functions'):
+                tools = getattr(arg, 'functions', [])
+                break
+    
+    # Convert tools to ToolFunction objects
+    if tools:
+        for tool in tools:
+            try:
+                # Handle different tool formats
+                if hasattr(tool, 'name'):
+                    # LangChain-style tool
+                    tool_name = tool.name
+                    tool_description = getattr(tool, 'description', '')
+                elif isinstance(tool, dict) and 'name' in tool:
+                    # Dict-style tool
+                    tool_name = tool['name']
+                    tool_description = tool.get('description', '')
+                elif hasattr(tool, '__name__'):
+                    # Function-style tool
+                    tool_name = tool.__name__
+                    tool_description = getattr(tool, '__doc__', '') or ''
+                else:
+                    continue
+                
+                tool_functions.append(ToolFunction(
+                    name=tool_name,
+                    description=tool_description,
+                    parameters={} 
+                ))
+            except Exception:
+                # Skip tools that can't be processed
+                continue
+    
+    return tool_functions
 
 def _extract_llm_attributes_from_args_kwargs(args, kwargs, res=None):
     """Extract LLM attributes from function arguments"""
@@ -293,9 +363,7 @@ def _unwrap_structured_tool(fn):
 
 def entity_method(
     name: Optional[str] = None,
-    description: Optional[str] = None,
-    version: Optional[int] = None,
-    protocol: Optional[str] = None,
+    model_name: Optional[str] = None,
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
     def decorate(fn: F) -> F:
@@ -374,9 +442,7 @@ def entity_method(
 
 def entity_class(
     name: Optional[str],
-    description: Optional[str],
-    version: Optional[int],
-    protocol: Optional[str],
+    model_name: Optional[str],
     method_name: Optional[str],
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ):
@@ -428,9 +494,7 @@ def entity_class(
                         sig = inspect.signature(unwrapped_method)
                         wrapped_method = entity_method(
                             name=f"{task_name}.{method_to_wrap}",
-                            description=description,
-                            version=version,
-                            protocol=protocol,
+                            model_name=model_name,
                             tlp_span_kind=tlp_span_kind,
                         )(unwrapped_method)
                         # Set the wrapped method on the class
@@ -442,4 +506,3 @@ def entity_class(
         return cls
 
     return decorator
-

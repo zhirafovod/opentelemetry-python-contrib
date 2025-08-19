@@ -18,9 +18,6 @@ F = TypeVar("F", bound=Callable[P, Union[R, Awaitable[R]]])
 
 def task(
     name: Optional[str] = None,
-    description: Optional[str] = None,
-    version: Optional[int] = None,
-    protocol: Optional[str] = None,
     method_name: Optional[str] = None,
     tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TASK,
 ) -> Callable[[F], F]:
@@ -29,9 +26,6 @@ def task(
         if inspect.isclass(target):
             return entity_class(
                 name=name,
-                description=description,
-                version=version,
-                protocol=protocol,
                 method_name=method_name,
                 tlp_span_kind=tlp_span_kind,
             )(target)
@@ -39,9 +33,6 @@ def task(
             # Target is a function/method
             return entity_method(
                 name=name,
-                description=description,
-                version=version,
-                protocol=protocol,
                 tlp_span_kind=tlp_span_kind,
             )(target)
     return decorator
@@ -49,9 +40,6 @@ def task(
 
 def workflow(
     name: Optional[str] = None,
-    description: Optional[str] = None,
-    version: Optional[int] = None,
-    protocol: Optional[str] = None,
     method_name: Optional[str] = None,
     tlp_span_kind: Optional[
         Union[ObserveSpanKindValues, str]
@@ -62,9 +50,6 @@ def workflow(
         if inspect.isclass(target):
             return entity_class(
                 name=name,
-                description=description,
-                version=version,
-                protocol=protocol,
                 method_name=method_name,
                 tlp_span_kind=tlp_span_kind,
             )(target)
@@ -72,9 +57,6 @@ def workflow(
             # Target is a function/method
             return entity_method(
                 name=name,
-                description=description,
-                version=version,
-                protocol=protocol,
                 tlp_span_kind=tlp_span_kind,
             )(target)
 
@@ -83,16 +65,10 @@ def workflow(
 
 def agent(
     name: Optional[str] = None,
-    description: Optional[str] = None,
-    version: Optional[int] = None,
-    protocol: Optional[str] = None,
     method_name: Optional[str] = None,
 ) -> Callable[[F], F]:
     return workflow(
         name=name,
-        description=description,
-        version=version,
-        protocol=protocol,
         method_name=method_name,
         tlp_span_kind=ObserveSpanKindValues.AGENT,
     )
@@ -100,14 +76,10 @@ def agent(
 
 def tool(
     name: Optional[str] = None,
-    description: Optional[str] = None,
-    version: Optional[int] = None,
     method_name: Optional[str] = None,
 ) -> Callable[[F], F]:
     return task(
         name=name,
-        description=description,
-        version=version,
         method_name=method_name,
         tlp_span_kind=ObserveSpanKindValues.TOOL,
     )
@@ -115,8 +87,7 @@ def tool(
 
 def llm(
     name: Optional[str] = None,
-    description: Optional[str] = None,
-    version: Optional[int] = None,
+    model_name: Optional[str] = None,
     method_name: Optional[str] = None,
 ) -> Callable[[F], F]:
     def decorator(target):
@@ -124,8 +95,7 @@ def llm(
         if inspect.isclass(target):
             return entity_class(
                 name=name,
-                description=description,
-                version=version,
+                model_name=model_name,
                 method_name=method_name,
                 tlp_span_kind=ObserveSpanKindValues.LLM,
             )(target)
@@ -133,8 +103,7 @@ def llm(
             # Target is a function/method
             return entity_method(
                 name=name,
-                description=description,
-                version=version,
+                model_name=model_name,
                 tlp_span_kind=ObserveSpanKindValues.LLM,
             )(target)
     return decorator
