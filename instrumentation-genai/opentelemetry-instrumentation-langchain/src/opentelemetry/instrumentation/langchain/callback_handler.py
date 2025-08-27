@@ -215,9 +215,15 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         # generates evaluation child spans.
         # pass only required attributes to evaluation client
         if should_enable_evaluation():
-            import asyncio
-            asyncio.create_task(self._evaluation_client.evaluate(invocation))
-        # self._evaluation_client.evaluate(invocation)
+            # Run evaluation synchronously to avoid overwhelming rate limits
+            import time
+            try:
+                self._evaluation_client.evaluate(invocation)
+                # Add small delay after evaluation to prevent rate limiting
+                time.sleep(0.5)
+            except Exception as e:
+                print(f"Evaluation failed: {e}")
+                # Continue execution even if evaluation fails
 
 
     @dont_throw

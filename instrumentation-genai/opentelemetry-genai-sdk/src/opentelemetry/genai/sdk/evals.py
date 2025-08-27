@@ -7,7 +7,7 @@ from opentelemetry.trace import (
     Tracer,
 )
 from opentelemetry import _events
-from .deepeval import evaluate_answer_relevancy_metric
+from .deepeval import evaluate_all_metrics
 from opentelemetry.trace import SpanContext, Span
 from opentelemetry.trace.span import NonRecordingSpan
 
@@ -48,36 +48,93 @@ class DeepEvalEvaluator(Evaluator):
         human_message = next((msg for msg in invocation.messages if msg.type == "human"), None)
         content = invocation.chat_generations[0].content
         if content is not None and content != "":
-            eval_arm = evaluate_answer_relevancy_metric(human_message.content, invocation.chat_generations[0].content, [])
-            self._do_telemetry(invocation.messages[1].content, invocation.chat_generations[0].content,
-                               invocation.span_id, invocation.trace_id, eval_arm)
+            eval_results = evaluate_all_metrics(human_message.content, invocation.chat_generations[0].content, [])
+            self._do_telemetry(invocation, eval_results)
 
-    def _do_telemetry(self, query, output, parent_span_id, parent_trace_id, eval_arm):
+    def _do_telemetry(self, invocation: LLMInvocation, eval_results):
+        import datetime
+        
+        # Convert messages to the expected format
+        input_messages = []
+        output_messages = []
+        system_instructions = []
+        
+        for msg in invocation.messages:
+            if msg.type == "human":
+                input_messages.append({
+                    "role": "user",
+                    "parts": [{"type": "text", "content": msg.content}]
+                })
+            elif msg.type == "system":
+                system_instructions.append({
+                    "type": "text", 
+                    "content": msg.content
+                })
+        
+        for gen in invocation.chat_generations:
+            output_messages.append({
+                "role": "assistant",
+                "parts": [{"type": "text", "content": gen.content}],
+                "finish_reason": gen.finish_reason or "stop"
+            })
 
-        # emit event
+        # Create event body with LLM invocation context
         body = {
-            "content": f"query: {query} output: {output}",
+            "name": invocation.attributes.get("gen_ai.response.model", "unknown"),
+            "context": {
+                "trace_id": f"0x{invocation.trace_id:032x}",
+                "span_id": f"0x{invocation.span_id:016x}",
+                "trace_state": "[]",
+                **invocation.attributes,  # Include all LLM attributes
+                "gen_ai.input.messages": input_messages,
+                "gen_ai.output.messages": output_messages,
+                "gen_ai.system_instructions": system_instructions
+            },
+            "kind": "SpanKind.INTERNAL",
+            "parent_id": None,
+            "start_time": datetime.datetime.fromtimestamp(invocation.start_time).isoformat() + "Z",
+            "end_time": datetime.datetime.fromtimestamp(invocation.end_time or invocation.start_time).isoformat() + "Z",
+            "status": {"status_code": "UNSET"},
+            "events": [],
+            "links": [],
+            "resource": {
+                "attributes": {
+                    "telemetry.sdk.language": "python",
+                    "telemetry.sdk.name": "opentelemetry",
+                    "telemetry.sdk.version": "1.36.0",
+                    "service.name": "unknown_service"
+                },
+                "schema_url": ""
+            }
         }
+        
+        # Event attributes contain evaluation data for all metrics
         attributes = {
-            "gen_ai.evaluation.name": "relevance",
-            "gen_ai.evaluation.score": eval_arm.score,
-            "gen_ai.evaluation.reasoning": eval_arm.reason,
-            "gen_ai.evaluation.cost": eval_arm.evaluation_cost,
+            "gen_ai.operation.name": "evaluation"
         }
+        
+        # Add attributes for each evaluation metric
+        for metric_name, metric_data in eval_results.items():
+            if metric_name != "error" and isinstance(metric_data, dict):
+                attributes[f"gen_ai.evaluation.{metric_name}.score"] = metric_data.get("score", 0)
+                attributes[f"gen_ai.evaluation.{metric_name}.label"] = metric_data.get("label", "Unknown")
+                attributes[f"gen_ai.evaluation.{metric_name}.range"] = metric_data.get("range", "[0,1]")
+                attributes[f"gen_ai.evaluation.{metric_name}.reasoning"] = metric_data.get("reason", "")
+                attributes[f"gen_ai.evaluation.{metric_name}.judge_model"] = metric_data.get("judge_model", "unknown")
 
         event = Event(
             name="gen_ai.evaluation.message",
             attributes=attributes,
             body=body if body else None,
-            span_id=parent_span_id,
-            trace_id=parent_trace_id,
+            span_id=invocation.span_id,
+            trace_id=invocation.trace_id,
         )
         self._event_logger.emit(event)
 
         # create span
         span_context = SpanContext(
-            trace_id=parent_trace_id,
-            span_id=parent_span_id,
+            trace_id=invocation.trace_id,
+            span_id=invocation.span_id,
             is_remote=False,
         )
 
@@ -94,13 +151,10 @@ class DeepEvalEvaluator(Evaluator):
                 "gen_ai.operation.name": "evaluation",
             })
             span.set_attribute("gen_ai.operation.name", "evaluation")
-            span.set_attribute("gen_ai.evaluation.name", "relevance")
-            span.set_attribute("gen_ai.evaluation.score", eval_arm.score)
-            span.set_attribute("gen_ai.evaluation.label", "Pass")
-            span.set_attribute("gen_ai.evaluation.reasoning", eval_arm.reason)
-            span.set_attribute("gen_ai.evaluation.model", eval_arm.evaluation_model)
-            span.set_attribute("gen_ai.evaluation.cost", eval_arm.evaluation_cost)
-            #span.set_attribute("gen_ai.evaluation.verdict", eval_arm.verdicts)
+            
+            for attr_key, attr_value in attributes.items():
+                if attr_key != "gen_ai.operation.name":  # Skip duplicate
+                    span.set_attribute(attr_key, attr_value)
 
 
 class OpenLitEvaluator(Evaluator):
