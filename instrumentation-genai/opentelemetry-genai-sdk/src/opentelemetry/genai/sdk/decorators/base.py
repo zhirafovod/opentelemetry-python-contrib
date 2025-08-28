@@ -26,25 +26,6 @@ from opentelemetry.genai.sdk.exporters import _get_property_value
 
 from opentelemetry.genai.sdk.api import get_telemetry_client
 
-from opentelemetry import trace
-
-def _ensure_tracer_provider():
-    # Only set a default TracerProvider if one isn't set
-    if type(trace.get_tracer_provider()).__name__ == "ProxyTracerProvider":
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        exporter_protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
-        if exporter_protocol == "http" or exporter_protocol == "http/protobuf":
-            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        else:
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        provider = TracerProvider()
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-        trace.set_tracer_provider(provider)
-
-_ensure_tracer_provider()
-
-
 P = ParamSpec("P")
 
 R = TypeVar("R")
