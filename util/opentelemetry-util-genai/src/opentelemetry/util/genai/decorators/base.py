@@ -1,30 +1,47 @@
+# Copyright The OpenTelemetry Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import json
 from functools import wraps
 import os
 from typing import Optional, TypeVar, Callable, Awaitable, Any, Union
 import inspect
 import traceback
+import logging
+from typing import Any, Dict, List
+from opentelemetry.util.genai.data import ToolFunction
 
-from opentelemetry.genai.sdk.decorators.helpers import (
+from opentelemetry.util.genai.decorators import (
     _is_async_method,
     _get_original_function_name,
     _is_async_generator,
 )
 
-from opentelemetry.genai.sdk.decorators.util import camel_to_snake
+from opentelemetry.util.genai.decorators.util import camel_to_snake
 from opentelemetry import trace
 from opentelemetry import context as context_api
 from typing_extensions import ParamSpec
 from ..version import __version__
 
-from opentelemetry.genai.sdk.utils.const import (
+from opentelemetry.util.genai.types import (
     ObserveSpanKindValues,
 )
 
-from opentelemetry.genai.sdk.data import Message, ChatGeneration
-from opentelemetry.genai.sdk.exporters import _get_property_value
+from opentelemetry.util.genai.data import Message, ChatGeneration
+from opentelemetry.util.genai.exporters import _get_property_value
 
-from opentelemetry.genai.sdk.api import get_telemetry_client
+from opentelemetry.util.genai.api import get_telemetry_client
 
 P = ParamSpec("P")
 
@@ -51,10 +68,6 @@ exporter_type_full = should_emit_events()
 telemetry = get_telemetry_client(exporter_type_full)
 
 
-def _get_parent_run_id():
-    # Placeholder for parent run ID logic; return None if not available
-    return None
-
 def _should_send_prompts():
     return (
         os.getenv("OBSERVE_TRACE_CONTENT") or "true"
@@ -62,19 +75,24 @@ def _should_send_prompts():
 
 
 def _handle_llm_span_attributes(tlp_span_kind, args, kwargs, res=None):
-    """Add GenAI-specific attributes to span for LLM operations by delegating to TelemetryClient logic."""
-    if tlp_span_kind != ObserveSpanKindValues.LLM:
-        return None
+    """
+    Add GenAI-specific attributes to span for LLM operations by delegating to TelemetryClient logic.
 
+    Returns:
+        run_id (UUID): The run_id if tlp_span_kind is ObserveSpanKindValues.LLM, otherwise None.
+
+    Note:
+        If tlp_span_kind is not ObserveSpanKindValues.LLM, this function returns None.
+        Downstream code should check for None before using run_id.
+    """
     # Import here to avoid circular import issues
     from uuid import uuid4
 
     # Extract messages and attributes as before
     messages = _extract_messages_from_args_kwargs(args, kwargs)
     tool_functions = _extract_tool_functions_from_args_kwargs(args, kwargs)
-    run_id = uuid4()
-
     try:
+        run_id = uuid4()
         telemetry.start_llm(prompts=messages, 
                             tool_functions=tool_functions, 
                             run_id=run_id, 
@@ -82,8 +100,9 @@ def _handle_llm_span_attributes(tlp_span_kind, args, kwargs, res=None):
                             **_extract_llm_attributes_from_args_kwargs(args, kwargs, res))
         return run_id  # Return run_id so it can be used later
     except Exception as e:
-        print(f"Warning: TelemetryClient.start_llm failed: {e}")
-        return None
+        logging.error(f"TelemetryClient.start_llm failed: {e}")
+        raise
+    return None
 
 
 def _finish_llm_span(run_id, res, **attributes):
@@ -98,7 +117,7 @@ def _finish_llm_span(run_id, res, **attributes):
         with contextlib.suppress(Exception):
             telemetry.stop_llm(run_id, chat_generations, **attributes)
     except Exception as e:
-        print(f"Warning: TelemetryClient.stop_llm failed: {e}")
+        logging.warning(f"TelemetryClient.stop_llm failed: {e}")
 
 
 def _extract_messages_from_args_kwargs(args, kwargs):
@@ -142,22 +161,23 @@ def _extract_messages_from_args_kwargs(args, kwargs):
     
     return messages
 
+def _extract_tool_functions_from_args_kwargs(args: Any, kwargs: Dict[str, Any]) -> List["ToolFunction"]:
+    """Collect tools from kwargs (tools/functions) or first arg attributes,
+    normalize each object/dict/callable to a ToolFunction (name, description, parameters={}),
+    skipping anything malformed.
+    """
 
-def _extract_tool_functions_from_args_kwargs(args, kwargs):
-    """Extract tool functions from function arguments"""
-    from opentelemetry.genai.sdk.data import ToolFunction
-    
-    tool_functions = []
-    
+    tool_functions: List[ToolFunction] = []
+
     # Try to find tools in various places
     tools = None
-    
+
     # Check kwargs for tools
     if kwargs.get('tools'):
         tools = kwargs['tools']
     elif kwargs.get('functions'):
         tools = kwargs['functions']
-    
+
     # Check args for objects that might have tools
     if not tools and len(args) > 0:
         for arg in args:
@@ -167,7 +187,11 @@ def _extract_tool_functions_from_args_kwargs(args, kwargs):
             elif hasattr(arg, 'functions'):
                 tools = getattr(arg, 'functions', [])
                 break
-    
+
+    # Ensure tools is always a list for consistent processing
+    if tools and not isinstance(tools, list):
+        tools = [tools]
+
     # Convert tools to ToolFunction objects
     if tools:
         for tool in tools:
@@ -187,16 +211,16 @@ def _extract_tool_functions_from_args_kwargs(args, kwargs):
                     tool_description = getattr(tool, '__doc__', '') or ''
                 else:
                     continue
-                
+
                 tool_functions.append(ToolFunction(
                     name=tool_name,
                     description=tool_description,
-                    parameters={} 
+                    parameters={}
                 ))
             except Exception:
                 # Skip tools that can't be processed
                 continue
-    
+
     return tool_functions
 
 def _extract_llm_attributes_from_args_kwargs(args, kwargs, res=None):
@@ -290,7 +314,14 @@ def _extract_response_attributes(res, attributes):
 
 
 def _extract_chat_generations_from_response(res):
-    """Extract chat generations from response similar to exporter logic"""
+    """
+    Normalize various response shapes into a list of ChatGeneration objects.
+    Supported:
+      - OpenAI style: res.choices[*].message.content (+ role, finish_reason)
+      - Fallback: res.content (+ optional res.type, finish_reason defaults to "stop")
+    Returns an empty list on unrecognized structures or errors. Never raises.
+    All content/type values are coerced to str; finish_reason may be None.
+    """
     chat_generations = []
     
     try:
@@ -381,7 +412,7 @@ def entity_method(
                         _finish_llm_span(run_id, res, **attributes)
                                     
                     except Exception as e:
-                        print(traceback.format_exc())
+                        logging.error(traceback.format_exc())
                         raise e
                     return res
 

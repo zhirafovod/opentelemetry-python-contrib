@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -35,3 +36,10 @@ class LLMInvocation:
     attributes: Dict[str, Any] = field(default_factory=dict)
     span_id: int = 0
     trace_id: int = 0
+
+class ObserveSpanKindValues(Enum):
+    TOOL = "tool"
+    LLM = "llm"
+    UNKNOWN = "unknown"
+
+
