@@ -1,6 +1,6 @@
-
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List
+
 
 @dataclass
 class ToolOutput:
@@ -32,7 +32,7 @@ class Message:
 class ChatGeneration:
     content: str
     type: str
-    finish_reason: Optional[str] = None
+    finish_reason: str = None
     tool_function_calls: List[ToolFunctionCall] = field(default_factory=list)
 
 @dataclass

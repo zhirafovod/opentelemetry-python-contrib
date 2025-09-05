@@ -21,7 +21,7 @@ from .types import LLMInvocation, ToolInvocation
 from .exporters import SpanMetricEventExporter, SpanMetricExporter
 from .data import Message, ChatGeneration, Error, ToolOutput, ToolFunction
 
-from .version import __version__
+from opentelemetry.instrumentation.langchain.version import __version__
 from opentelemetry.metrics import get_meter
 from opentelemetry.trace import get_tracer
 from opentelemetry._events import get_event_logger
