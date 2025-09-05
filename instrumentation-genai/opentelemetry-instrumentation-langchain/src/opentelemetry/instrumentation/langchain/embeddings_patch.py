@@ -22,7 +22,7 @@ from opentelemetry.genai.sdk.api import TelemetryClient
 from opentelemetry.genai.sdk.data import Error
 from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.utils import dont_throw, should_collect_content
-from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as GenAIAttributes
+from opentelemetry.semconv._incubating.attributes import gen_ai_attributes
 from opentelemetry.trace import SpanKind
 
 logger = logging.getLogger(__name__)
@@ -42,78 +42,93 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
         # Get model information from the instance
         model_name = getattr(instance, 'model', None) or getattr(instance, 'model_name', None) or instance.__class__.__name__
         
-        # Create span attributes
-        span_attributes = {
-            GenAIAttributes.GEN_AI_OPERATION_NAME: "embed_query",
-            GenAIAttributes.GEN_AI_SYSTEM: "langchain",
-            GenAIAttributes.GEN_AI_REQUEST_MODEL: model_name,
-        }
+
         
         # Add query content if content collection is enabled
-        if should_collect_content() and query:
-            span_attributes["gen_ai.prompt"] = query
+        # if should_collect_content() and query:
+        #    span_attributes["gen_ai.prompt"] = query
             
         span_name = f"embed_query {model_name}"
-        
-        # Get tracer from telemetry client
-        tracer = getattr(telemetry_client, '_tracer', None)
-        if not tracer:
-            # Fallback to creating a tracer if not available
-            from opentelemetry.trace import get_tracer
-            tracer = get_tracer(__name__)
-            
-        with tracer.start_as_current_span(
-            name=span_name,
-            kind=SpanKind.CLIENT,
-            attributes=span_attributes,
-            end_on_exit=False,
-        ) as span:
-            start_time = default_timer()
-            error_type = None
-            result = None
-            
-            try:
-                result = wrapped(*args, **kwargs)
-                
-                # Add response attributes
-                if span.is_recording() and result:
-                    if isinstance(result, list) and len(result) > 0:
-                        span.set_attribute("gen_ai.embedding.dimension", len(result))
-                    
-                span.end()
-                return result
-                
-            except Exception as error:
-                error_type = type(error).__qualname__
-                span.record_exception(error)
-                span.set_status(status="ERROR", description=str(error))
-                span.end()
-                raise
-            finally:
-                duration = max((default_timer() - start_time), 0)
-                
-                # Record metrics if available
-                if hasattr(telemetry_client, '_meter') and telemetry_client._meter:
-                    common_attributes = {
-                        GenAIAttributes.GEN_AI_OPERATION_NAME: "embed_query",
-                        GenAIAttributes.GEN_AI_SYSTEM: "langchain", 
-                        GenAIAttributes.GEN_AI_REQUEST_MODEL: model_name,
-                    }
-                    
-                    if error_type:
-                        common_attributes["error.type"] = error_type
-                    
-                    # Create histogram if it doesn't exist
-                    if not hasattr(telemetry_client, '_embedding_duration_histogram'):
-                        telemetry_client._embedding_duration_histogram = telemetry_client._meter.create_histogram(
-                            name="gen_ai.client.operation.duration",
-                            description="Duration of embedding operations",
-                            unit="s",
-                        )
-                    
-                    telemetry_client._embedding_duration_histogram.record(
-                        duration,
-                        attributes=common_attributes,
-                    )
-    
-    return traced_method
+
+        from uuid import UUID
+
+        fake_uuid = UUID('12345678-1234-5678-1234-567812345678')
+
+        attributes = {
+        }
+
+        telemetry_client.start_embedding("langchain", model_name, fake_uuid)
+
+        result = []
+        try:
+            result = wrapped(*args, **kwargs)
+
+        except Exception as ex:
+            embedding_error = Error(message=str(ex), type=type(ex))
+            telemetry_client.fail_embedding(fake_uuid, embedding_error)
+            raise
+
+        finally:
+            telemetry_client.stop_embedding(fake_uuid, len(result))
+
+    #     # Get tracer from telemetry client
+    #     tracer = getattr(telemetry_client, '_tracer', None)
+    #     if not tracer:
+    #         # Fallback to creating a tracer if not available
+    #         from opentelemetry.trace import get_tracer
+    #         tracer = get_tracer(__name__)
+    #
+    #     with tracer.start_as_current_span(
+    #         name=span_name,
+    #         kind=SpanKind.CLIENT,
+    #         end_on_exit=False,
+    #     ) as span:
+    #         start_time = default_timer()
+    #         error_type = None
+    #         result = None
+    #
+    #         try:
+    #             result = wrapped(*args, **kwargs)
+    #
+    #             # Add response attributes
+    #             if span.is_recording() and result:
+    #                 if isinstance(result, list) and len(result) > 0:
+    #                     span.set_attribute("gen_ai.embedding.dimension", len(result))
+    #
+    #             span.end()
+    #             return result
+    #
+    #         except Exception as error:
+    #             error_type = type(error).__qualname__
+    #             span.record_exception(error)
+    #             span.set_status(status="ERROR", description=str(error))
+    #             span.end()
+    #             raise
+    #         finally:
+    #             duration = max((default_timer() - start_time), 0)
+    #
+    #             # Record metrics if available
+    #             if hasattr(telemetry_client, '_meter') and telemetry_client._meter:
+    #                 common_attributes = {
+    #                     gen_ai_attributes.GEN_AI_OPERATION_NAME: "embed_query",
+    #                     gen_ai_attributes.GEN_AI_SYSTEM: "langchain",
+    #                     gen_ai_attributes.GEN_AI_REQUEST_MODEL: model_name,
+    #                 }
+    #
+    #                 if error_type:
+    #                     common_attributes["error.type"] = error_type
+    #
+    #                 # Create histogram if it doesn't exist
+    #                 if not hasattr(telemetry_client, '_embedding_duration_histogram'):
+    #                     telemetry_client._embedding_duration_histogram = telemetry_client._meter.create_histogram(
+    #                         name="gen_ai.client.operation.duration",
+    #                         description="Duration of embedding operations",
+    #                         unit="s",
+    #                     )
+    #
+    #                 telemetry_client._embedding_duration_histogram.record(
+    #                     duration,
+    #                     attributes=common_attributes,
+    #                 )
+    #
+    # return traced_method

@@ -58,8 +58,7 @@ class EmbeddingInvocation:
     parent_run_id: Optional[UUID] = None
     start_time: float = field(default_factory=time.time)
     end_time: float = None
-    input_texts: List[str] = field(default_factory=list)
-    embeddings: Optional[List[List[float]]] = None
+    dimension_count : int = 0
     attributes: dict = field(default_factory=dict)
     span_id: int = 0
     trace_id: int = 0
