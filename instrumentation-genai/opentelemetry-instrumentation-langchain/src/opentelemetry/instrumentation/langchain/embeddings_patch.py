@@ -81,8 +81,8 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
             attributes=span_attributes,
             context=current_context
         ) as embedding_span:
-            # this run_id is for internal embedding tracking, until we find a better solution
-            run_id = uuid.uuid4()
+            # Use the current span ID as the run_id for internal embedding tracking
+            run_id = embedding_span.get_span_context().span_id
             telemetry_client.start_embedding(run_id, "langchain", model_name, parent_run_id)
 
             try:

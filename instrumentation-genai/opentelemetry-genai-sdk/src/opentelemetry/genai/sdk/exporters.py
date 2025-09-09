@@ -662,6 +662,7 @@ class SpanMetricEventExporter(BaseExporter):
         span = self._start_span(
             name=f"gen_ai.embedding {request_model}",
             kind=SpanKind.CLIENT,
+            parent_run_id=invocation.parent_run_id,
         )
 
         with use_span(
@@ -1134,6 +1135,7 @@ class SpanMetricExporter(BaseExporter):
         span = self._start_span(
             name=f"gen_ai.embedding {request_model}",
             kind=SpanKind.CLIENT,
+            parent_run_id=invocation.parent_run_id,
         )
 
         with use_span(
