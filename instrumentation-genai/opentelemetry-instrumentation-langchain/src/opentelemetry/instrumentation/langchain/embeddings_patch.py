@@ -65,10 +65,34 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
         
         span_name = f"langchain.embeddings.embed_query"
         span_attributes = {
-            gen_ai_attributes.GEN_AI_OPERATION_NAME: gen_ai_attributes.GenAiOperationNameValues.EMBEDDINGS,
+            gen_ai_attributes.GEN_AI_OPERATION_NAME: gen_ai_attributes.GenAiOperationNameValues.EMBEDDINGS.value,
             gen_ai_attributes.GEN_AI_SYSTEM: "langchain",
             gen_ai_attributes.GEN_AI_REQUEST_MODEL: model_name,
         }
+
+        embedding_attributes = {}
+
+        # Extract server information if available
+        if hasattr(instance, 'openai_api_base') and instance.openai_api_base:
+            try:
+                base_url = instance.openai_api_base
+                # Handle full URLs like "http://localhost:1234/v1"
+                if base_url.startswith(('http://', 'https://')):
+                    from urllib.parse import urlparse
+                    parsed = urlparse(base_url)
+                    if parsed.hostname:
+                        embedding_attributes["server.address"] = parsed.hostname
+                    if parsed.port:
+                        embedding_attributes["server.port"] = str(parsed.port)
+                # Handle simple "address:port" format
+                elif ":" in base_url:
+                    parts = base_url.split(":")
+                    if len(parts) >= 2:
+                        embedding_attributes["server.address"] = parts[0]
+                        embedding_attributes["server.port"] = parts[1]
+            except Exception:
+                # If parsing fails, continue without server attributes
+                pass
         
         # Add query content if content collection is enabled
         if should_collect_content() and query:
@@ -83,7 +107,7 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
         ) as embedding_span:
             # Use the current span ID as the run_id for internal embedding tracking
             run_id = embedding_span.get_span_context().span_id
-            telemetry_client.start_embedding(run_id, "langchain", model_name, parent_run_id)
+            telemetry_client.start_embedding(run_id, "langchain", model_name, parent_run_id, **embedding_attributes)
 
             try:
                 result = wrapped(*args, **kwargs)
@@ -91,7 +115,7 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
                 # Add embedding dimension to span if available
                 if embedding_span.is_recording() and result:
                     if isinstance(result, list) and len(result) > 0:
-                        embedding_span.set_attribute("gen_ai.embedding.dimension", len(result))
+                        embedding_span.set_attribute("gen_ai.embedding.dimension.count", len(result))
                 
                 telemetry_client.stop_embedding(run_id, len(result))
                 return result

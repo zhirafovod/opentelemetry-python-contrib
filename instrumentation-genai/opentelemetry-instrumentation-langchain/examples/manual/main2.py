@@ -28,7 +28,15 @@ def main():
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
     # configure tracing
-    trace.set_tracer_provider(TracerProvider())
+    # Check if TracerProvider is already set to avoid "Overriding of current TracerProvider is not allowed" error
+    try:
+        current_provider = trace.get_tracer_provider()
+        # If we get a NoOpTracerProvider, we need to set a real one
+        if current_provider.__class__.__name__ == 'NoOpTracerProvider':
+            trace.set_tracer_provider(TracerProvider())
+    except Exception:
+        # If there's any issue, set a new TracerProvider
+        trace.set_tracer_provider(TracerProvider())
     trace.get_tracer_provider().add_span_processor(
         BatchSpanProcessor(OTLPSpanExporter())
     )
@@ -63,7 +71,8 @@ def main():
     model = OpenAIEmbeddings(check_embedding_ctx_length=False,
                              openai_api_key="lm-studio",
                              base_url="http://localhost:1234/v1",
-                             model="nomic-ai/nomic-embed-text-v1.5-GGUF")
+                             model="nomic-ai/nomic-embed-text-v1.5-GGUF",
+                             )
 
     response = model.embed_query("Hello world")
     print(response)

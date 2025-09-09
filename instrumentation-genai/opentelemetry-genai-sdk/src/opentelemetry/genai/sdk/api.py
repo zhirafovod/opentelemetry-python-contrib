@@ -117,7 +117,7 @@ class TelemetryClient:
         """Start an embedding invocation."""
         # Create span attributes
         span_attributes = {
-            gen_ai_attributes.GEN_AI_OPERATION_NAME: gen_ai_attributes.GenAiOperationNameValues.EMBEDDINGS,
+            gen_ai_attributes.GEN_AI_OPERATION_NAME: gen_ai_attributes.GenAiOperationNameValues.EMBEDDINGS.value,
             gen_ai_attributes.GEN_AI_SYSTEM: gen_ai_system,
             gen_ai_attributes.GEN_AI_REQUEST_MODEL: model_name,
         }
