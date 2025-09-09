@@ -24,7 +24,9 @@ from opentelemetry.genai.sdk.data import Error
 from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.utils import dont_throw, should_collect_content
 from opentelemetry.semconv._incubating.attributes import gen_ai_attributes
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import SpanKind, get_tracer, get_current_span
+from opentelemetry.context import get_current
+from opentelemetry.semconv.schemas import Schemas
 
 logger = logging.getLogger(__name__)
 
@@ -43,30 +45,65 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
         # Get model information from the instance
         model_name = getattr(instance, 'model', None) or getattr(instance, 'model_name', None) or instance.__class__.__name__
         
-
+        # Get the current context to ensure we're under the parent span
+        current_context = get_current()
+        current_span = get_current_span(current_context)
+        
+        # Extract parent_run_id from the current span context if available
+        parent_run_id = None
+        if current_span and current_span.is_recording():
+            # Try to get the run_id from span attributes or context
+            span_context = current_span.get_span_context()
+            if hasattr(span_context, 'span_id'):
+                # Convert span_id to UUID format for parent_run_id
+                # Note: This is a simplified approach - in a real implementation,
+                # you might want to store the actual run_id in span attributes
+                parent_run_id = uuid.UUID(int=span_context.span_id)
+        
+        # Create a tracer to start the embedding span as a child of the current context
+        tracer = get_tracer(__name__, schema_url=Schemas.V1_28_0.value)
+        
+        span_name = f"langchain.embeddings.embed_query"
+        span_attributes = {
+            gen_ai_attributes.GEN_AI_OPERATION_NAME: gen_ai_attributes.GenAiOperationNameValues.EMBEDDINGS,
+            gen_ai_attributes.GEN_AI_SYSTEM: "langchain",
+            gen_ai_attributes.GEN_AI_REQUEST_MODEL: model_name,
+        }
         
         # Add query content if content collection is enabled
-        # if should_collect_content() and query:
-        #    span_attributes["gen_ai.prompt"] = query
-            
-        span_name = f"embed_query {model_name}"
-        attributes = {
-        }
+        if should_collect_content() and query:
+            span_attributes["gen_ai.prompt"] = query
+        
+        # Start the embedding span as a child of the current context (parent span)
+        with tracer.start_as_current_span(
+            name=span_name,
+            kind=SpanKind.CLIENT,
+            attributes=span_attributes,
+            context=current_context
+        ) as embedding_span:
+            # this run_id is for internal embedding tracking, until we find a better solution
+            run_id = uuid.uuid4()
+            telemetry_client.start_embedding(run_id, "langchain", model_name, parent_run_id)
 
-        # this run_id is for internal embedding tracking, until we find a better solution
-        run_id = uuid.uuid4()
-        telemetry_client.start_embedding(run_id, "langchain", model_name)
-
-        result = []
-        try:
-            result = wrapped(*args, **kwargs)
-            telemetry_client.stop_embedding(run_id,len(result))
-
-            return result
-        except Exception as ex:
-            embedding_error = Error(message=str(ex), type=type(ex))
-            telemetry_client.fail_embedding(run_id, embedding_error)
-            raise
+            try:
+                result = wrapped(*args, **kwargs)
+                
+                # Add embedding dimension to span if available
+                if embedding_span.is_recording() and result:
+                    if isinstance(result, list) and len(result) > 0:
+                        embedding_span.set_attribute("gen_ai.embedding.dimension", len(result))
+                
+                telemetry_client.stop_embedding(run_id, len(result))
+                return result
+                
+            except Exception as ex:
+                embedding_error = Error(message=str(ex), type=type(ex))
+                telemetry_client.fail_embedding(run_id, embedding_error)
+                
+                # Record the exception in the span
+                embedding_span.record_exception(ex)
+                embedding_span.set_status(status="ERROR", description=str(ex))
+                raise
 
 
 

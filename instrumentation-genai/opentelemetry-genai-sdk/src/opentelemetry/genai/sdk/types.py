@@ -55,6 +55,7 @@ class EmbeddingInvocation:
     Represents a single Embedding call invocation.
     """
     run_id: UUID
+    parent_run_id: Optional[UUID] = None
     start_time: float = field(default_factory=time.time)
     end_time: float = None
     dimension_count : int = 0
