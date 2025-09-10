@@ -35,9 +35,9 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
     """Wrap the embed_query method of Embeddings classes to trace it."""
     
     @dont_throw
-    def traced_method(wrapped, instance, args, kwargs):
+    def traced_method(original_method, instance, args, kwargs):
         if Config.is_instrumentation_suppressed():
-            return wrapped(*args, **kwargs)
+            return original_method(instance, *args, **kwargs)
         
         # Extract the query text from args/kwargs
         query = args[0] if args else kwargs.get('text', '')
@@ -95,7 +95,8 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
         telemetry_client.start_embedding(run_id, "langchain", model_name, **embedding_attributes)
 
         try:
-            result = wrapped(*args, **kwargs)
+            # Call the original method with the instance as self
+            result = original_method(instance, *args, **kwargs)
 
             # # Add embedding dimension to span if available
             # if embedding_span.is_recording() and result:
