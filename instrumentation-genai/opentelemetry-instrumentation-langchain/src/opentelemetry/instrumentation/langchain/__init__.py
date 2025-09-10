@@ -90,9 +90,6 @@ class LangChainInstrumentor(BaseInstrumentor):
         Config.exception_logger = exception_logger
 
         self._telemetry: TelemetryClient | None = None
-        self._tracer = None
-        self._parent_span = None
-        self._context_token = None
 
     def instrumentation_dependencies(self) -> Collection[str]:
         return _instruments
@@ -102,25 +99,6 @@ class LangChainInstrumentor(BaseInstrumentor):
 
         # Instantiate a singleton TelemetryClient bound to our tracer & meter
         self._telemetry = get_telemetry_client(exporter_type_full, **kwargs)
-
-        # Initialize tracer for parent span creation
-        tracer_provider = kwargs.get("tracer_provider")
-        self._tracer = get_tracer(
-            __name__, __version__, tracer_provider, schema_url=Schemas.V1_28_0.value
-        )
-
-        # Create a parent span for LangChain context
-        self._parent_span = self._tracer.start_span(
-            "langchain.session",
-            attributes={
-                "langchain.instrumentation.version": __version__,
-                "langchain.session.type": "instrumentation_context"
-            }
-        )
-
-        # Set the parent span in context and attach it
-        context_with_span = set_span_in_context(self._parent_span)
-        self._context_token = attach(context_with_span)
 
         # initialize evaluation framework if needed
         evaluation_framework_name = get_evaluation_framework_name()
@@ -150,14 +128,6 @@ class LangChainInstrumentor(BaseInstrumentor):
         """
         Cleanup instrumentation (unwrap).
         """
-        # Clean up parent span and context
-        if self._context_token is not None:
-            detach(self._context_token)
-            self._context_token = None
-        
-        if self._parent_span is not None:
-            self._parent_span.end()
-            self._parent_span = None
 
         unwrap("langchain_core.callbacks.base", "BaseCallbackManager.__init__")
         
