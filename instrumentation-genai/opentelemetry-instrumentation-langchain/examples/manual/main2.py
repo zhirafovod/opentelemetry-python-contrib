@@ -2,8 +2,14 @@ import os
 
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
+from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 
 from opentelemetry.instrumentation.langchain import LangChainInstrumentor
+
+# Import Azure OpenAI client and credentials
+import os
+from openai import AzureOpenAI
+from azure.core.credentials import AzureKeyCredential
 
 
 
@@ -66,21 +72,40 @@ def main():
     #
 
 
-    from langchain_openai import OpenAIEmbeddings
-
-    model = OpenAIEmbeddings(check_embedding_ctx_length=False,
-                             openai_api_key="lm-studio",
-                             base_url="http://localhost:1234/v1",
-                             model="nomic-ai/nomic-embed-text-v1.5-GGUF",
-                             )
-
-    response = model.embed_query("Hello world")
-    print(response)
+    # from langchain_openai import OpenAIEmbeddings
+    #
+    # model = OpenAIEmbeddings(check_embedding_ctx_length=False,
+    #                          openai_api_key="lm-studio",
+    #                          base_url="http://localhost:1234/v1",
+    #                          model="nomic-ai/nomic-embed-text-v1.5-GGUF",
+    #                          )
+    #
+    # response = model.embed_query("Hello world")
+    # print(response)
 
     # # Example usage: Embed a single query
     # query_embedding = embeddings.embed_query("What is the capital of France?")
     # print(f"Query embedding (first 10 elements): {query_embedding[:10]}")
 
+    endpoint = "https://etser-mf7gfr7m-eastus2.cognitiveservices.azure.com/"
+    model_name = "text-embedding-3-large"
+    deployment = "text-embedding-3-large"
+
+    api_version = "2024-02-01"
+
+    client = AzureOpenAI(
+        api_version="2024-12-01-preview",
+        azure_endpoint=endpoint,
+        api_key="",
+        azure_deployment=deployment
+    )
+
+    response = client.embeddings.create(
+        input=["first phrase", "second phrase", "third phrase"],
+        model=deployment
+    )
+
+    print(response)
 
     LangChainInstrumentor().uninstrument()
 
