@@ -120,15 +120,57 @@ class LangChainInstrumentor(BaseInstrumentor):
         )
 
         # Patch all leaf subclasses of Embeddings
-        patch_leaf_subclasses(
-            base_class=Embeddings,
-            method_name='embed_query',
-            wrapper=embed_query_wrapper(self._telemetry),
-        )
+        # patch_leaf_subclasses(
+        #     base_class=Embeddings,
+        #     method_name='embed_query',
+        #     wrapper=embed_query_wrapper(self._telemetry),
+        # )
 
+        # Manual patching configuration for embedding providers
+        embedding_patches = [
+            {
+                "module": "langchain_openai.embeddings",
+                "class_name": "OpenAIEmbeddings",
+                "methods": ["embed_query"]
+            },
+            {
+                "module": "langchain_openai.embeddings",
+                "class_name": "AzureOpenAIEmbeddings",
+                "methods": ["embed_query"]
+            },
+            # Add more embedding providers here as needed
+            # {
+            #     "module": "langchain_huggingface.embeddings",
+            #     "class_name": "HuggingFaceEmbeddings",
+            #     "methods": ["embed_query"]
+            # },
+        ]
 
+        # Apply patches using the configuration
+        for patch_config in embedding_patches:
+            module = patch_config["module"]
+            class_name = patch_config["class_name"]
+            methods = patch_config["methods"]
 
+            for method_name in methods:
+                try:
+                    # Get the appropriate wrapper based on method name
+                    if method_name == "embed_query":
+                        wrapper = embed_query_wrapper(self._telemetry)
+                    else:
+                        continue  # Skip unknown methods
 
+                    wrap_function_wrapper(
+                        module=module,
+                        name=f"{class_name}.{method_name}",
+                        wrapper=wrapper,
+                    )
+                except ImportError:
+                    # Provider not available, skip silently
+                    pass
+                except Exception:
+                    # Log error but continue with other patches
+                    pass
             
         # except ImportError:
         #     # Fall back to manual patching if we can't find the base class
