@@ -68,7 +68,7 @@ def main():
     #
 
 
-    # OpenAI Embeddings
+    # ======== OpenAI Embeddings ========
     # model = OpenAIEmbeddings(check_embedding_ctx_length=False,
     #                          openai_api_key="lm-studio",
     #                          base_url="http://localhost:1234/v1",
@@ -79,20 +79,44 @@ def main():
     # print(response)
 
 
-    # Azure OpenAI Embeddings
-    endpoint = "https://etser-mf7gfr7m-eastus2.cognitiveservices.azure.com/"
-    deployment = "text-embedding-3-large"
+    # ======== Azure OpenAI Embeddings ========
+    # endpoint = "https://etser-mf7gfr7m-eastus2.cognitiveservices.azure.com/"
+    # deployment = "text-embedding-3-large"
+    #
+    #
+    # client = AzureOpenAIEmbeddings(  # or "2023-05-15" if that's your API version
+    #     model=deployment,
+    #     azure_endpoint=endpoint,
+    #     api_key="",  # Consider using environment variables
+    #     openai_api_version="2024-12-01-preview",
+    # )
+    #
+    # response = client.embed_query("Your text here")
+    #
+    # print(response)
 
+    # ======== HuggingFace Embeddings ========
+    # from langchain_huggingface import HuggingFaceEmbeddings
+    #
+    # model_name = "sentence-transformers/all-mpnet-base-v2"
+    # model_kwargs = {'device': 'cpu'}
+    # encode_kwargs = {'normalize_embeddings': False}
+    # embeddings = HuggingFaceEmbeddings(
+    #     model_name=model_name,
+    #     model_kwargs=model_kwargs,
+    #     encode_kwargs=encode_kwargs
+    # )
+    #
+    # response = embeddings.embed_query("Hello, From HuggingFace")
+    #
+    # print(response)
 
-    client = AzureOpenAIEmbeddings(  # or "2023-05-15" if that's your API version
-        model=deployment,
-        azure_endpoint=endpoint,
-        api_key="",  # Consider using environment variables
-        openai_api_version="2024-12-01-preview",
-    )
+    # ======== AWS bedrock ========
+    from langchain_aws import BedrockEmbeddings
 
-    response = client.embed_query("Your text here")
+    embeddings_model = BedrockEmbeddings(model_id="amazon.titan-embed-text-v1")
 
+    response = embeddings_model.embed_query("Hello, From AWS bedrock")
     print(response)
 
     LangChainInstrumentor().uninstrument()
