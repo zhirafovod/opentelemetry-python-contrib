@@ -54,7 +54,7 @@ from opentelemetry.instrumentation.langchain.package import _instruments
 from opentelemetry.instrumentation.langchain.callback_handler import (
     OpenTelemetryLangChainCallbackHandler,
 )
-from opentelemetry.instrumentation.langchain.embeddings_patch import (
+from opentelemetry.instrumentation.langchain.embeddings_handler import (
     embed_query_wrapper
 )
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
@@ -119,13 +119,9 @@ class LangChainInstrumentor(BaseInstrumentor):
             wrapper=_BaseCallbackManagerInitWrapper(otel_callback_handler),
         )
 
-        # Patch all leaf subclasses of Embeddings
-        # patch_leaf_subclasses(
-        #     base_class=Embeddings,
-        #     method_name='embed_query',
-        #     wrapper=embed_query_wrapper(self._telemetry),
-        # )
+        self.wrap_embeddings()
 
+    def wrap_embeddings(self):
         # Manual patching configuration for embedding providers
         embedding_patches = [
             {
@@ -145,7 +141,6 @@ class LangChainInstrumentor(BaseInstrumentor):
             #     "methods": ["embed_query"]
             # },
         ]
-
         # Apply patches using the configuration
         for patch_config in embedding_patches:
             module = patch_config["module"]
@@ -171,20 +166,6 @@ class LangChainInstrumentor(BaseInstrumentor):
                 except Exception:
                     # Log error but continue with other patches
                     pass
-            
-        # except ImportError:
-        #     # Fall back to manual patching if we can't find the base class
-        #     wrap_function_wrapper(
-        #         module="langchain_openai.embeddings",
-        #         name="OpenAIEmbeddings.embed_query",
-        #         wrapper=embed_query_wrapper(self._telemetry),
-        #     )
-        #
-        #     wrap_function_wrapper(
-        #         module="langchain_openai.embeddings",
-        #         name="AzureOpenAIEmbeddings.embed_query",
-        #         wrapper=embed_query_wrapper(self._telemetry),
-        #     )
 
     def _uninstrument(self, **kwargs):
         """
