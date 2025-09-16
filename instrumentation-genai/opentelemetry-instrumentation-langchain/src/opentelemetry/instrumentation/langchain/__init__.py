@@ -135,11 +135,11 @@ class LangChainInstrumentor(BaseInstrumentor):
                 "methods": ["embed_query"]
             },
             # Add more embedding providers here as needed
-            # {
-            #     "module": "langchain_huggingface.embeddings",
-            #     "class_name": "HuggingFaceEmbeddings",
-            #     "methods": ["embed_query"]
-            # },
+            {
+                "module": "langchain_huggingface.embeddings",
+                "class_name": "HuggingFaceEmbeddings",
+                "methods": ["embed_query"]
+            },
         ]
         # Apply patches using the configuration
         for patch_config in embedding_patches:

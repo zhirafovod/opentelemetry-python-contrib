@@ -125,7 +125,8 @@ class TelemetryClient:
         invocation = EmbeddingInvocation(
             run_id=run_id,
             parent_run_id=parent_run_id,
-            attributes=span_attributes
+            attributes=span_attributes,
+            input=attributes.get("input", None),
         )
 
         # Use span_id as registry key since we removed run_id
@@ -134,13 +135,14 @@ class TelemetryClient:
 
         self._exporter.init_embedding(invocation)
 
-    def stop_embedding(self, run_id: UUID, dimension_count : int, **attributes) -> EmbeddingInvocation:
+    def stop_embedding(self, run_id: UUID, dimension_count : int, output: List[float], **attributes) -> EmbeddingInvocation:
         """Stop an embedding invocation with results."""
         with self._lock:
             invocation = self._embedding_registry.pop(run_id)
         invocation.end_time = time.time()
         invocation.dimension_count = dimension_count
         invocation.attributes.update(attributes)
+        invocation.output = output
         self._exporter.export_embedding(invocation)
         return invocation
 

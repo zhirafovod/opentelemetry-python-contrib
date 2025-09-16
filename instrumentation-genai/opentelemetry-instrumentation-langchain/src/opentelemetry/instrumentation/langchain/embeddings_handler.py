@@ -23,20 +23,28 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
     """Wrap the embed_query method of Embeddings classes to trace it."""
     
     @dont_throw
-    def traced_method(original_method, instance, args, kwargs):
+    def traced_method(wrapped, instance, args, kwargs):
         if Config.is_instrumentation_suppressed():
-            return original_method(instance, *args, **kwargs)
+            return wrapped(*args, **kwargs)
         
         # Get model information from the instance
         model_name = getattr(instance, 'model', None) or getattr(instance, 'model_name', None) or instance.__class__.__name__
 
+        input_value = args[0]
+        # If input_value is a single string, put it in a list
+        if isinstance(input_value, str):
+            input_value = [input_value]
+
         run_id = uuid.uuid4()
-        telemetry_client.start_embedding(run_id, model_name)
+        embedding_kwargs = {
+            "input": input_value,
+        }
+        telemetry_client.start_embedding(run_id, model_name, **embedding_kwargs)
 
         try:
-            # Call the original method with the instance as self
-            result = original_method(instance, *args, **kwargs)
-            telemetry_client.stop_embedding(run_id, len(result))
+            # Call the original method - wrapped is already bound to the instance
+            result = wrapped(*args, **kwargs)
+            telemetry_client.stop_embedding(run_id, len(result), output=result)
             return result
 
         except Exception as ex:
