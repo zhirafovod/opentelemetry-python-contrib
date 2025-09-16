@@ -17,7 +17,8 @@ This package provides these span attributes.
 -> gen_ai.response.id: Str(chatcmpl-Bz8yrvPnydD9pObv625n2CGBPHS13)
 -> gen_ai.usage.input_tokens: Int(24)
 -> gen_ai.usage.output_tokens: Int(7)
--> gen_ai.input.messages: Str("[{\"role\": \"user\", \"content\": \"hello world\"}]")
+-> gen_ai.input.messages: Str('[{"role": "Human", "parts": [{"content": "hello world", "type": "text"}]}]')
+-> gen_ai.output.messages: Str('[{"role": "AI", "parts": [{"content": "hello back", "type": "text"}], "finish_reason": "stop"}]')
 
 
 This package also provides these metric attributes.

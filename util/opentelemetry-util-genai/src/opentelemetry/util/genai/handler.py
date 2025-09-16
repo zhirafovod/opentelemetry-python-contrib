@@ -15,41 +15,32 @@
 """
 Telemetry handler for GenAI invocations.
 
-This module provides the `TelemetryHandler` class, which manages the lifecycle of
-GenAI (Generative AI) invocations and emits telemetry data as spans, metrics, and events.
-It supports starting, stopping, and failing LLM invocations,
-and provides module-level convenience functions for these operations.
+This module exposes the `TelemetryHandler` class, which manages the lifecycle of
+GenAI (Generative AI) invocations and emits telemetry data (spans and related attributes).
+It supports starting, stopping, and failing LLM invocations.
 
 Classes:
-    TelemetryHandler: Manages GenAI invocation lifecycles and emits telemetry.
+    - TelemetryHandler: Manages GenAI invocation lifecycles and emits telemetry.
 
 Functions:
-    get_telemetry_handler: Returns a singleton TelemetryHandler instance.
-    llm_start: Starts a new LLM invocation.
-    llm_stop: Stops an LLM invocation and emits telemetry.
-    llm_fail: Marks an LLM invocation as failed and emits error telemetry.
+    - get_telemetry_handler: Returns a singleton `TelemetryHandler` instance.
 
 Usage:
-    Use the module-level functions (`llm_start`, `llm_stop`, `llm_fail`) to
-    instrument GenAI invocations for telemetry collection.
+    handler = get_telemetry_handler()
+    handler.start_llm(prompts, run_id, **attrs)
+    handler.stop_llm(run_id, chat_generations, **attrs)
+    handler.fail_llm(run_id, error, **attrs)
 """
 
 import time
-from threading import Lock
 from typing import Any, List, Optional
 from uuid import UUID
 
-from opentelemetry._events import get_event_logger
-from opentelemetry._logs import get_logger
-from opentelemetry.metrics import get_meter
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import get_tracer
 
-from .data import ChatGeneration, Error, Message
-from .generators import SpanMetricEventGenerator, SpanMetricGenerator
-from .types import LLMInvocation
-
-# TODO: Get the tool version for emitting spans, use GenAI Utils for now
+from .generators import SpanGenerator
+from .types import Error, InputMessage, LLMInvocation, OutputMessage
 from .version import __version__
 
 
@@ -68,77 +59,37 @@ class TelemetryHandler:
             schema_url=Schemas.V1_36_0.value,
         )
 
-        meter_provider = kwargs.get("meter_provider")
-        self._meter = get_meter(
-            __name__,
-            __version__,
-            meter_provider,
-            schema_url=Schemas.V1_36_0.value,
-        )
-
-        event_logger_provider = kwargs.get("event_logger_provider")
-        self._event_logger = get_event_logger(
-            __name__,
-            __version__,
-            event_logger_provider=event_logger_provider,
-            schema_url=Schemas.V1_36_0.value,
-        )
-
-        logger_provider = kwargs.get("logger_provider")
-        self._logger = get_logger(
-            __name__,
-            __version__,
-            logger_provider=logger_provider,
-            schema_url=Schemas.V1_36_0.value,
-        )
-
-        self._generator = (
-            SpanMetricEventGenerator(
-                tracer=self._tracer,
-                meter=self._meter,
-                logger=self._logger,
-                capture_content=self._should_collect_content(),
-            )
-            if emitter_type_full
-            else SpanMetricGenerator(
-                tracer=self._tracer,
-                meter=self._meter,
-                capture_content=self._should_collect_content(),
-            )
-        )
+        # TODO: trigger span+metric+event generation based on the full emitter flag
+        self._generator = SpanGenerator(tracer=self._tracer)
 
         self._llm_registry: dict[UUID, LLMInvocation] = {}
-        self._lock = Lock()
-
-    @staticmethod
-    def _should_collect_content() -> bool:
-        return True  # Placeholder for future config
 
     def start_llm(
         self,
-        prompts: List[Message],
+        request_model: str,
+        prompts: List[InputMessage],
         run_id: UUID,
         parent_run_id: Optional[UUID] = None,
         **attributes: Any,
-    ) -> None:
+    ) -> LLMInvocation:
         invocation = LLMInvocation(
+            request_model=request_model,
             messages=prompts,
             run_id=run_id,
             parent_run_id=parent_run_id,
             attributes=attributes,
         )
-        with self._lock:
-            self._llm_registry[invocation.run_id] = invocation
+        self._llm_registry[invocation.run_id] = invocation
         self._generator.start(invocation)
+        return invocation
 
     def stop_llm(
         self,
         run_id: UUID,
-        chat_generations: List[ChatGeneration],
+        chat_generations: List[OutputMessage],
         **attributes: Any,
     ) -> LLMInvocation:
-        with self._lock:
-            invocation = self._llm_registry.pop(run_id)
+        invocation = self._llm_registry.pop(run_id)
         invocation.end_time = time.time()
         invocation.chat_generations = chat_generations
         invocation.attributes.update(attributes)
@@ -148,8 +99,7 @@ class TelemetryHandler:
     def fail_llm(
         self, run_id: UUID, error: Error, **attributes: Any
     ) -> LLMInvocation:
-        with self._lock:
-            invocation = self._llm_registry.pop(run_id)
+        invocation = self._llm_registry.pop(run_id)
         invocation.end_time = time.time()
         invocation.attributes.update(**attributes)
         self._generator.error(error, invocation)
@@ -159,6 +109,9 @@ class TelemetryHandler:
 def get_telemetry_handler(
     emitter_type_full: bool = True, **kwargs: Any
 ) -> TelemetryHandler:
+    """
+    Returns a singleton TelemetryHandler instance.
+    """
     handler: Optional[TelemetryHandler] = getattr(
         get_telemetry_handler, "_default_handler", None
     )
@@ -168,32 +121,3 @@ def get_telemetry_handler(
         )
         setattr(get_telemetry_handler, "_default_handler", handler)
     return handler
-
-
-# Module‐level convenience functions
-def llm_start(
-    prompts: List[Message],
-    run_id: UUID,
-    parent_run_id: Optional[UUID] = None,
-    **attributes: Any,
-) -> None:
-    return get_telemetry_handler().start_llm(
-        prompts=prompts,
-        run_id=run_id,
-        parent_run_id=parent_run_id,
-        **attributes,
-    )
-
-
-def llm_stop(
-    run_id: UUID, chat_generations: List[ChatGeneration], **attributes: Any
-) -> LLMInvocation:
-    return get_telemetry_handler().stop_llm(
-        run_id=run_id, chat_generations=chat_generations, **attributes
-    )
-
-
-def llm_fail(run_id: UUID, error: Error, **attributes: Any) -> LLMInvocation:
-    return get_telemetry_handler().fail_llm(
-        run_id=run_id, error=error, **attributes
-    )

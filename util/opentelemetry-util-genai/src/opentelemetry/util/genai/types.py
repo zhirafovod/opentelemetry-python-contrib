@@ -1,3 +1,4 @@
+
 # Copyright The OpenTelemetry Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,12 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 from uuid import UUID
-
-from .data import ChatGeneration, Message
 
 
 class ContentCapturingMode(Enum):
@@ -71,12 +72,27 @@ class OutputMessage:
     role: str
     parts: list[MessagePart]
     finish_reason: Union[str, FinishReason]
+
+
+@dataclass
+class LLMInvocation:
+    """
+    Represents a single LLM call invocation.
+    """
+
     run_id: UUID
+    request_model: str
     parent_run_id: Optional[UUID] = None
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
-    messages: List[Message] = field(default_factory=list)
-    chat_generations: List[ChatGeneration] = field(default_factory=list)
+    messages: List[InputMessage] = field(default_factory=list)
+    chat_generations: List[OutputMessage] = field(default_factory=list)
     attributes: Dict[str, Any] = field(default_factory=dict)
     span_id: int = 0
     trace_id: int = 0
+
+
+@dataclass
+class Error:
+    message: str
+    type: Type[BaseException]
