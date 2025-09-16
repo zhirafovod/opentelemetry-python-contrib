@@ -13,26 +13,28 @@
 # limitations under the License.
 
 import logging
-from typing import List, Optional, Union, Any, Dict
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import LLMResult
 
-from opentelemetry.instrumentation.langchain.config import Config
-from opentelemetry.instrumentation.langchain.utils import dont_throw
-from .utils import get_property_value
+from opentelemetry.genai.sdk.api import TelemetryClient
 from opentelemetry.genai.sdk.data import (
-    Message,
     ChatGeneration,
     Error,
-    ToolOutput, ToolFunction, ToolFunctionCall
+    Message,
+    ToolFunction,
+    ToolFunctionCall,
+    ToolOutput,
 )
-from .utils import should_enable_evaluation
-from opentelemetry.genai.sdk.api import TelemetryClient
 from opentelemetry.genai.sdk.evals import Evaluator
 from opentelemetry.genai.sdk.types import LLMInvocation
+from opentelemetry.instrumentation.langchain.config import Config
+from opentelemetry.instrumentation.langchain.utils import dont_throw
+
+from .utils import get_property_value, should_enable_evaluation
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             return
 
         system = serialized.get("name", kwargs.get("name", "ChatLLM"))
-        invocation_params =  kwargs.get("invocation_params", {})
+        invocation_params = kwargs.get("invocation_params", {})
 
         attributes = {
             "system": system,
@@ -85,10 +87,14 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                 attributes.update({"request_top_p": top_p})
             frequency_penalty = invocation_params.get("frequency_penalty")
             if frequency_penalty:
-                attributes.update({"request_frequency_penalty": frequency_penalty})
+                attributes.update(
+                    {"request_frequency_penalty": frequency_penalty}
+                )
             presence_penalty = invocation_params.get("presence_penalty")
             if presence_penalty:
-                attributes.update({"request_presence_penalty": presence_penalty})
+                attributes.update(
+                    {"request_presence_penalty": presence_penalty}
+                )
             stop_sequences = invocation_params.get("stop")
             if stop_sequences:
                 attributes.update({"request_stop_sequences": stop_sequences})
@@ -110,7 +116,11 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
 
         # invoked during first invoke to llm with tool start --
         tool_functions: List[ToolFunction] = []
-        tools = kwargs.get("invocation_params").get("tools") if kwargs.get("invocation_params") else None
+        tools = (
+            kwargs.get("invocation_params").get("tools")
+            if kwargs.get("invocation_params")
+            else None
+        )
         if tools is not None:
             for index, tool in enumerate(tools):
                 function = tool.get("function")
@@ -118,24 +128,29 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                     tool_function = ToolFunction(
                         name=function.get("name"),
                         description=function.get("description"),
-                        parameters=str(function.get("parameters"))
+                        parameters=str(function.get("parameters")),
                     )
                     tool_functions.append(tool_function)
         # tool end --
-
 
         prompts: list[Message] = []
         for sub_messages in messages:
             for message in sub_messages:
                 # llm invoked with  all messages tool support start --
-                additional_kwargs = get_property_value(message, "additional_kwargs")
-                tool_calls = get_property_value(additional_kwargs, "tool_calls")
+                additional_kwargs = get_property_value(
+                    message, "additional_kwargs"
+                )
+                tool_calls = get_property_value(
+                    additional_kwargs, "tool_calls"
+                )
                 tool_function_calls = []
                 for tool_call in tool_calls or []:
                     tool_function_call = ToolFunctionCall(
                         id=tool_call.get("id"),
                         name=tool_call.get("function").get("name"),
-                        arguments=str(tool_call.get("function").get("arguments")),
+                        arguments=str(
+                            tool_call.get("function").get("arguments")
+                        ),
                         type=tool_call.get("type"),
                     )
                     tool_function_calls.append(tool_function_call)
@@ -150,7 +165,9 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                 prompts.append(prompt)
 
         # Invoke genai-sdk api
-        self._telemetry_client.start_llm(prompts, tool_functions, run_id, parent_run_id, **attributes)
+        self._telemetry_client.start_llm(
+            prompts, tool_functions, run_id, parent_run_id, **attributes
+        )
 
     @dont_throw
     def on_llm_end(
@@ -169,7 +186,9 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         for generation in getattr(response, "generations", []):
             for chat_generation in generation:
                 # llm creates tool calls during first llm invoke tool support start --
-                tool_calls = chat_generation.message.additional_kwargs.get("tool_calls")
+                tool_calls = chat_generation.message.additional_kwargs.get(
+                    "tool_calls"
+                )
                 for tool_call in tool_calls or []:
                     tool_function_call = ToolFunctionCall(
                         id=tool_call.get("id"),
@@ -180,8 +199,12 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
                     tool_function_calls.append(tool_function_call)
                 # tool support end --
                 if chat_generation.generation_info is not None:
-                    finish_reason = chat_generation.generation_info.get("finish_reason")
-                    content = get_property_value(chat_generation.message, "content")
+                    finish_reason = chat_generation.generation_info.get(
+                        "finish_reason"
+                    )
+                    content = get_property_value(
+                        chat_generation.message, "content"
+                    )
                     chat = ChatGeneration(
                         content=content,
                         type=chat_generation.type,
@@ -193,11 +216,15 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         response_model = response_id = None
         llm_output = response.llm_output
         if llm_output is not None:
-            response_model = llm_output.get("model_name") or llm_output.get("model")
+            response_model = llm_output.get("model_name") or llm_output.get(
+                "model"
+            )
             response_id = llm_output.get("id")
 
         input_tokens = output_tokens = None
-        usage = response.llm_output.get("usage") or response.llm_output.get("token_usage")
+        usage = response.llm_output.get("usage") or response.llm_output.get(
+            "token_usage"
+        )
         if usage:
             input_tokens = usage.get("prompt_tokens", 0)
             output_tokens = usage.get("completion_tokens", 0)
@@ -210,15 +237,17 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         }
 
         # Invoke genai-sdk api
-        invocation: LLMInvocation =  self._telemetry_client.stop_llm(run_id=run_id, chat_generations=chat_generations, **attributes)
+        invocation: LLMInvocation = self._telemetry_client.stop_llm(
+            run_id=run_id, chat_generations=chat_generations, **attributes
+        )
 
         # generates evaluation child spans.
         # pass only required attributes to evaluation client
         if should_enable_evaluation():
             import asyncio
+
             asyncio.create_task(self._evaluation_client.evaluate(invocation))
         # self._evaluation_client.evaluate(invocation)
-
 
     @dont_throw
     def on_tool_start(
@@ -235,14 +264,18 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         if Config.is_instrumentation_suppressed():
             return
 
-        tool_name = serialized.get("name") or kwargs.get("name") or "execute_tool"
+        tool_name = (
+            serialized.get("name") or kwargs.get("name") or "execute_tool"
+        )
         attributes = {
             "tool_name": tool_name,
             "description": serialized.get("description"),
         }
 
         # Invoke genai-sdk api
-        self._telemetry_client.start_tool(run_id=run_id, input_str=input_str, **attributes)
+        self._telemetry_client.start_tool(
+            run_id=run_id, input_str=input_str, **attributes
+        )
 
     @dont_throw
     def on_tool_end(
@@ -276,7 +309,9 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             return
 
         llm_error = Error(message=str(error), type=type(error))
-        self._telemetry_client.fail_llm(run_id=run_id, error=llm_error, **kwargs)
+        self._telemetry_client.fail_llm(
+            run_id=run_id, error=llm_error, **kwargs
+        )
 
     @dont_throw
     def on_tool_error(
@@ -291,4 +326,6 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             return
 
         tool_error = Error(message=str(error), type=type(error))
-        self._telemetry_client.fail_tool(run_id=run_id, error=tool_error, **kwargs)
+        self._telemetry_client.fail_tool(
+            run_id=run_id, error=tool_error, **kwargs
+        )

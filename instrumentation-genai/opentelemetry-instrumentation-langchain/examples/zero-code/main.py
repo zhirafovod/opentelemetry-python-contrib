@@ -1,8 +1,8 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-def main():
 
+def main():
     llm = ChatOpenAI(model="gpt-3.5-turbo")
 
     messages = [
@@ -12,6 +12,7 @@ def main():
 
     result = llm.invoke(messages).content
     print("LLM output:\n", result)
+
 
 if __name__ == "__main__":
     main()

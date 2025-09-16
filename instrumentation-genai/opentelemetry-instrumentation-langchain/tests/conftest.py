@@ -5,6 +5,7 @@ import os
 
 import pytest
 import yaml
+
 # from openai import AsyncOpenAI, OpenAI
 from langchain_openai import ChatOpenAI
 
@@ -85,6 +86,7 @@ def environment():
 def chatOpenAI_client():
     return ChatOpenAI()
 
+
 @pytest.fixture(scope="module")
 def vcr_config():
     return {
@@ -115,7 +117,9 @@ def instrument_no_content(
     )
 
     yield instrumentor
-    os.environ.pop(OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None)
+    os.environ.pop(
+        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None
+    )
     instrumentor.uninstrument()
 
 
@@ -134,7 +138,9 @@ def instrument_with_content(
     )
 
     yield instrumentor
-    os.environ.pop(OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None)
+    os.environ.pop(
+        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None
+    )
     instrumentor.uninstrument()
 
 
@@ -157,7 +163,9 @@ def instrument_with_content_unsampled(
     )
 
     yield instrumentor
-    os.environ.pop(OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None)
+    os.environ.pop(
+        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None
+    )
     instrumentor.uninstrument()
 
 

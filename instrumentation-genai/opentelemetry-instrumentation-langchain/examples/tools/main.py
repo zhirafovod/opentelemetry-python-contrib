@@ -1,29 +1,30 @@
+import logging
+
+from flask import Flask, jsonify, request
 from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
-from opentelemetry.instrumentation.langchain import LangChainInstrumentor
-from langchain_core.tools import tool
-from flask import Flask, request, jsonify
-import logging
-from opentelemetry.instrumentation.flask import FlaskInstrumentor
-
 # todo: start a server span here
-from opentelemetry import _events, _logs, trace, metrics
+from opentelemetry import _events, _logs, metrics, trace
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
     OTLPLogExporter,
+)
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+    OTLPMetricExporter,
 )
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
     OTLPSpanExporter,
 )
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.langchain import LangChainInstrumentor
 from opentelemetry.sdk._events import EventLoggerProvider
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 # configure tracing
 trace.set_tracer_provider(TracerProvider())
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 # Set up instrumentation
 LangChainInstrumentor().instrument()
 
+
 @tool
 def add(a: int, b: int) -> int:
     """Add two integers.
@@ -57,6 +59,7 @@ def add(a: int, b: int) -> int:
         b: Second integer
     """
     return a + b
+
 
 @tool
 def multiply(a: int, b: int) -> int:
@@ -75,9 +78,9 @@ def multiply(a: int, b: int) -> int:
 app = Flask(__name__)
 FlaskInstrumentor().instrument_app(app)
 
+
 @app.post("/tools_add_multiply")
 def tools():
-
     """POST form-url-encoded or JSON with message (and optional session_id)."""
     payload = request.get_json(silent=True) or request.form  # allow either
     query = payload.get("message")
@@ -105,7 +108,9 @@ def tools():
         messages.append(ai_msg)
 
         for tool_call in ai_msg.tool_calls:
-            selected_tool = {"add": add, "multiply": multiply}[tool_call["name"].lower()]
+            selected_tool = {"add": add, "multiply": multiply}[
+                tool_call["name"].lower()
+            ]
             if selected_tool is not None:
                 tool_msg = selected_tool.invoke(tool_call)
                 messages.append(tool_msg)
@@ -119,6 +124,7 @@ def tools():
     except Exception as e:
         logger.error(f"Error processing chat request: {e}")
         return jsonify({"error": "Internal server error"}), 500
+
 
 if __name__ == "__main__":
     # When run directly: python app.py

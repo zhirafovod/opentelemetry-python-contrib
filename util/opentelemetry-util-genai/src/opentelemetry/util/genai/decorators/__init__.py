@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import inspect
-from typing import Optional, Union, TypeVar, Callable, Awaitable
+from typing import Awaitable, Callable, Optional, TypeVar, Union
 
 from typing_extensions import ParamSpec
 
@@ -33,7 +33,9 @@ F = TypeVar("F", bound=Callable[P, Union[R, Awaitable[R]]])
 def tool(
     name: Optional[str] = None,
     method_name: Optional[str] = None,
-    tlp_span_kind: Optional[ObserveSpanKindValues] = ObserveSpanKindValues.TOOL,
+    tlp_span_kind: Optional[
+        ObserveSpanKindValues
+    ] = ObserveSpanKindValues.TOOL,
 ) -> Callable[[F], F]:
     def decorator(target):
         # Check if target is a class
@@ -43,12 +45,12 @@ def tool(
                 method_name=method_name,
                 tlp_span_kind=tlp_span_kind,
             )(target)
-        else:
-            # Target is a function/method
-            return entity_method(
-                name=name,
-                tlp_span_kind=tlp_span_kind,
-            )(target)
+        # Target is a function/method
+        return entity_method(
+            name=name,
+            tlp_span_kind=tlp_span_kind,
+        )(target)
+
     return decorator
 
 
@@ -66,11 +68,11 @@ def llm(
                 method_name=method_name,
                 tlp_span_kind=ObserveSpanKindValues.LLM,
             )(target)
-        else:
-            # Target is a function/method
-            return entity_method(
-                name=name,
-                model_name=model_name,
-                tlp_span_kind=ObserveSpanKindValues.LLM,
-            )(target)
+        # Target is a function/method
+        return entity_method(
+            name=name,
+            model_name=model_name,
+            tlp_span_kind=ObserveSpanKindValues.LLM,
+        )(target)
+
     return decorator

@@ -13,13 +13,14 @@
 # limitations under the License.
 
 
-
 import os
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+
+from opentelemetry import trace
 from opentelemetry.instrumentation._semconv import (
     OTEL_SEMCONV_STABILITY_OPT_IN,
     _OpenTelemetrySemanticConventionStability,
@@ -35,8 +36,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 from opentelemetry.util.genai.client import (
-    llm_start,
     ContentCapturingMode,
+    llm_start,
     llm_stop,
 )
 from opentelemetry.util.genai.environment_variables import (
@@ -51,10 +52,7 @@ from opentelemetry.util.genai.types import (
     ChatGeneration,
     Message,
 )
-
 from opentelemetry.util.genai.utils import get_content_capturing_mode
-
-from opentelemetry import trace
 
 
 def patch_env_vars(stability_mode, content_capturing):
@@ -111,6 +109,7 @@ class TestVersion(unittest.TestCase):
             )
         self.assertEqual(len(cm.output), 1)
         self.assertIn("INVALID_VALUE is not a valid option for ", cm.output[0])
+
 
 @pytest.fixture(name="span_exporter")
 def span_exporter_fixture():

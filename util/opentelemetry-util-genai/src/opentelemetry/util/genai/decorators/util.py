@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 def _serialize_object(obj, max_depth=3, current_depth=0):
     """
     Intelligently serialize an object to a more meaningful representation
@@ -37,7 +38,9 @@ def _serialize_object(obj, max_depth=3, current_depth=0):
     if isinstance(obj, dict):
         try:
             serialized = {}
-            for key, value in list(obj.items())[:10]:  # Limit to first 10 items
+            for key, value in list(obj.items())[
+                :10
+            ]:  # Limit to first 10 items
                 serialized[str(key)] = _serialize_object(
                     value, max_depth, current_depth + 1
                 )
@@ -127,7 +130,8 @@ def _serialize_object(obj, max_depth=3, current_depth=0):
         return {
             "__class__": type(obj).__name__,
             "__module__": getattr(type(obj), "__module__", "unknown"),
-            "__repr__": str(obj)[:100] + ("..." if len(str(obj)) > 100 else ""),
+            "__repr__": str(obj)[:100]
+            + ("..." if len(str(obj)) > 100 else ""),
         }
 
     except Exception:
@@ -149,4 +153,3 @@ def camel_to_snake(s):
         return s.lower()
 
     return cameltosnake(s[0].lower() + s[1:])
-

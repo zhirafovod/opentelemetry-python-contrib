@@ -45,25 +45,24 @@ from typing import Collection
 
 from wrapt import wrap_function_wrapper
 
-from opentelemetry.instrumentation.langchain.config import Config
-from opentelemetry.instrumentation.langchain.version import __version__
-from opentelemetry.instrumentation.langchain.package import _instruments
-from opentelemetry.instrumentation.langchain.callback_handler import (
-    OpenTelemetryLangChainCallbackHandler,
-)
-from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
-from opentelemetry.instrumentation.utils import unwrap
-
-
-from opentelemetry.genai.sdk.api import get_telemetry_client
-from opentelemetry.genai.sdk.api import TelemetryClient
-from .utils import (
-    should_emit_events,
-    get_evaluation_framework_name,
-)
+from opentelemetry.genai.sdk.api import TelemetryClient, get_telemetry_client
 from opentelemetry.genai.sdk.evals import (
     get_evaluator,
 )
+from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
+from opentelemetry.instrumentation.langchain.callback_handler import (
+    OpenTelemetryLangChainCallbackHandler,
+)
+from opentelemetry.instrumentation.langchain.config import Config
+from opentelemetry.instrumentation.langchain.package import _instruments
+from opentelemetry.instrumentation.langchain.version import __version__
+from opentelemetry.instrumentation.utils import unwrap
+
+from .utils import (
+    get_evaluation_framework_name,
+    should_emit_events,
+)
+
 
 class LangChainInstrumentor(BaseInstrumentor):
     """
@@ -75,7 +74,9 @@ class LangChainInstrumentor(BaseInstrumentor):
     for downstream calls to OpenAI (or other providers).
     """
 
-    def __init__(self, exception_logger=None, disable_trace_injection: bool = False):
+    def __init__(
+        self, exception_logger=None, disable_trace_injection: bool = False
+    ):
         """
         :param disable_trace_injection: If True, do not wrap OpenAI invocation
                                         for trace-context injection.
@@ -117,8 +118,13 @@ class LangChainInstrumentor(BaseInstrumentor):
         """
         unwrap("langchain_core.callbacks.base", "BaseCallbackManager.__init__")
         if not self._disable_trace_injection:
-            unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._generate")
-            unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._agenerate")
+            unwrap(
+                "langchain_openai.chat_models.base", "BaseChatOpenAI._generate"
+            )
+            unwrap(
+                "langchain_openai.chat_models.base",
+                "BaseChatOpenAI._agenerate",
+            )
 
 
 class _BaseCallbackManagerInitWrapper:

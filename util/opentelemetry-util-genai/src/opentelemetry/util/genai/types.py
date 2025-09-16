@@ -12,18 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from enum import Enum
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
 from .data import ChatGeneration, Message
+
+
 @dataclass
 class LLMInvocation:
     """
     Represents a single LLM call invocation.
     """
+
 
 class ContentCapturingMode(Enum):
     # Do not capture content (default).
@@ -64,6 +67,7 @@ class Text:
 
 MessagePart = Union[Text, ToolCall, ToolCallResponse, Any]
 
+
 @dataclass()
 class InputMessage:
     role: str
@@ -85,9 +89,8 @@ class OutputMessage:
     span_id: int = 0
     trace_id: int = 0
 
+
 class ObserveSpanKindValues(Enum):
     TOOL = "tool"
     LLM = "llm"
     UNKNOWN = "unknown"
-
-

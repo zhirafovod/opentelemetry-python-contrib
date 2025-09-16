@@ -8,4 +8,3 @@ class ObserveSpanKindValues(Enum):
     TOOL = "tool"
     LLM = "llm"
     UNKNOWN = "unknown"
-

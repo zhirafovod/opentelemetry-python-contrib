@@ -1,21 +1,22 @@
 from abc import ABC, abstractmethod
-from opentelemetry._events import Event
 
-from .types import LLMInvocation
-from opentelemetry import trace
+from opentelemetry import _events, trace
+from opentelemetry._events import Event
 from opentelemetry.trace import (
+    SpanContext,
     Tracer,
 )
-from opentelemetry import _events
-from .deepeval import evaluate_answer_relevancy_metric
-from opentelemetry.trace import SpanContext, Span
 from opentelemetry.trace.span import NonRecordingSpan
+
+from .deepeval import evaluate_answer_relevancy_metric
+from .types import LLMInvocation
 
 
 class EvaluationResult:
     """
     Standardized result for any GenAI evaluation.
     """
+
     def __init__(self, score: float, details: dict = None):
         self.score = score
         self.details = details or {}
@@ -25,6 +26,7 @@ class Evaluator(ABC):
     """
     Abstract base: any evaluation backend must implement.
     """
+
     @abstractmethod
     def evaluate(self, invocation: LLMInvocation) -> EvaluationResult:
         """
@@ -32,11 +34,15 @@ class Evaluator(ABC):
         """
         pass
 
+
 class DeepEvalEvaluator(Evaluator):
     """
     Uses DeepEvals library for LLM-as-judge evaluations.
     """
-    def __init__(self, event_logger, tracer: Tracer = None, config: dict = None):
+
+    def __init__(
+        self, event_logger, tracer: Tracer = None, config: dict = None
+    ):
         # e.g. load models, setup API keys
         self.config = config or {}
         self._tracer = tracer or trace.get_tracer(__name__)
@@ -45,15 +51,27 @@ class DeepEvalEvaluator(Evaluator):
     def evaluate(self, invocation: LLMInvocation):
         # stub: integrate with deepevals SDK
         # result = deepevals.judge(invocation.prompt, invocation.response, **self.config)
-        human_message = next((msg for msg in invocation.messages if msg.type == "human"), None)
+        human_message = next(
+            (msg for msg in invocation.messages if msg.type == "human"), None
+        )
         content = invocation.chat_generations[0].content
         if content is not None and content != "":
-            eval_arm = evaluate_answer_relevancy_metric(human_message.content, invocation.chat_generations[0].content, [])
-            self._do_telemetry(invocation.messages[1].content, invocation.chat_generations[0].content,
-                               invocation.span_id, invocation.trace_id, eval_arm)
+            eval_arm = evaluate_answer_relevancy_metric(
+                human_message.content,
+                invocation.chat_generations[0].content,
+                [],
+            )
+            self._do_telemetry(
+                invocation.messages[1].content,
+                invocation.chat_generations[0].content,
+                invocation.span_id,
+                invocation.trace_id,
+                eval_arm,
+            )
 
-    def _do_telemetry(self, query, output, parent_span_id, parent_trace_id, eval_arm):
-
+    def _do_telemetry(
+        self, query, output, parent_span_id, parent_trace_id, eval_arm
+    ):
         # emit event
         body = {
             "content": f"query: {query} output: {output}",
@@ -90,23 +108,31 @@ class DeepEvalEvaluator(Evaluator):
         with tracer.start_as_current_span("evaluation relevance") as span:
             # do evaluation
 
-            span.add_link(span_context, attributes={
-                "gen_ai.operation.name": "evaluation",
-            })
+            span.add_link(
+                span_context,
+                attributes={
+                    "gen_ai.operation.name": "evaluation",
+                },
+            )
             span.set_attribute("gen_ai.operation.name", "evaluation")
             span.set_attribute("gen_ai.evaluation.name", "relevance")
             span.set_attribute("gen_ai.evaluation.score", eval_arm.score)
             span.set_attribute("gen_ai.evaluation.label", "Pass")
             span.set_attribute("gen_ai.evaluation.reasoning", eval_arm.reason)
-            span.set_attribute("gen_ai.evaluation.model", eval_arm.evaluation_model)
-            span.set_attribute("gen_ai.evaluation.cost", eval_arm.evaluation_cost)
-            #span.set_attribute("gen_ai.evaluation.verdict", eval_arm.verdicts)
+            span.set_attribute(
+                "gen_ai.evaluation.model", eval_arm.evaluation_model
+            )
+            span.set_attribute(
+                "gen_ai.evaluation.cost", eval_arm.evaluation_cost
+            )
+            # span.set_attribute("gen_ai.evaluation.verdict", eval_arm.verdicts)
 
 
 class OpenLitEvaluator(Evaluator):
     """
     Uses OpenLit or similar OSS evaluation library.
     """
+
     def __init__(self, config: dict = None):
         self.config = config or {}
 
@@ -124,7 +150,9 @@ EVALUATORS = {
 }
 
 
-def get_evaluator(name: str, event_logger = None, tracer: Tracer = None, config: dict = None) -> Evaluator:
+def get_evaluator(
+    name: str, event_logger=None, tracer: Tracer = None, config: dict = None
+) -> Evaluator:
     """
     Factory: return an evaluator by name.
     """
