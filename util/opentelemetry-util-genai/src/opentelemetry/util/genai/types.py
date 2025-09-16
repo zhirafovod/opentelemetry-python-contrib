@@ -15,18 +15,66 @@
 from enum import Enum
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
 from .data import ChatGeneration, Message
-
-
 @dataclass
 class LLMInvocation:
     """
     Represents a single LLM call invocation.
     """
 
+class ContentCapturingMode(Enum):
+    # Do not capture content (default).
+    NO_CONTENT = 0
+    # Only capture content in spans.
+    SPAN_ONLY = 1
+    # Only capture content in events.
+    EVENT_ONLY = 2
+    # Capture content in both spans and events.
+    SPAN_AND_EVENT = 3
+
+
+@dataclass()
+class ToolCall:
+    arguments: Any
+    name: str
+    id: Optional[str]
+    type: Literal["tool_call"] = "tool_call"
+
+
+@dataclass()
+class ToolCallResponse:
+    response: Any
+    id: Optional[str]
+    type: Literal["tool_call_response"] = "tool_call_response"
+
+
+FinishReason = Literal[
+    "content_filter", "error", "length", "stop", "tool_calls"
+]
+
+
+@dataclass()
+class Text:
+    content: str
+    type: Literal["text"] = "text"
+
+
+MessagePart = Union[Text, ToolCall, ToolCallResponse, Any]
+
+@dataclass()
+class InputMessage:
+    role: str
+    parts: list[MessagePart]
+
+
+@dataclass()
+class OutputMessage:
+    role: str
+    parts: list[MessagePart]
+    finish_reason: Union[str, FinishReason]
     run_id: UUID
     parent_run_id: Optional[UUID] = None
     start_time: float = field(default_factory=time.time)
