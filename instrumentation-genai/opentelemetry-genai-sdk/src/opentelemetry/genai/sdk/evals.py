@@ -53,43 +53,11 @@ class DeepEvalEvaluator(Evaluator):
 
     def _do_telemetry(self, invocation: LLMInvocation, eval_results):
         import datetime
-        
-        # Convert messages to the expected format
-        input_messages = []
-        output_messages = []
-        system_instructions = []
-        
-        for msg in invocation.messages:
-            if msg.type == "human":
-                input_messages.append({
-                    "role": "user",
-                    "parts": [{"type": "text", "content": msg.content}]
-                })
-            elif msg.type == "system":
-                system_instructions.append({
-                    "type": "text", 
-                    "content": msg.content
-                })
-        
-        for gen in invocation.chat_generations:
-            output_messages.append({
-                "role": "assistant",
-                "parts": [{"type": "text", "content": gen.content}],
-                "finish_reason": gen.finish_reason or "stop"
-            })
 
         # Create event body with LLM invocation context
         body = {
             "name": invocation.attributes.get("gen_ai.response.model", "unknown"),
-            "context": {
-                "trace_id": f"0x{invocation.trace_id:032x}",
-                "span_id": f"0x{invocation.span_id:016x}",
-                "trace_state": "[]",
-                **invocation.attributes,  # Include all LLM attributes
-                "gen_ai.input.messages": input_messages,
-                "gen_ai.output.messages": output_messages,
-                "gen_ai.system_instructions": system_instructions
-            },
+            **invocation.attributes,  # Include all LLM attributes
             "kind": "SpanKind.INTERNAL",
             "parent_id": None,
             "start_time": datetime.datetime.fromtimestamp(invocation.start_time).isoformat() + "Z",
@@ -116,11 +84,23 @@ class DeepEvalEvaluator(Evaluator):
         # Add attributes for each evaluation metric
         for metric_name, metric_data in eval_results.items():
             if metric_name != "error" and isinstance(metric_data, dict):
-                attributes[f"gen_ai.evaluation.{metric_name}.score"] = metric_data.get("score", 0)
-                attributes[f"gen_ai.evaluation.{metric_name}.label"] = metric_data.get("label", "Unknown")
-                attributes[f"gen_ai.evaluation.{metric_name}.range"] = metric_data.get("range", "[0,1]")
-                attributes[f"gen_ai.evaluation.{metric_name}.reasoning"] = metric_data.get("reason", "")
-                attributes[f"gen_ai.evaluation.{metric_name}.judge_model"] = metric_data.get("judge_model", "unknown")
+                # Rename answerrelevancy to relevance
+                if metric_name == "answerrelevancy":
+                    metric_name = "relevance"
+                
+                # Add to attributes
+                # attributes[f"gen_ai.evaluation.{metric_name}.score"] = metric_data.get("score", 0)
+                # attributes[f"gen_ai.evaluation.{metric_name}.label"] = metric_data.get("label", "Unknown")
+                # attributes[f"gen_ai.evaluation.{metric_name}.range"] = metric_data.get("range", "[0,1]")
+                # attributes[f"gen_ai.evaluation.{metric_name}.reasoning"] = metric_data.get("reason", "")
+                # attributes[f"gen_ai.evaluation.{metric_name}.judge_model"] = metric_data.get("judge_model", "unknown")
+                
+                # Add to body with same naming as attributes
+                body[f"gen_ai.evaluation.{metric_name}.score"] = metric_data.get("score", 0)
+                body[f"gen_ai.evaluation.{metric_name}.label"] = metric_data.get("label", "Unknown")
+                body[f"gen_ai.evaluation.{metric_name}.range"] = metric_data.get("range", "[0,1]")
+                body[f"gen_ai.evaluation.{metric_name}.reasoning"] = metric_data.get("reason", "")
+                body[f"gen_ai.evaluation.{metric_name}.judge_model"] = metric_data.get("judge_model", "unknown")
 
         event = Event(
             name="gen_ai.evaluation.message",

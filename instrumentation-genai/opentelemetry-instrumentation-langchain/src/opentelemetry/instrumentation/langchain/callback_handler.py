@@ -215,15 +215,16 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
         # generates evaluation child spans.
         # pass only required attributes to evaluation client
         if should_enable_evaluation():
-            # Run evaluation synchronously to avoid overwhelming rate limits
-            import time
-            try:
-                self._evaluation_client.evaluate(invocation)
-                # Add small delay after evaluation to prevent rate limiting
-                time.sleep(0.5)
-            except Exception as e:
-                print(f"Evaluation failed: {e}")
-                # Continue execution even if evaluation fails
+            # Configurable sampling rate via environment variable
+            import os
+            import random
+            sampling_rate = int(os.environ.get("OTEL_GENAI_EVALUATION_SAMPLING_RATE", "1"))
+            if random.randint(1, sampling_rate) == 1:
+                try:
+                    self._evaluation_client.evaluate(invocation)
+                except Exception as e:
+                    print(f"Evaluation failed: {e}")
+                    # Continue execution even if evaluation fails
 
 
     @dont_throw

@@ -74,6 +74,7 @@ def _message_to_event(message, tool_functions, provider_name, framework)-> Optio
         })
     # changes for bedrock start
     elif type == "human" or type == "system":
+        type = "user" if type == "human" else "system"
         body.update([
             ("content", content)
         ])
@@ -395,9 +396,9 @@ class SpanMetricEventExporter(BaseExporter):
                                                           provider_name=provider_name,
                                                           framework=invocation.attributes.get("framework")))
                 # TODO: logger is not emitting event name, fix it
-                self._logger.emit(_message_to_log_record(message=message, tool_functions=invocation.tool_functions,
-                                                         provider_name=provider_name,
-                                                         framework=invocation.attributes.get("framework")))
+                # self._logger.emit(_message_to_log_record(message=message, tool_functions=invocation.tool_functions,
+                #                                          provider_name=provider_name,
+                #                                          framework=invocation.attributes.get("framework")))
 
             span_state = _SpanState(span=span, context=get_current(), start_time=invocation.start_time, )
             self.spans[invocation.run_id] = span_state
@@ -472,8 +473,8 @@ class SpanMetricEventExporter(BaseExporter):
                 # TODO: remove deprecated event logging and its initialization and use below logger instead
                 self._event_logger.emit(_chat_generation_to_event(chat_generation, index, prefix, provider_name, framework))
                 # TODO: logger is not emitting event name, fix it
-                self._logger.emit(_chat_generation_to_log_record(chat_generation, index, prefix, provider_name, framework))
-                span.set_attribute(f"{GenAI.GEN_AI_RESPONSE_FINISH_REASONS}.{index}", chat_generation.finish_reason)
+                # self._logger.emit(_chat_generation_to_log_record(chat_generation, index, prefix, provider_name, framework))
+                # span.set_attribute(f"{GenAI.GEN_AI_RESPONSE_FINISH_REASONS}.{index}", chat_generation.finish_reason)
 
             # TODO: decide if we want to show this as span attributes
             # span.set_attributes(tool_calls_attributes)
