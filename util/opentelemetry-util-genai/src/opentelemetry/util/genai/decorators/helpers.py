@@ -159,7 +159,7 @@ def _find_llm_instance(args, kwargs):
                 ):
                     llm_instance = obj.llm
                     break
-    except:
+    except Exception:
         pass
 
     # Check kwargs for LLM instance
@@ -203,7 +203,7 @@ def _find_llm_instance(args, kwargs):
                     # Handle bound tools case
                     llm_instance = var_value.llm
                     break
-        except:
+        except Exception:
             pass
 
     return llm_instance

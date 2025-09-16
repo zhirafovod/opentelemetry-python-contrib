@@ -102,7 +102,6 @@ def _handle_llm_span_attributes(tlp_span_kind, args, kwargs, res=None):
             prompts=messages,
             tool_functions=tool_functions,
             run_id=run_id,
-            parent_run_id=_get_parent_run_id(),
             **_extract_llm_attributes_from_args_kwargs(args, kwargs, res),
         )
         return run_id  # Return run_id so it can be used later
@@ -308,7 +307,7 @@ def _extract_response_attributes(res, attributes):
             try:
                 parsed_res = json.loads(res)
                 metadata = parsed_res.get("response_metadata")
-            except:
+            except Exception:
                 pass
 
         # Extract token usage if available
