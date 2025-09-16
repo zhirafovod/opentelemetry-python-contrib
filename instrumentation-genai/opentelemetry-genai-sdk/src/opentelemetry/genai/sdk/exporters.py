@@ -61,9 +61,9 @@ def _message_to_event(
 ) -> Optional[Event]:
     content = _get_property_value(message, "content")
     # check if content is not None and should_collect_content()
-    type = _get_property_value(message, "type")
+    content_type = _get_property_value(message, "type")
     body = {}
-    if type == "tool":
+    if content_type == "tool":
         name = message.name
         tool_call_id = message.tool_call_id
         body.update(
@@ -73,7 +73,7 @@ def _message_to_event(
                 ("tool_call_id", tool_call_id),
             ]
         )
-    elif type == "ai":
+    elif content_type == "ai":
         tool_function_calls = (
             [
                 {
@@ -97,7 +97,7 @@ def _message_to_event(
             }
         )
     # changes for bedrock start
-    elif type == "human" or type == "system":
+    elif content_type == "human" or content_type == "system":
         body.update([("content", content)])
 
     attributes = {
@@ -139,9 +139,9 @@ def _message_to_log_record(
 ) -> Optional[LogRecord]:
     content = _get_property_value(message, "content")
     # check if content is not None and should_collect_content()
-    type = _get_property_value(message, "type")
+    content_type = _get_property_value(message, "type")
     body = {}
-    if type == "tool":
+    if content_type == "tool":
         name = message.name
         tool_call_id = message.tool_call_id
         body.update(
@@ -151,7 +151,7 @@ def _message_to_log_record(
                 ("tool_call_id", tool_call_id),
             ]
         )
-    elif type == "ai":
+    elif content_type == "ai":
         tool_function_calls = (
             [
                 {
@@ -175,7 +175,7 @@ def _message_to_log_record(
             }
         )
     # changes for bedrock start
-    elif type == "human" or type == "system":
+    elif content_type == "human" or content_type == "system":
         body.update([("content", content)])
 
     attributes = {
@@ -1027,15 +1027,15 @@ class SpanMetricExporter(BaseExporter):
             messages = invocation.messages if invocation.messages else None
             for index, message in enumerate(messages):
                 content = message.content
-                type = message.type
+                content_type = message.type
                 tool_call_id = message.tool_call_id
                 # TODO: if should_collect_content():
-                if type == "human" or type == "system":
+                if content_type == "human" or content_type == "system":
                     span.set_attribute(
                         f"gen_ai.prompt.{index}.content", content
                     )
                     span.set_attribute(f"gen_ai.prompt.{index}.role", "human")
-                elif type == "tool":
+                elif content_type == "tool":
                     span.set_attribute(
                         f"gen_ai.prompt.{index}.content", content
                     )
@@ -1043,7 +1043,7 @@ class SpanMetricExporter(BaseExporter):
                     span.set_attribute(
                         f"gen_ai.prompt.{index}.tool_call_id", tool_call_id
                     )
-                elif type == "ai":
+                elif content_type == "ai":
                     tool_function_calls = message.tool_function_calls
                     if tool_function_calls is not None:
                         for index3, tool_function_call in enumerate(
