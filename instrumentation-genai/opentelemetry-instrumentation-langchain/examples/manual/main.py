@@ -41,11 +41,14 @@ def main():
     # Set up instrumentation
     LangChainInstrumentor().instrument()
 
+    # ChatOpenAI
     llm = ChatOpenAI(
-        openai_api_base="http://localhost:1234/v1",
-        openai_api_key="lm-studio",
-        model_name="TheBloke/Llama-2-7B-Chat-GGUF",
-        temperature=0.7,
+        model="gpt-3.5-turbo",
+        temperature=0.1,
+        # NOTE: review if this should be removed
+        # openai_api_base="http://localhost:1234/v1",
+        # openai_api_key="lm-studio",
+        # model_name="TheBloke/Llama-2-7B-Chat-GGUF",
         max_tokens=100,
         top_p=0.9,
         frequency_penalty=0.5,

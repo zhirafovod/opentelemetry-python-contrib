@@ -59,6 +59,4 @@ class EmbeddingInvocation:
     start_time: float = field(default_factory=time.time)
     end_time: float = None
     dimension_count : int = 0
-    input: Optional[List[str]] = None
-    output: Optional[List[float]] = None
     attributes: dict = field(default_factory=dict)

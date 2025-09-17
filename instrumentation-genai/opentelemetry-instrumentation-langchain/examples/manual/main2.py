@@ -64,7 +64,7 @@ def main():
     #     text = text.replace("\n", " ")
     #     return client.embeddings.create(input=[text], model=model).data[0].embedding
     #
-    # print(get_embedding("Hello from openai"))
+    # print(get_embedding("Once upon a time, there was a cat."))
     #
 
 
@@ -80,20 +80,20 @@ def main():
 
 
     # ======== Azure OpenAI Embeddings ========
-    endpoint = "https://etser-mf7gfr7m-eastus2.cognitiveservices.azure.com/"
-    deployment = "text-embedding-3-large"
-
-
-    client = AzureOpenAIEmbeddings(  # or "2023-05-15" if that's your API version
-        model=deployment,
-        azure_endpoint=endpoint,
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        openai_api_version="2024-12-01-preview",
-    )
-
-    response = client.embed_query("Hello from Azure")
-
-    print(response)
+    # endpoint = "https://etser-mf7gfr7m-eastus2.cognitiveservices.azure.com/"
+    # deployment = "text-embedding-3-large"
+    #
+    #
+    # client = AzureOpenAIEmbeddings(  # or "2023-05-15" if that's your API version
+    #     model=deployment,
+    #     azure_endpoint=endpoint,
+    #     api_key="",  # Consider using environment variables
+    #     openai_api_version="2024-12-01-preview",
+    # )
+    #
+    # response = client.embed_query("Your text here")
+    #
+    # print(response)
 
     # ======== HuggingFace Embeddings ========
     # from langchain_huggingface import HuggingFaceEmbeddings
@@ -112,12 +112,12 @@ def main():
     # print(response)
 
     # ======== AWS bedrock ========
-    # from langchain_aws import BedrockEmbeddings
-    #
-    # embeddings_model = BedrockEmbeddings(model_id="amazon.titan-embed-text-v1")
-    #
-    # response = embeddings_model.embed_query("Hello, From AWS bedrock")
-    # print(response)
+    from langchain_aws import BedrockEmbeddings
+
+    embeddings_model = BedrockEmbeddings(model_id="amazon.titan-embed-text-v1")
+
+    response = embeddings_model.embed_query("Hello, From AWS bedrock")
+    print(response)
 
     LangChainInstrumentor().uninstrument()
 
