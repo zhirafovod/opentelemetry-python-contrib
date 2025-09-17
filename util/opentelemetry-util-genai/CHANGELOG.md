@@ -13,4 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Generate Spans for LLM invocations
+- Generate Metrics for LLM invocations
+- Generate Logs for LLM invocations
 - Helper functions for starting and finishing LLM invocations
