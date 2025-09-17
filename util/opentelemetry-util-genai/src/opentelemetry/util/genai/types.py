@@ -14,7 +14,8 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional, Literal, Union
 from uuid import UUID
 
 from .data import ChatGeneration, Message
@@ -71,6 +72,12 @@ class OutputMessage:
     role: str
     parts: list[MessagePart]
     finish_reason: Union[str, FinishReason]
+
+@dataclass
+class LLMInvocation:
+    """
+    Represents a single LLM call invocation.
+    """
     run_id: UUID
     parent_run_id: Optional[UUID] = None
     start_time: float = field(default_factory=time.time)
