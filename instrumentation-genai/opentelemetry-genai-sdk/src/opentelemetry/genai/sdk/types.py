@@ -12,18 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 from uuid import UUID
-import time
 
-from opentelemetry.genai.sdk.data import Message, ChatGeneration, ToolOutput, ToolFunction, ToolFunctionCall
+from opentelemetry.genai.sdk.data import (
+    ChatGeneration,
+    Message,
+    ToolFunction,
+    ToolOutput,
+)
+
 
 @dataclass
 class LLMInvocation:
     """
     Represents a single LLM call invocation.
     """
+
     run_id: UUID
     parent_run_id: Optional[UUID] = None
     start_time: float = field(default_factory=time.time)
@@ -35,11 +42,13 @@ class LLMInvocation:
     span_id: int = 0
     trace_id: int = 0
 
+
 @dataclass
 class ToolInvocation:
     """
     Represents a single Tool call invocation.
     """
+
     run_id: UUID
     output: ToolOutput = None
     parent_run_id: Optional[UUID] = None

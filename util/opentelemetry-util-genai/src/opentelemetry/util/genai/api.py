@@ -19,13 +19,20 @@ from uuid import UUID
 
 from opentelemetry._events import get_event_logger
 from opentelemetry._logs import get_logger
-from opentelemetry.instrumentation.langchain.version import __version__
+
+# from opentelemetry.instrumentation.langchain.version import __version__
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("opentelemetry-instrumentation-langchain")
+except Exception:  # Fallback to a default if package metadata not present (editable dev mode etc.)
+    __version__ = "0.0.1"
 from opentelemetry.metrics import get_meter
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import get_tracer
 
 from .data import ChatGeneration, Error, Message, ToolFunction, ToolOutput
-from .exporters import SpanMetricEventExporter, SpanMetricExporter
+from .generators import SpanMetricEventGenerator, SpanMetricGenerator
 from .types import LLMInvocation, ToolInvocation
 
 
@@ -68,15 +75,14 @@ class TelemetryClient:
             schema_url=Schemas.V1_28_0.value,
         )
 
-        self._exporter = (
-            SpanMetricEventExporter(
+        self._generator = (
+            SpanMetricEventGenerator(
                 tracer=self._tracer,
                 meter=self._meter,
-                event_logger=self._event_logger,
-                logger=self._event_logger,
+                logger=self._logger,
             )
             if exporter_type_full
-            else SpanMetricExporter(tracer=self._tracer, meter=self._meter)
+            else SpanMetricGenerator(tracer=self._tracer, meter=self._meter)
         )
 
         self._llm_registry: dict[UUID, LLMInvocation] = {}
@@ -100,7 +106,7 @@ class TelemetryClient:
         )
         with self._lock:
             self._llm_registry[invocation.run_id] = invocation
-        self._exporter.init_llm(invocation)
+        self._generator.start(invocation)
 
     def stop_llm(
         self,
@@ -113,7 +119,7 @@ class TelemetryClient:
         invocation.end_time = time.time()
         invocation.chat_generations = chat_generations
         invocation.attributes.update(attributes)
-        self._exporter.export_llm(invocation)
+        self._generator.finish(invocation)
         return invocation
 
     def fail_llm(
@@ -123,7 +129,7 @@ class TelemetryClient:
             invocation = self._llm_registry.pop(run_id)
         invocation.end_time = time.time()
         invocation.attributes.update(**attributes)
-        self._exporter.error_llm(error, invocation)
+        self._generator.error(error, invocation)
         return invocation
 
     def start_tool(
@@ -141,7 +147,7 @@ class TelemetryClient:
         )
         with self._lock:
             self._tool_registry[invocation.run_id] = invocation
-        self._exporter.init_tool(invocation)
+        self._generator.init_tool(invocation)
 
     def stop_tool(
         self, run_id: UUID, output: ToolOutput, **attributes
@@ -150,7 +156,7 @@ class TelemetryClient:
             invocation = self._tool_registry.pop(run_id)
         invocation.end_time = time.time()
         invocation.output = output
-        self._exporter.export_tool(invocation)
+        self._generator.export_tool(invocation)
         return invocation
 
     def fail_tool(
@@ -160,7 +166,7 @@ class TelemetryClient:
             invocation = self._tool_registry.pop(run_id)
         invocation.end_time = time.time()
         invocation.attributes.update(**attributes)
-        self._exporter.error_tool(error, invocation)
+        self._generator.error_tool(error, invocation)
         return invocation
 
 

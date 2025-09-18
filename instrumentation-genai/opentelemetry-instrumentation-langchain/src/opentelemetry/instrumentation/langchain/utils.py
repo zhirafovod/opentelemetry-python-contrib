@@ -24,9 +24,7 @@ OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT = (
     "OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT"
 )
 
-OTEL_INSTRUMENTATION_GENAI_EXPORTER = (
-    "OTEL_INSTRUMENTATION_GENAI_EXPORTER"
-)
+OTEL_INSTRUMENTATION_GENAI_EXPORTER = "OTEL_INSTRUMENTATION_GENAI_EXPORTER"
 
 OTEL_INSTRUMENTATION_GENAI_EVALUATION_FRAMEWORK = (
     "OTEL_INSTRUMENTATION_GENAI_EVALUATION_FRAMEWORK"
@@ -38,11 +36,16 @@ OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE = (
 
 
 def should_collect_content() -> bool:
-    val = os.getenv(OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, "false")
+    val = os.getenv(
+        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, "false"
+    )
     return val.strip().lower() == "true"
 
+
 def should_emit_events() -> bool:
-    val = os.getenv(OTEL_INSTRUMENTATION_GENAI_EXPORTER, "SpanMetricEventExporter")
+    val = os.getenv(
+        OTEL_INSTRUMENTATION_GENAI_EXPORTER, "SpanMetricEventExporter"
+    )
     if val.strip().lower() == "spanmetriceventexporter":
         return True
     elif val.strip().lower() == "spanmetricexporter":
@@ -50,13 +53,18 @@ def should_emit_events() -> bool:
     else:
         raise ValueError(f"Unknown exporter_type: {val}")
 
+
 def should_enable_evaluation() -> bool:
     val = os.getenv(OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE, "True")
     return val.strip().lower() == "true"
 
+
 def get_evaluation_framework_name() -> str:
-    val = os.getenv(OTEL_INSTRUMENTATION_GENAI_EVALUATION_FRAMEWORK, "Deepeval")
+    val = os.getenv(
+        OTEL_INSTRUMENTATION_GENAI_EVALUATION_FRAMEWORK, "Deepeval"
+    )
     return val.strip().lower()
+
 
 def get_property_value(obj, property_name):
     if isinstance(obj, dict):
@@ -64,11 +72,13 @@ def get_property_value(obj, property_name):
 
     return getattr(obj, property_name, None)
 
+
 def dont_throw(func):
     """
     Decorator that catches and logs exceptions, rather than re-raising them,
     to avoid interfering with user code if instrumentation fails.
     """
+
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
@@ -79,7 +89,9 @@ def dont_throw(func):
                 traceback.format_exc(),
             )
             from opentelemetry.instrumentation.langchain.config import Config
+
             if Config.exception_logger:
                 Config.exception_logger(e)
             return None
+
     return wrapper

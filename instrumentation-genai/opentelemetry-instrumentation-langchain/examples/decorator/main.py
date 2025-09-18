@@ -1,3 +1,6 @@
+import os
+
+from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
@@ -11,7 +14,8 @@ from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
     OTLPSpanExporter,
 )
-from opentelemetry.instrumentation.langchain import LangChainInstrumentor
+
+# from opentelemetry.genai.sdk.decorators import llm
 from opentelemetry.sdk._events import EventLoggerProvider
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
@@ -19,6 +23,7 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.util.genai.decorators import llm
 
 # configure tracing
 trace.set_tracer_provider(TracerProvider())
@@ -36,34 +41,30 @@ _logs.get_logger_provider().add_log_record_processor(
 )
 _events.set_event_logger_provider(EventLoggerProvider())
 
+# Load environment variables from .env file
+load_dotenv()
+
+
+@llm(name="invoke_langchain_model")
+def invoke_model(messages):
+    # Get API key from environment variable or set a placeholder
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY environment variable must be set")
+
+    llm = ChatOpenAI(model="gpt-3.5-turbo", api_key=api_key)
+    result = llm.invoke(messages)
+    return result
+
 
 def main():
-    # Set up instrumentation
-    LangChainInstrumentor().instrument()
-
-    # ChatOpenAI
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
-        temperature=0.1,
-        max_tokens=100,
-        top_p=0.9,
-        frequency_penalty=0.5,
-        presence_penalty=0.5,
-        stop_sequences=["\n", "Human:", "AI:"],
-        seed=100,
-    )
-
     messages = [
         SystemMessage(content="You are a helpful assistant!"),
         HumanMessage(content="What is the capital of France?"),
     ]
 
-    result = llm.invoke(messages)
-
+    result = invoke_model(messages)
     print("LLM output:\n", result)
-
-    # Un-instrument after use
-    LangChainInstrumentor().uninstrument()
 
 
 if __name__ == "__main__":
