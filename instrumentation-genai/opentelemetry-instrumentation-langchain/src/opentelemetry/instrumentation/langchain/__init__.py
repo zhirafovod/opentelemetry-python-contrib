@@ -43,7 +43,10 @@ API
 
 from typing import Collection
 
+from ._patch import patch_leaf_subclasses
 from wrapt import wrap_function_wrapper
+
+from langchain_core.embeddings import Embeddings
 
 from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.version import __version__
@@ -51,9 +54,14 @@ from opentelemetry.instrumentation.langchain.package import _instruments
 from opentelemetry.instrumentation.langchain.callback_handler import (
     OpenTelemetryLangChainCallbackHandler,
 )
+from opentelemetry.instrumentation.langchain.embeddings_handler import (
+    embed_query_wrapper
+)
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.utils import unwrap
-
+from opentelemetry.trace import get_tracer, set_span_in_context
+from opentelemetry.context import attach, detach
+from opentelemetry.semconv.schemas import Schemas
 
 from opentelemetry.genai.sdk.api import get_telemetry_client
 from opentelemetry.genai.sdk.api import TelemetryClient
@@ -74,6 +82,25 @@ class LangChainInstrumentor(BaseInstrumentor):
     OpenAI invocation points (BaseChatOpenAI) to inject W3C trace headers
     for downstream calls to OpenAI (or other providers).
     """
+    
+    # Class-level configuration for embedding patches
+    EMBEDDING_PATCHES = [
+        {
+            "module": "langchain_openai.embeddings",
+            "class_name": "OpenAIEmbeddings",
+            "methods": ["embed_query", "embed_documents"]
+        },
+        {
+            "module": "langchain_openai.embeddings",
+            "class_name": "AzureOpenAIEmbeddings",
+            "methods": ["embed_query", "embed_documents"]
+        },
+        {
+            "module": "langchain_huggingface.embeddings",
+            "class_name": "HuggingFaceEmbeddings",
+            "methods": ["embed_query"]
+        },
+    ]
 
     def __init__(self, exception_logger=None, disable_trace_injection: bool = False):
         """
@@ -111,11 +138,49 @@ class LangChainInstrumentor(BaseInstrumentor):
             wrapper=_BaseCallbackManagerInitWrapper(otel_callback_handler),
         )
 
+        self.wrap_embeddings()
+
+    def wrap_embeddings(self):
+        # Apply patches using the configuration
+        for patch_config in self.EMBEDDING_PATCHES:
+            for method_name in patch_config["methods"]:
+                try:
+                    # Get the appropriate wrapper based on method name
+                    if method_name in ["embed_query","embed_documents"]:
+                        wrapper = embed_query_wrapper(self._telemetry)
+                    else:
+                        continue  # Skip unknown methods
+
+                    wrap_function_wrapper(
+                        module=patch_config["module"],
+                        name=f"{patch_config["class_name"]}.{method_name}",
+                        wrapper=wrapper,
+                    )
+                except ImportError:
+                    # Provider not available, skip silently
+                    pass
+                except Exception:
+                    # Log error but continue with other patches
+                    pass
+
     def _uninstrument(self, **kwargs):
         """
         Cleanup instrumentation (unwrap).
         """
+
         unwrap("langchain_core.callbacks.base", "BaseCallbackManager.__init__")
+
+        # Unwrap all embedding patches
+        for patch_config in self.EMBEDDING_PATCHES:
+            for method_name in patch_config["methods"]:
+                try:
+                    unwrap(
+                        patch_config["module"],
+                        f"{patch_config['class_name']}.{method_name}"
+                    )
+                except Exception:
+                    pass
+
         if not self._disable_trace_injection:
             unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._generate")
             unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._agenerate")
