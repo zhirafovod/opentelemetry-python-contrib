@@ -11,5 +11,6 @@ opentelemetry-proto==1.36.0
 
 python-dotenv[cli]
 deepeval
+nltk
 
 # For local development: `pip install -e /path/to/opentelemetry-instrumentation-langchain`
