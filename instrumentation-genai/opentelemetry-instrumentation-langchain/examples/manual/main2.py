@@ -91,9 +91,18 @@ def main():
         openai_api_version="2024-12-01-preview",
     )
 
-    response = client.embed_query("Hello from Azure")
+    # Single query embedding
+    # response = client.embed_query("Hello from Azure")
+    # print(response)
 
-    print(response)
+    # Batch embedding multiple documents
+    documents = [
+        "This is the first document.",
+        "Here's another document to embed.",
+        "And a third document for good measure."
+    ]
+    batch_response = client.embed_documents(documents)
+    print(batch_response)
 
     # ======== HuggingFace Embeddings ========
     # from langchain_huggingface import HuggingFaceEmbeddings

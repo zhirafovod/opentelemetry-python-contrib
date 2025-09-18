@@ -50,9 +50,19 @@ class LLMInvocation:
     input_tokens: Optional[AttributeValue] = None
     output_tokens: Optional[AttributeValue] = None
     attributes: Dict[str, Any] = field(default_factory=dict)
-
+    span_id: int = 0
+    trace_id: int = 0
 
 @dataclass
-class Error:
-    message: str
-    type: Type[BaseException]
+class EmbeddingInvocation:
+    """
+    Represents a single Embedding call invocation.
+    """
+    run_id: UUID
+    parent_run_id: Optional[UUID] = None
+    start_time: float = field(default_factory=time.time)
+    end_time: float = None
+    dimension_count : int = 0
+    input: Optional[List[str]] = None
+    output: Optional[List[float]] = None
+    attributes: dict = field(default_factory=dict)

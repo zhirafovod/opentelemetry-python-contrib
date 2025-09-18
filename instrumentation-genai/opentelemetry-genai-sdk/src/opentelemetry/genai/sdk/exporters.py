@@ -1070,10 +1070,10 @@ class SpanMetricEventExporter(BaseExporter):
             if invocation.dimension_count > 0:
                 span.set_attribute("gen_ai.embedding.dimension.count", invocation.dimension_count)
 
-            # TODO: remove deprecated event logging and its initialization and use below logger instead
-            self._event_logger.emit(_embedding_output_to_event(invocation.output))
-            # TODO: logger is not emitting event name, fix it
-            self._logger.emit(_embedding_output_to_log_record(invocation.output))
+            # # TODO: remove deprecated event logging and its initialization and use below logger instead
+            # self._event_logger.emit(_embedding_output_to_event(invocation.output))
+            # # TODO: logger is not emitting event name, fix it
+            # self._logger.emit(_embedding_output_to_log_record(invocation.output))
 
             self._end_span(invocation.run_id)
 
@@ -1144,7 +1144,7 @@ class SpanMetricEventExporter(BaseExporter):
                 if error.type:
                     span.set_attribute(ErrorAttributes.ERROR_TYPE, error.type.__qualname__)
 
-            span_state = _SpanState(span=span, span_context=get_current(), start_time=invocation.start_time)
+            span_state = _SpanState(span=span, context=get_current(), start_time=invocation.start_time)
             self.spans[invocation.run_id] = span_state
 
             self._end_span(invocation.run_id)
@@ -1515,6 +1515,9 @@ class SpanMetricExporter(BaseExporter):
             span,
             end_on_exit=True,
         ) as span:
+            span_state = _SpanState(span=span, context=get_current(), start_time=invocation.start_time)
+            self.spans[invocation.run_id] = span_state
+
             span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.EMBEDDINGS.value)
             if request_model:
                 span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
@@ -1555,7 +1558,7 @@ class SpanMetricExporter(BaseExporter):
                 if error.type:
                     span.set_attribute(ErrorAttributes.ERROR_TYPE, error.type.__qualname__)
 
-            span_state = _SpanState(span=span, span_context=get_current(), start_time=invocation.start_time)
+            span_state = _SpanState(span=span, context=get_current(), start_time=invocation.start_time)
             self.spans[invocation.run_id] = span_state
 
             self._end_span(invocation.run_id)
