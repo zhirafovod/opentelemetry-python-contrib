@@ -20,17 +20,6 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import LLMResult
 
-from opentelemetry.util.genai.api import TelemetryClient
-from opentelemetry.util.genai.data import (
-    ChatGeneration,
-    Error,
-    Message,
-    ToolFunction,
-    ToolFunctionCall,
-    ToolOutput,
-)
-from opentelemetry.util.genai.evals import Evaluator
-from opentelemetry.util.genai.types import LLMInvocation
 # from opentelemetry.genai.sdk.api import TelemetryClient
 # from opentelemetry.genai.sdk.data import (
 #     ChatGeneration,
@@ -44,6 +33,17 @@ from opentelemetry.util.genai.types import LLMInvocation
 # from opentelemetry.genai.sdk.types import LLMInvocation
 from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.utils import dont_throw
+from opentelemetry.util.genai.api import TelemetryClient
+from opentelemetry.util.genai.data import (
+    ChatGeneration,
+    Error,
+    Message,
+    ToolFunction,
+    ToolFunctionCall,
+    ToolOutput,
+)
+from opentelemetry.util.genai.evals import Evaluator
+from opentelemetry.util.genai.types import LLMInvocation
 
 from .utils import get_property_value, should_enable_evaluation
 

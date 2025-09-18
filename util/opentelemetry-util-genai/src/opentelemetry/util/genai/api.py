@@ -19,12 +19,14 @@ from uuid import UUID
 
 from opentelemetry._events import get_event_logger
 from opentelemetry._logs import get_logger
-#from opentelemetry.instrumentation.langchain.version import __version__
-try:     
+
+# from opentelemetry.instrumentation.langchain.version import __version__
+try:
     from importlib.metadata import version as _pkg_version
+
     __version__ = _pkg_version("opentelemetry-instrumentation-langchain")
-except Exception:     # Fallback to a default if package metadata not present (editable dev mode etc.)
-     __version__ = "0.0.1"
+except Exception:  # Fallback to a default if package metadata not present (editable dev mode etc.)
+    __version__ = "0.0.1"
 from opentelemetry.metrics import get_meter
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import get_tracer

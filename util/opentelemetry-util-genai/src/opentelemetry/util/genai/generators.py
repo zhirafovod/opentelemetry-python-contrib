@@ -39,10 +39,10 @@ from uuid import UUID
 
 from opentelemetry import trace
 from opentelemetry._logs import Logger
+from opentelemetry._logs.severity import SeverityNumber
 from opentelemetry.context import Context, get_current
 from opentelemetry.metrics import Histogram, Meter, get_meter
 from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord
-from opentelemetry._logs.severity import SeverityNumber
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAI,
 )

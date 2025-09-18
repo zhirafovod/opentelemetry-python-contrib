@@ -41,19 +41,16 @@ API
 ---
 """
 
+__all__ = ["__version__"]
+
 from typing import Collection
 
 from wrapt import wrap_function_wrapper
 
-from opentelemetry.util.genai.api import TelemetryClient, get_telemetry_client
-from opentelemetry.util.genai.evals import (
-    get_evaluator,
-)
 # from opentelemetry.genai.sdk.api import TelemetryClient, get_telemetry_client
 # from opentelemetry.genai.sdk.evals import (
 #     get_evaluator,
 # )
-
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.langchain.callback_handler import (
     OpenTelemetryLangChainCallbackHandler,
@@ -62,6 +59,10 @@ from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.package import _instruments
 from opentelemetry.instrumentation.langchain.version import __version__
 from opentelemetry.instrumentation.utils import unwrap
+from opentelemetry.util.genai.api import TelemetryClient, get_telemetry_client
+from opentelemetry.util.genai.evals import (
+    get_evaluator,
+)
 
 from .utils import (
     get_evaluation_framework_name,

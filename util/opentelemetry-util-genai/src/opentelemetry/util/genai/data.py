@@ -68,6 +68,7 @@ class Error:
     message: str
     type: Type[BaseException]
 
+
 @dataclass
 class ToolOutput:
     tool_call_id: str

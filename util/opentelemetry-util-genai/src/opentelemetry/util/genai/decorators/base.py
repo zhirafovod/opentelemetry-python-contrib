@@ -165,7 +165,7 @@ def _extract_messages_from_args_kwargs(args, kwargs):
                     Message(
                         content=str(content),
                         name="",  # Default empty name
-                        type=str(msg_type)
+                        type=str(msg_type),
                     )
                 )
 
@@ -398,9 +398,7 @@ def _unwrap_structured_tool(fn):
 def entity_method(
     name: Optional[str] = None,
     model_name: Optional[str] = None,
-    tlp_span_kind: Optional[
-        ObserveSpanKindValues
-    ] = None,
+    tlp_span_kind: Optional[ObserveSpanKindValues] = None,
 ) -> Callable[[F], F]:
     def decorate(fn: F) -> F:
         fn = _unwrap_structured_tool(fn)
@@ -495,9 +493,7 @@ def entity_class(
     name: Optional[str],
     model_name: Optional[str],
     method_name: Optional[str],
-    tlp_span_kind: Optional[
-        ObserveSpanKindValues
-    ] = None,
+    tlp_span_kind: Optional[ObserveSpanKindValues] = None,
 ):
     def decorator(cls):
         task_name = name if name else camel_to_snake(cls.__qualname__)

@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
-from .data import ChatGeneration, Message, ToolOutput, ToolFunction
+from .data import ChatGeneration, Message, ToolFunction, ToolOutput
 
 
 @dataclass
@@ -26,6 +26,7 @@ class LLMInvocation:
     """
     Represents a single LLM call invocation.
     """
+
     run_id: UUID
     parent_run_id: Optional[UUID] = None
     start_time: float = field(default_factory=time.time)
@@ -82,6 +83,7 @@ MessagePart = Union[Text, ToolCall, ToolCallResponse, Any]
 class InputMessage:
     role: str
     parts: list[MessagePart]
+
 
 @dataclass
 class ToolInvocation:
