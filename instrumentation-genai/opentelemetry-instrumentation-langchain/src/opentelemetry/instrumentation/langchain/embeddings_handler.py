@@ -14,10 +14,13 @@
 
 import uuid
 
-from opentelemetry.genai.sdk.api import TelemetryClient
-from opentelemetry.genai.sdk.data import Error
+from opentelemetry.util.genai.handler import TelemetryHandler
+from opentelemetry.util.genai.data import Error
 from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.utils import dont_throw
+
+#TODO remove later
+from opentelemetry.genai.sdk.api import TelemetryClient
 
 def embed_query_wrapper(telemetry_client: TelemetryClient):
     """Wrap the embed_query method of Embeddings classes to trace it."""
@@ -44,7 +47,14 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
         try:
             # Call the original method - wrapped is already bound to the instance
             result = wrapped(*args, **kwargs)
-            telemetry_client.stop_embedding(run_id, len(result), output=result)
+            
+            # Determine the dimension count based on result structure
+            if isinstance(result[0], list):
+                dimension_count = len(result[0])
+            else:
+                dimension_count = len(result)
+            
+            telemetry_client.stop_embedding(run_id, dimension_count, output=result)
             return result
 
         except Exception as ex:

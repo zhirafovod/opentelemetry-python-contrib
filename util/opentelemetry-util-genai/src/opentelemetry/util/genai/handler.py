@@ -47,7 +47,8 @@ from opentelemetry.trace import get_tracer
 
 from .data import ChatGeneration, Error, Message
 from .generators import SpanMetricEventGenerator, SpanMetricGenerator
-from .types import LLMInvocation
+from .types import LLMInvocation, EmbeddingInvocation
+from opentelemetry.semconv._incubating.attributes import gen_ai_attributes
 
 # TODO: Get the tool version for emitting spans, use GenAI Utils for now
 from .version import __version__
@@ -108,6 +109,7 @@ class TelemetryHandler:
         )
 
         self._llm_registry: dict[UUID, LLMInvocation] = {}
+        self._embedding_registry: dict[UUID, EmbeddingInvocation] = {}
         self._lock = Lock()
 
     @staticmethod
@@ -155,6 +157,61 @@ class TelemetryHandler:
         self._generator.error(error, invocation)
         return invocation
 
+    def start_embedding(
+        self,
+        run_id: UUID,
+        model_name: str,
+        parent_run_id: Optional[UUID] = None,
+        **attributes: Any,
+    ) -> None:
+        """Start an embedding invocation."""
+        # Create span attributes
+        span_attributes = {
+            gen_ai_attributes.GEN_AI_OPERATION_NAME: gen_ai_attributes.GenAiOperationNameValues.EMBEDDINGS.value,
+            gen_ai_attributes.GEN_AI_REQUEST_MODEL: model_name,
+        }
+        span_attributes.update(attributes)
+
+        invocation = EmbeddingInvocation(
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            attributes=span_attributes,
+            input=attributes.get("input", None),
+        )
+
+        with self._lock:
+            self._embedding_registry[invocation.run_id] = invocation
+
+        self._generator.start(invocation)
+
+    def stop_embedding(
+        self,
+        run_id: UUID,
+        dimension_count: int,
+        output: List[float],
+        **attributes: Any,
+    ) -> EmbeddingInvocation:
+        """Stop an embedding invocation with results."""
+        with self._lock:
+            invocation = self._embedding_registry.pop(run_id)
+        invocation.end_time = time.time()
+        invocation.dimension_count = dimension_count
+        invocation.attributes.update(attributes)
+        invocation.output = output
+        self._generator.finish(invocation)
+        return invocation
+
+    def fail_embedding(
+        self, run_id: UUID, error: Error, **attributes: Any
+    ) -> EmbeddingInvocation:
+        """Fail an embedding invocation with error."""
+        with self._lock:
+            invocation = self._embedding_registry.pop(run_id)
+        invocation.end_time = time.time()
+        invocation.attributes.update(**attributes)
+        self._generator.error(error, invocation)
+        return invocation
+
 
 def get_telemetry_handler(
     emitter_type_full: bool = True, **kwargs: Any
@@ -195,5 +252,44 @@ def llm_stop(
 
 def llm_fail(run_id: UUID, error: Error, **attributes: Any) -> LLMInvocation:
     return get_telemetry_handler().fail_llm(
+        run_id=run_id, error=error, **attributes
+    )
+
+
+def embedding_start(
+    model_name: str,
+    run_id: UUID,
+    parent_run_id: Optional[UUID] = None,
+    **attributes: Any,
+) -> None:
+    """Start an embedding invocation."""
+    return get_telemetry_handler().start_embedding(
+        run_id=run_id,
+        model_name=model_name,
+        parent_run_id=parent_run_id,
+        **attributes,
+    )
+
+
+def embedding_stop(
+    run_id: UUID,
+    dimension_count: int,
+    output: List[float],
+    **attributes: Any,
+) -> EmbeddingInvocation:
+    """Stop an embedding invocation with results."""
+    return get_telemetry_handler().stop_embedding(
+        run_id=run_id,
+        dimension_count=dimension_count,
+        output=output,
+        **attributes,
+    )
+
+
+def embedding_fail(
+    run_id: UUID, error: Error, **attributes: Any
+) -> EmbeddingInvocation:
+    """Fail an embedding invocation with error."""
+    return get_telemetry_handler().fail_embedding(
         run_id=run_id, error=error, **attributes
     )
