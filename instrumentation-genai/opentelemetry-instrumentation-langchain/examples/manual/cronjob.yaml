@@ -12,7 +12,7 @@ spec:
         spec:
           containers:
             - name: otel-genai-eval-event
-              image: pranair2800/otel-genai-eval-event:1.6
+              image: pranair2800/otel-genai-eval-event:1.11
               imagePullPolicy: IfNotPresent
               env:
                 - name: OTEL_SERVICE_NAME

@@ -219,6 +219,7 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
             import os
             import random
             sampling_rate = int(os.environ.get("OTEL_GENAI_EVALUATION_SAMPLING_RATE", "1"))
+            print(f"Sampling rate: {sampling_rate}")
             if random.randint(1, sampling_rate) == 1:
                 try:
                     self._evaluation_client.evaluate(invocation)

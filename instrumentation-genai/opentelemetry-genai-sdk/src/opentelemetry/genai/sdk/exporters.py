@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from uuid import UUID
 
 from opentelemetry.context import Context, get_current
 from opentelemetry import trace
+import json
 from opentelemetry.metrics import Meter
 from opentelemetry.trace import (
     Span,
@@ -44,117 +45,414 @@ class _SpanState:
     start_time: float
     children: List[UUID] = field(default_factory=list)
 
-def _get_property_value(obj, property_name)-> object:
-    if isinstance(obj, dict):
-        return obj.get(property_name, None)
-
-    return getattr(obj, property_name, None)
-
-def _message_to_event(message, tool_functions, provider_name, framework)-> Optional[Event]:
-    content = _get_property_value(message, "content")
-    # check if content is not None and should_collect_content()
-    type = _get_property_value(message, "type")
+def _message_to_event(message, tool_functions, provider_name, framework) -> Optional[Event]:
+    content = getattr(message, "content", None)
+    mtype = getattr(message, "type", None)
     body = {}
-    if type == "tool":
-        name = message.name
-        tool_call_id = message.tool_call_id
-        body.update([
-            ("content", content),
-            ("name", name),
-            ("tool_call_id", tool_call_id)]
-        )
-    elif type == "ai":
-        tool_function_calls = [
-            {"id": tfc.id, "name": tfc.name, "arguments": tfc.arguments, "type": getattr(tfc, "type", None)} for tfc in
-            message.tool_function_calls] if message.tool_function_calls else []
-        tool_function_calls_str = str(tool_function_calls) if tool_function_calls else ""
+    if mtype == "tool":
+        name = getattr(message, "name", None)
+        tool_call_id = getattr(message, "tool_call_id", None)
         body.update({
-            "content": content if content else "",
-            "tool_calls": tool_function_calls_str
+            "content": content,
+            "name": name,
+            "tool_call_id": tool_call_id,
         })
-    # changes for bedrock start
-    elif type == "human" or type == "system":
-        type = "user" if type == "human" else "system"
-        body.update([
-            ("content", content)
-        ])
+    elif mtype == "ai":
+        tool_function_calls = [
+            {"id": tfc.id, "name": tfc.name, "arguments": tfc.arguments, "type": getattr(tfc, "type", None)}
+            for tfc in (message.tool_function_calls or [])
+        ]
+        body.update({
+            "content": content or "",
+            "tool_calls": str(tool_function_calls) if tool_function_calls else "",
+        })
+    elif mtype in ("human", "system"):
+        normalized_type = "user" if mtype == "human" else "system"
+        mtype = normalized_type
+        body.update({"content": content})
 
     attributes = {
-        # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
         "gen_ai.framework": framework,
         "gen_ai.provider.name": provider_name,
     }
 
-    # tools generation during first invocation of llm start --
     if tool_functions is not None:
         for index, tool_function in enumerate(tool_functions):
-            attributes.update([
-                (f"gen_ai.request.function.{index}.name", tool_function.name),
-                (f"gen_ai.request.function.{index}.description", tool_function.description),
-                (f"gen_ai.request.function.{index}.parameters", tool_function.parameters),
-            ])
-    # tools generation during first invocation of llm end --
+            attributes.update({
+                f"gen_ai.request.function.{index}.name": tool_function.name,
+                f"gen_ai.request.function.{index}.description": tool_function.description,
+                f"gen_ai.request.function.{index}.parameters": tool_function.parameters,
+            })
 
     return Event(
-        name=f"gen_ai.{type}.message",
+        name=f"gen_ai.{mtype}.message",
         attributes=attributes,
         body=body or None,
     )
 
-def _message_to_log_record(message, tool_functions, provider_name, framework)-> Optional[LogRecord]:
-    content = _get_property_value(message, "content")
-    # check if content is not None and should_collect_content()
-    type = _get_property_value(message, "type")
-    body = {}
-    if type == "tool":
-        name = message.name
-        tool_call_id = message.tool_call_id
-        body.update([
-            ("content", content),
-            ("name", name),
-            ("tool_call_id", tool_call_id)]
-        )
-    elif type == "ai":
-        tool_function_calls = [
-            {"id": tfc.id, "name": tfc.name, "arguments": tfc.arguments, "type": getattr(tfc, "type", None)} for tfc in
-            message.tool_function_calls] if message.tool_function_calls else []
-        tool_function_calls_str = str(tool_function_calls) if tool_function_calls else ""
-        body.update({
-            "content": content if content else "",
-            "tool_calls": tool_function_calls_str
-        })
-    # changes for bedrock start
-    elif type == "human" or type == "system":
-        body.update([
-            ("content", content)
-        ])
-
-    attributes = {
-        # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
-        "gen_ai.framework": framework,
-        "gen_ai.provider.name": provider_name,
+def _create_inference_operation_event(invocation: LLMInvocation, provider_name: Optional[str], framework: Optional[str]) -> Optional[Event]:
+    attributes: Dict[str, str] = {}
+    if framework:
+        attributes["gen_ai.framework"] = framework
+    if provider_name:
+        attributes["gen_ai.provider.name"] = provider_name
+    inv_attrs_for_op: Dict[str, Any] = dict(invocation.attributes) if invocation.attributes else {}
+    op_name_attr = (
+        str(inv_attrs_for_op.get("operation_name")).lower()
+        if inv_attrs_for_op.get("operation_name") is not None
+        else None
+    )
+    op_name_map = {
+        "chat": GenAI.GenAiOperationNameValues.CHAT.value,
+        "messages": GenAI.GenAiOperationNameValues.CHAT.value,
+        "completion": GenAI.GenAiOperationNameValues.CHAT.value,
+        "completions": GenAI.GenAiOperationNameValues.CHAT.value,
+        "execute_tool": GenAI.GenAiOperationNameValues.EXECUTE_TOOL.value,
     }
+    derived_operation_name = op_name_map.get(op_name_attr) if op_name_attr else None
+    attributes[GenAI.GEN_AI_OPERATION_NAME] = derived_operation_name or GenAI.GenAiOperationNameValues.CHAT.value
+    inv_attrs: Dict[str, Any] = dict(invocation.attributes) if invocation.attributes else {}
+    request_model = inv_attrs.get("request_model")
+    if request_model:
+        attributes[GenAI.GEN_AI_REQUEST_MODEL] = request_model
+    temperature = inv_attrs.get("request_temperature")
+    if temperature is not None:
+        attributes[GenAI.GEN_AI_REQUEST_TEMPERATURE] = temperature
+    top_p = inv_attrs.get("request_top_p")
+    if top_p is not None:
+        attributes[GenAI.GEN_AI_REQUEST_TOP_P] = top_p
+    freq_penalty = inv_attrs.get("request_frequency_penalty")
+    if freq_penalty is not None:
+        attributes[GenAI.GEN_AI_REQUEST_FREQUENCY_PENALTY] = freq_penalty
+    pres_penalty = inv_attrs.get("request_presence_penalty")
+    if pres_penalty is not None:
+        attributes[GenAI.GEN_AI_REQUEST_PRESENCE_PENALTY] = pres_penalty
+    stop_sequences = inv_attrs.get("request_stop_sequences")
+    if stop_sequences:
+        attributes[GenAI.GEN_AI_REQUEST_STOP_SEQUENCES] = stop_sequences
+    seed = inv_attrs.get("request_seed")
+    if seed is not None:
+        attributes[GenAI.GEN_AI_REQUEST_SEED] = seed
+    max_tokens = inv_attrs.get("request_max_tokens")
+    if max_tokens is not None:
+        attributes[GenAI.GEN_AI_REQUEST_MAX_TOKENS] = max_tokens
 
-    # tools generation during first invocation of llm start --
-    if tool_functions is not None:
-        for index, tool_function in enumerate(tool_functions):
-            attributes.update([
-                (f"gen_ai.request.function.{index}.name", tool_function.name),
-                (f"gen_ai.request.function.{index}.description", tool_function.description),
-                (f"gen_ai.request.function.{index}.parameters", tool_function.parameters),
-            ])
-    # tools generation during first invocation of llm end --
+    response_model = inv_attrs.get("response_model_name")
+    if response_model:
+        attributes[GenAI.GEN_AI_RESPONSE_MODEL] = response_model
+    response_id = inv_attrs.get("response_id")
+    if response_id:
+        attributes[GenAI.GEN_AI_RESPONSE_ID] = response_id
+
+    input_tokens = inv_attrs.get("input_tokens")
+    if input_tokens is not None:
+        attributes[GenAI.GEN_AI_USAGE_INPUT_TOKENS] = input_tokens
+    output_tokens = inv_attrs.get("output_tokens")
+    if output_tokens is not None:
+        attributes[GenAI.GEN_AI_USAGE_OUTPUT_TOKENS] = output_tokens
+
+    # TODO add missing attributes https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/gen-ai-events.md#event-eventgen_aiclientinferenceoperationdetails
+
+    attributes["event.name"] = "event.gen_ai.client.inference.operation.details"
+
+    tool_definitions: List[Dict[str, Any]] = []
+    if invocation.tool_functions:
+        for index, tool_function in enumerate(invocation.tool_functions):
+            tool_definitions.append(
+                {
+                    "name": tool_function.name,
+                    "description": tool_function.description,
+                    "parameters": tool_function.parameters,
+                }
+            )
+
+    body: Dict[str, Any] = {}
+    
+    # Process input messages
+    input_messages: List[Dict[str, Any]] = []
+    system_instructions: List[Dict[str, Any]] = []
+    
+    for message in invocation.messages:
+        content = message.content
+        message_type = message.type
+        
+        if message_type == "system":
+            if content:
+                system_instructions.append({"type": "text", "content": content})
+        elif message_type in ["user", "human", "ai", "assistant", "tool"]:
+            role = "user" if message_type in ["user", "human"] else ("assistant" if message_type in ["ai", "assistant"] else "tool")
+            parts: List[Dict[str, Any]] = []
+            # text part if content present
+            if content:
+                parts.append({"type": "text", "content": content})
+            # tool call parts for assistant messages
+            if role == "assistant" and getattr(message, "tool_function_calls", None):
+                for tfc in message.tool_function_calls:
+                    args_obj = tfc.arguments
+                    if isinstance(args_obj, str):
+                        try:
+                            args_obj = json.loads(args_obj)
+                        except Exception:
+                            pass
+                    parts.append({
+                        "type": "tool_call",
+                        "id": getattr(tfc, "id", None),
+                        "name": getattr(tfc, "name", None),
+                        "arguments": args_obj,
+                    })
+            # tool call response parts for tool role
+            if role == "tool":
+                parts = [{
+                    "type": "tool_call_response",
+                    "id": getattr(message, "tool_call_id", None),
+                    "result": content,
+                }]
+            input_messages.append({"role": role, "parts": parts})
+    
+    if input_messages:
+        body["gen_ai.input.messages"] = input_messages
+    if system_instructions:
+        body["gen_ai.system_instructions"] = system_instructions
+    
+    output_messages: List[Dict[str, Any]] = []
+    finish_reasons: List[str] = []
+    for chat_generation in invocation.chat_generations:
+        if chat_generation:
+            parts: List[Dict[str, Any]] = []
+            if chat_generation.content:
+                parts.append({"type": "text", "content": chat_generation.content})
+            output_message_data: Dict[str, Any] = {
+                "role": "assistant",
+                "parts": parts,
+                "finish_reason": chat_generation.finish_reason or "error",
+            }
+            if chat_generation.finish_reason:
+                finish_reasons.append(chat_generation.finish_reason)
+            output_messages.append(output_message_data)
+    
+    if output_messages:
+        body["gen_ai.output.messages"] = output_messages
+    if tool_definitions:
+        # Ensure each definition has type:function
+        for td in tool_definitions:
+            td["type"] = "function"
+        body["gen_ai.tool.definitions"] = tool_definitions
+    
+    return Event(
+        name="gen_ai.client.inference.operation.details",
+        attributes=attributes,
+        body=body if body else None,
+    )
+
+def _create_inference_operation_log_record(invocation: LLMInvocation, provider_name: Optional[str], framework: Optional[str]) -> Optional[LogRecord]:
+    attributes: Dict[str, Any] = {}
+    if framework:
+        attributes["gen_ai.framework"] = framework
+    if provider_name:
+        attributes["gen_ai.provider.name"] = provider_name
+    attributes[GenAI.GEN_AI_OPERATION_NAME] = GenAI.GenAiOperationNameValues.CHAT.value
+    
+    inv_attrs: Dict[str, Any] = dict(invocation.attributes) if invocation.attributes else {}
+    request_model = inv_attrs.get("request_model")
+    if request_model:
+        attributes[GenAI.GEN_AI_REQUEST_MODEL] = request_model
+    temperature = inv_attrs.get("request_temperature")
+    if temperature is not None:
+        attributes[GenAI.GEN_AI_REQUEST_TEMPERATURE] = temperature
+    top_p = inv_attrs.get("request_top_p")
+    if top_p is not None:
+        attributes[GenAI.GEN_AI_REQUEST_TOP_P] = top_p
+    freq_penalty = inv_attrs.get("request_frequency_penalty")
+    if freq_penalty is not None:
+        attributes[GenAI.GEN_AI_REQUEST_FREQUENCY_PENALTY] = freq_penalty
+    pres_penalty = inv_attrs.get("request_presence_penalty")
+    if pres_penalty is not None:
+        attributes[GenAI.GEN_AI_REQUEST_PRESENCE_PENALTY] = pres_penalty
+    stop_sequences = inv_attrs.get("request_stop_sequences")
+    if stop_sequences:
+        attributes[GenAI.GEN_AI_REQUEST_STOP_SEQUENCES] = stop_sequences
+    seed = inv_attrs.get("request_seed")
+    if seed is not None:
+        attributes[GenAI.GEN_AI_REQUEST_SEED] = seed
+    max_tokens = inv_attrs.get("request_max_tokens")
+    if max_tokens is not None:
+        attributes[GenAI.GEN_AI_REQUEST_MAX_TOKENS] = max_tokens
+
+    response_model = inv_attrs.get("response_model_name")
+    if response_model:
+        attributes[GenAI.GEN_AI_RESPONSE_MODEL] = response_model
+    response_id = inv_attrs.get("response_id")
+    if response_id:
+        attributes[GenAI.GEN_AI_RESPONSE_ID] = response_id
+
+    input_tokens = inv_attrs.get("input_tokens")
+    if input_tokens is not None:
+        attributes[GenAI.GEN_AI_USAGE_INPUT_TOKENS] = input_tokens
+    output_tokens = inv_attrs.get("output_tokens")
+    if output_tokens is not None:
+        attributes[GenAI.GEN_AI_USAGE_OUTPUT_TOKENS] = output_tokens
+
+    tool_definitions: List[Dict[str, Any]] = []
+    if invocation.tool_functions:
+        for tool_function in invocation.tool_functions:
+            tool_definitions.append(
+                {
+                    "name": tool_function.name,
+                    "description": tool_function.description,
+                    "parameters": tool_function.parameters,
+                }
+            )
+
+    body: Dict[str, Any] = {}
+
+    input_messages: List[Dict[str, Any]] = []
+    system_instructions: List[Dict[str, Any]] = []
+    for message in invocation.messages:
+        content = message.content
+        message_type = message.type
+        if message_type == "system":
+            if content:
+                system_instructions.append({"type": "text", "content": content})
+        elif message_type in ["user", "human", "ai", "assistant", "tool"]:
+            role = "user" if message_type in ["user", "human"] else ("assistant" if message_type in ["ai", "assistant"] else "tool")
+            parts: List[Dict[str, Any]] = []
+            if content:
+                parts.append({"type": "text", "content": content})
+            if role == "assistant" and getattr(message, "tool_function_calls", None):
+                for tfc in message.tool_function_calls:
+                    args_obj = tfc.arguments
+                    if isinstance(args_obj, str):
+                        try:
+                            args_obj = json.loads(args_obj)
+                        except Exception:
+                            pass
+                    parts.append({
+                        "type": "tool_call",
+                        "id": getattr(tfc, "id", None),
+                        "name": getattr(tfc, "name", None),
+                        "arguments": args_obj,
+                    })
+            if role == "tool":
+                parts = [{
+                    "type": "tool_call_response",
+                    "id": getattr(message, "tool_call_id", None),
+                    "result": content,
+                }]
+            input_messages.append({"role": role, "parts": parts})
+
+    if input_messages:
+        body["gen_ai.input.messages"] = input_messages
+    if system_instructions:
+        body["gen_ai.system_instructions"] = system_instructions
+
+    output_messages: List[Dict[str, Any]] = []
+    finish_reasons: List[str] = []
+    for chat_generation in invocation.chat_generations:
+        parts: List[Dict[str, Any]] = []
+        if chat_generation.content:
+            parts.append({"type": "text", "content": chat_generation.content})
+        output_message_data: Dict[str, Any] = {
+            "role": "assistant",
+            "parts": parts,
+            "finish_reason": chat_generation.finish_reason or "error",
+        }
+        if chat_generation.finish_reason:
+            finish_reasons.append(chat_generation.finish_reason)
+        output_messages.append(output_message_data)
+    if output_messages:
+        body["gen_ai.output.messages"] = output_messages
+    if tool_definitions:
+        # Ensure each definition has type:function
+        for td in tool_definitions:
+            td["type"] = "function"
+        body["gen_ai.tool.definitions"] = tool_definitions
 
     return LogRecord(
-        event_name=f"gen_ai.{type}.message",
+        event_name="event.gen_ai.client.inference.operation.details",
         attributes=attributes,
-        body=body or None,
+        body=body if body else None,
     )
 
-def _chat_generation_to_event(chat_generation, index, prefix, provider_name, framework)-> Optional[Event]:
+def _create_tool_operation_event(invocation: ToolInvocation, framework: Optional[str]) -> Optional[Event]:
+    attributes: Dict[str, Any] = {}
+    if framework:
+        attributes["gen_ai.framework"] = framework
+    tool_name = invocation.attributes.get("tool_name") if invocation.attributes else None
+    description = invocation.attributes.get("description") if invocation.attributes else None
+    if tool_name:
+        attributes[GenAI.GEN_AI_TOOL_NAME] = tool_name
+    if description:
+        attributes["gen_ai.tool.description"] = description
+    # Provide event name as attribute for log backends that don't propagate event_name
+    attributes["event.name"] = "event.gen_ai.tool.operation.details"
+    # operation name per semconv
+    attributes[GenAI.GEN_AI_OPERATION_NAME] = GenAI.GenAiOperationNameValues.EXECUTE_TOOL.value
+
+    body: Dict[str, Any] = {}
+    input_messages: List[Dict[str, Any]] = []
+    if invocation.input_str is not None:
+        input_messages.append({"role": "tool", "content": invocation.input_str})
+    if input_messages:
+        body["gen_ai.input.messages"] = input_messages
+
+    output_messages: List[Dict[str, Any]] = []
+    if invocation.output is not None:
+        output_messages.append(
+            {
+                "role": "tool",
+                "content": invocation.output.content,
+                "id": invocation.output.tool_call_id,
+            }
+        )
+    if output_messages:
+        body["gen_ai.output.messages"] = output_messages
+
+    return Event(
+        name="event.gen_ai.tool.operation.details",
+        attributes=attributes,
+        body=body if body else None,
+    )
+
+def _create_tool_operation_log_record(invocation: ToolInvocation, framework: Optional[str]) -> Optional[LogRecord]:
+    attributes: Dict[str, Any] = {}
+    if framework:
+        attributes["gen_ai.framework"] = framework
+    tool_name = invocation.attributes.get("tool_name") if invocation.attributes else None
+    description = invocation.attributes.get("description") if invocation.attributes else None
+    if tool_name:
+        attributes[GenAI.GEN_AI_TOOL_NAME] = tool_name
+    if description:
+        attributes["gen_ai.tool.description"] = description
+
+    body: Dict[str, Any] = {}
+    input_messages: List[Dict[str, Any]] = []
+    if invocation.input_str is not None:
+        input_messages.append({"role": "tool", "content": invocation.input_str})
+    if input_messages:
+        body["gen_ai.input.messages"] = input_messages
+
+    output_messages: List[Dict[str, Any]] = []
+    if invocation.output is not None:
+        output_messages.append(
+            {
+                "role": "tool",
+                "content": invocation.output.content,
+                "id": invocation.output.tool_call_id,
+            }
+        )
+    if output_messages:
+        body["gen_ai.output.messages"] = output_messages
+
+    return LogRecord(
+        event_name="event.gen_ai.tool.operation.details",
+        attributes=attributes,
+        body=body if body else None,
+    )
+
+
+def _chat_generation_to_event(chat_generation, index, prefix, provider_name, framework) -> Optional[Event]:
     if chat_generation:
         attributes = {
-            # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
             "gen_ai.framework": framework,
             "gen_ai.provider.name": provider_name,
         }
@@ -169,48 +467,14 @@ def _chat_generation_to_event(chat_generation, index, prefix, provider_name, fra
             "message": message,
         }
 
-        # tools generation during first invocation of llm start --
-        tool_function_calls = chat_generation.tool_function_calls
+        tool_function_calls = getattr(chat_generation, "tool_function_calls", None)
         if tool_function_calls is not None:
             attributes.update(
                 chat_generation_tool_function_calls_attributes(tool_function_calls, prefix)
             )
-        # tools generation during first invocation of llm end --
 
         return Event(
             name="gen_ai.choice",
-            attributes=attributes,
-            body=body or None,
-        )
-
-def _chat_generation_to_log_record(chat_generation, index, prefix, provider_name, framework)-> Optional[LogRecord]:
-    if chat_generation:
-        attributes = {
-            # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
-            "gen_ai.framework": framework,
-            "gen_ai.provider.name": provider_name,
-        }
-
-        message = {
-            "content": chat_generation.content,
-            "type": chat_generation.type,
-        }
-        body = {
-            "index": index,
-            "finish_reason": chat_generation.finish_reason or "error",
-            "message": message,
-        }
-
-        # tools generation during first invocation of llm start --
-        tool_function_calls = chat_generation.tool_function_calls
-        if tool_function_calls is not None:
-            attributes.update(
-                chat_generation_tool_function_calls_attributes(tool_function_calls, prefix)
-            )
-        # tools generation during first invocation of llm end --
-
-        return LogRecord(
-            event_name="gen_ai.choice",
             attributes=attributes,
             body=body or None,
         )
@@ -384,27 +648,36 @@ class SpanMetricEventExporter(BaseExporter):
             kind=SpanKind.CLIENT,
             parent_run_id=invocation.parent_run_id,
         )
-
         with use_span(
             span,
             end_on_exit=False,
         ) as span:
-            for message in invocation.messages:
-                provider_name = invocation.attributes.get("provider_name")
-                # TODO: remove deprecated event logging and its initialization and use below logger instead
-                self._event_logger.emit(_message_to_event(message=message, tool_functions=invocation.tool_functions,
-                                                          provider_name=provider_name,
-                                                          framework=invocation.attributes.get("framework")))
-                # TODO: logger is not emitting event name, fix it
-                # self._logger.emit(_message_to_log_record(message=message, tool_functions=invocation.tool_functions,
-                #                                          provider_name=provider_name,
-                #                                          framework=invocation.attributes.get("framework")))
+            # single event
+            provider_name = str(invocation.attributes.get("provider_name")) if invocation.attributes and invocation.attributes.get("provider_name") else None
+            framework = str(invocation.attributes.get("framework")) if invocation.attributes and invocation.attributes.get("framework") else None
+            consolidated_event = _create_inference_operation_event(invocation, provider_name, framework)
+            if consolidated_event:
+                self._event_logger.emit(consolidated_event)
+            # consolidated_log = _create_inference_operation_log_record(invocation, provider_name, framework)
+            # if consolidated_log:
+            #     self._logger.emit(consolidated_log)
+            # multiple message event
+            if invocation.messages:
+                for message in invocation.messages:
+                    legacy_event = _message_to_event(
+                        message=message,
+                        tool_functions=invocation.tool_functions,
+                        provider_name=provider_name,
+                        framework=framework,
+                    )
+                    if legacy_event:
+                        self._event_logger.emit(legacy_event)
 
             span_state = _SpanState(span=span, context=get_current(), start_time=invocation.start_time, )
             self.spans[invocation.run_id] = span_state
 
             provider_name = ""
-            attributes = invocation.attributes
+            attributes: Dict[str, Any] = dict(invocation.attributes) if invocation.attributes else {}
             if attributes:
                 top_p = attributes.get("request_top_p")
                 if top_p:
@@ -610,7 +883,6 @@ class SpanMetricEventExporter(BaseExporter):
                 span,
                 end_on_exit=False,
         ) as span:
-            # TODO: remove deprecated event logging and its initialization and use below logger instead
             self._event_logger.emit(_input_to_event(invocation.input_str))
             # TODO: logger is not emitting event name, fix it
             self._logger.emit(_input_to_log_record(invocation.input_str))
@@ -993,8 +1265,7 @@ class SpanMetricExporter(BaseExporter):
 
             # TODO: if should_collect_content():
             span.set_attribute(GenAI.GEN_AI_TOOL_CALL_ID, invocation.output.tool_call_id)
-            # TODO: if should_collect_content():
-            span.set_attribute("gen_ai.tool.output.content", invocation.output.content)
+            # Output content available in consolidated event/log emitted in SpanMetricEventExporter
 
             self._end_span(invocation.run_id)
 

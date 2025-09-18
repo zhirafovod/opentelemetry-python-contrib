@@ -6,6 +6,8 @@ from opentelemetry import trace
 from opentelemetry.trace import (
     Tracer,
 )
+from opentelemetry import metrics
+from opentelemetry.metrics import Histogram
 from opentelemetry import _events
 from .deepeval import evaluate_all_metrics
 from opentelemetry.trace import SpanContext, Span
@@ -41,6 +43,32 @@ class DeepEvalEvaluator(Evaluator):
         self.config = config or {}
         self._tracer = tracer or trace.get_tracer(__name__)
         self._event_logger = event_logger or _events.get_event_logger(__name__)
+        meter = metrics.get_meter(__name__)
+        self._metric_relevance: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.relevance",
+            unit="1",
+            description="Evaluation score for relevance in [0,1]",
+        )
+        self._metric_hallucination: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.hallucination",
+            unit="1",
+            description="Evaluation score for hallucination in [0,1]",
+        )
+        self._metric_toxicity: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.toxicity",
+            unit="1",
+            description="Evaluation score for toxicity in [0,1]",
+        )
+        self._metric_bias: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.bias",
+            unit="1",
+            description="Evaluation score for bias in [0,1]",
+        )
+        self._metric_sentiment: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.sentiment",
+            unit="1",
+            description="Evaluation score for sentiment in [0,1]",
+        )
 
     def evaluate(self, invocation: LLMInvocation):
         # stub: integrate with deepevals SDK
@@ -54,56 +82,74 @@ class DeepEvalEvaluator(Evaluator):
     def _do_telemetry(self, invocation: LLMInvocation, eval_results):
         import datetime
 
-        # Create event body with LLM invocation context
-        body = {
-            "name": invocation.attributes.get("gen_ai.response.model", "unknown"),
-            **invocation.attributes,  # Include all LLM attributes
-            "kind": "SpanKind.INTERNAL",
-            "parent_id": None,
-            "start_time": datetime.datetime.fromtimestamp(invocation.start_time).isoformat() + "Z",
-            "end_time": datetime.datetime.fromtimestamp(invocation.end_time or invocation.start_time).isoformat() + "Z",
-            "status": {"status_code": "UNSET"},
-            "events": [],
-            "links": [],
-            "resource": {
-                "attributes": {
-                    "telemetry.sdk.language": "python",
-                    "telemetry.sdk.name": "opentelemetry",
-                    "telemetry.sdk.version": "1.36.0",
-                    "service.name": "unknown_service"
-                },
-                "schema_url": ""
-            }
-        }
-        
-        # Event attributes contain evaluation data for all metrics
+        body = {}
+    
         attributes = {
-            "gen_ai.operation.name": "evaluation"
+            "gen_ai.operation.name": "evaluation",
+            "gen_ai.request.model": invocation.attributes.get("request_model"),
+            "gen_ai.provider.name": invocation.attributes.get("provider_name"),
         }
+        if invocation.attributes:
+            attributes.update(invocation.attributes)
+
+        if isinstance(eval_results, dict) and isinstance(eval_results.get("error"), dict):
+            err_type = eval_results.get("error", {}).get("type")
+            if err_type:
+                attributes["error.type"] = err_type
         
-        # Add attributes for each evaluation metric
+        evaluations: list[dict] = []
         for metric_name, metric_data in eval_results.items():
             if metric_name != "error" and isinstance(metric_data, dict):
-                # Rename answerrelevancy to relevance
                 if metric_name == "answerrelevancy":
                     metric_name = "relevance"
-                
-                # Add to attributes
-                # attributes[f"gen_ai.evaluation.{metric_name}.score"] = metric_data.get("score", 0)
-                # attributes[f"gen_ai.evaluation.{metric_name}.label"] = metric_data.get("label", "Unknown")
-                # attributes[f"gen_ai.evaluation.{metric_name}.range"] = metric_data.get("range", "[0,1]")
-                # attributes[f"gen_ai.evaluation.{metric_name}.reasoning"] = metric_data.get("reason", "")
-                # attributes[f"gen_ai.evaluation.{metric_name}.judge_model"] = metric_data.get("judge_model", "unknown")
-                
-                # Add to body with same naming as attributes
-                body[f"gen_ai.evaluation.{metric_name}.score"] = metric_data.get("score", 0)
-                body[f"gen_ai.evaluation.{metric_name}.label"] = metric_data.get("label", "Unknown")
-                body[f"gen_ai.evaluation.{metric_name}.range"] = metric_data.get("range", "[0,1]")
-                body[f"gen_ai.evaluation.{metric_name}.reasoning"] = metric_data.get("reason", "")
-                body[f"gen_ai.evaluation.{metric_name}.judge_model"] = metric_data.get("judge_model", "unknown")
+
+                name_lower = metric_name.lower()
+                score_val = metric_data.get("score", 0)
+                label_val = metric_data.get("label", "Unknown")
+                explanation_val = metric_data.get("reason", "")
+                # TODO: check if this should be the response id for chat llm invocation or eval LLM-as-judge
+                response_id = invocation.attributes.get("response_id") if invocation.attributes else None
+
+                eval_item = {
+                    "gen_ai.evaluation.name": name_lower,
+                    "gen_ai.evaluation.score.value": score_val,
+                    "gen_ai.evaluation.score.label": label_val,
+                    "gen_ai.evaluation.explanation": explanation_val,
+                }
+                if response_id:
+                    eval_item["gen_ai.response.id"] = response_id
+                # include error.type if present at top-level
+                err = eval_results.get("error") if isinstance(eval_results, dict) else None
+                if isinstance(err, dict) and err.get("type"):
+                    eval_item["error.type"] = err.get("type")
+
+                evaluations.append(eval_item)
+
+                # record metric
+                metric_attrs = {
+                    "gen_ai.operation.name": "evaluation",
+                    "gen_ai.request.model": invocation.attributes.get("request_model"),
+                    "gen_ai.provider.name": invocation.attributes.get("provider_name"),
+                    "gen_ai.evaluation.score.label": label_val,
+                }
+                if isinstance(err, dict) and err.get("type"):
+                    metric_attrs["error.type"] = err.get("type")
+                if name_lower == "relevance":
+                    self._metric_relevance.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+                elif name_lower == "hallucination":
+                    self._metric_hallucination.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+                elif name_lower == "toxicity":
+                    self._metric_toxicity.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+                elif name_lower == "bias":
+                    self._metric_bias.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+                elif name_lower == "sentiment":
+                    self._metric_sentiment.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+
+        if evaluations:
+            body["gen_ai.evaluations"] = evaluations
 
         event = Event(
-            name="gen_ai.evaluation.message",
+            name="gen_ai.evaluation.results",
             attributes=attributes,
             body=body if body else None,
             span_id=invocation.span_id,
