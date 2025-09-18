@@ -34,13 +34,13 @@ from typing_extensions import ParamSpec
 from opentelemetry import context as context_api
 from opentelemetry.util.genai.api import get_telemetry_client
 from opentelemetry.util.genai.data import ChatGeneration, Message, ToolFunction
-from opentelemetry.util.genai.decorators import (
+from opentelemetry.util.genai.decorators.helpers import (
     _get_original_function_name,
     _is_async_generator,
     _is_async_method,
 )
 from opentelemetry.util.genai.decorators.util import camel_to_snake
-from opentelemetry.util.genai.exporters import _get_property_value
+from opentelemetry.util.genai.generators import _get_property_value
 from opentelemetry.util.genai.types import (
     ObserveSpanKindValues,
 )
@@ -165,8 +165,7 @@ def _extract_messages_from_args_kwargs(args, kwargs):
                     Message(
                         content=str(content),
                         name="",  # Default empty name
-                        type=str(msg_type),
-                        tool_call_id="",  # Default empty tool_call_id
+                        type=str(msg_type)
                     )
                 )
 
@@ -401,7 +400,7 @@ def entity_method(
     model_name: Optional[str] = None,
     tlp_span_kind: Optional[
         ObserveSpanKindValues
-    ] = ObserveSpanKindValues.TASK,
+    ] = None,
 ) -> Callable[[F], F]:
     def decorate(fn: F) -> F:
         fn = _unwrap_structured_tool(fn)
@@ -498,7 +497,7 @@ def entity_class(
     method_name: Optional[str],
     tlp_span_kind: Optional[
         ObserveSpanKindValues
-    ] = ObserveSpanKindValues.TASK,
+    ] = None,
 ):
     def decorator(cls):
         task_name = name if name else camel_to_snake(cls.__qualname__)

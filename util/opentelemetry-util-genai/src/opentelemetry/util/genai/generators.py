@@ -42,6 +42,7 @@ from opentelemetry._logs import Logger
 from opentelemetry.context import Context, get_current
 from opentelemetry.metrics import Histogram, Meter, get_meter
 from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord
+from opentelemetry._logs.severity import SeverityNumber
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAI,
 )
@@ -115,6 +116,8 @@ def _message_to_log_record(
 
     return SDKLogRecord(
         body=body or None,
+        severity_text="INFO",
+        severity_number=SeverityNumber.INFO,
         attributes=attributes,
         event_name="gen_ai.client.inference.operation.details",
     )
@@ -157,6 +160,8 @@ def _chat_generation_to_log_record(
 
     return SDKLogRecord(
         body=body or None,
+        severity_text="INFO",
+        severity_number=SeverityNumber.INFO,
         attributes=attributes,
         event_name="gen_ai.choice",
     )

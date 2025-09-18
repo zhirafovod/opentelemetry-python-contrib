@@ -45,10 +45,15 @@ from typing import Collection
 
 from wrapt import wrap_function_wrapper
 
-from opentelemetry.genai.sdk.api import TelemetryClient, get_telemetry_client
-from opentelemetry.genai.sdk.evals import (
+from opentelemetry.util.genai.api import TelemetryClient, get_telemetry_client
+from opentelemetry.util.genai.evals import (
     get_evaluator,
 )
+# from opentelemetry.genai.sdk.api import TelemetryClient, get_telemetry_client
+# from opentelemetry.genai.sdk.evals import (
+#     get_evaluator,
+# )
+
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.langchain.callback_handler import (
     OpenTelemetryLangChainCallbackHandler,

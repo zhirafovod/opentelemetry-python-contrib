@@ -17,7 +17,7 @@ from typing import Awaitable, Callable, Optional, TypeVar, Union
 
 from typing_extensions import ParamSpec
 
-from opentelemetry.util.genai.decorators import (
+from opentelemetry.util.genai.decorators.base import (
     entity_class,
     entity_method,
 )

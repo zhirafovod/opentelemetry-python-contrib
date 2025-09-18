@@ -67,3 +67,15 @@ class ChatGeneration:
 class Error:
     message: str
     type: Type[BaseException]
+
+@dataclass
+class ToolOutput:
+    tool_call_id: str
+    content: str
+
+
+@dataclass
+class ToolFunction:
+    name: str
+    description: str
+    parameters: str
