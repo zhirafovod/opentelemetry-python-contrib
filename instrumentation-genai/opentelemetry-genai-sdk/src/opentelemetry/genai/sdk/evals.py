@@ -1,15 +1,18 @@
 from abc import ABC, abstractmethod
-from opentelemetry._events import Event
 
-from .types import LLMInvocation
-from opentelemetry import trace
+from opentelemetry._events import Event
+from opentelemetry.metrics import Histogram
 from opentelemetry.trace import (
-    Tracer,
+    SpanContext, Tracer,
 )
-from opentelemetry import _events
-from .deepeval import evaluate_answer_relevancy_metric
-from opentelemetry.trace import SpanContext, Span
 from opentelemetry.trace.span import NonRecordingSpan
+
+from opentelemetry import _events
+from opentelemetry import metrics
+from opentelemetry import trace
+from .deepeval import evaluate_all_metrics
+from .deepeval import evaluate_answer_relevancy_metric
+from .types import LLMInvocation
 
 
 class EvaluationResult:
@@ -41,6 +44,32 @@ class DeepEvalEvaluator(Evaluator):
         self.config = config or {}
         self._tracer = tracer or trace.get_tracer(__name__)
         self._event_logger = event_logger or _events.get_event_logger(__name__)
+        meter = metrics.get_meter(__name__)
+        self._metric_relevance: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.relevance",
+            unit="1",
+            description="Evaluation score for relevance in [0,1]",
+        )
+        self._metric_hallucination: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.hallucination",
+            unit="1",
+            description="Evaluation score for hallucination in [0,1]",
+        )
+        self._metric_toxicity: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.toxicity",
+            unit="1",
+            description="Evaluation score for toxicity in [0,1]",
+        )
+        self._metric_bias: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.bias",
+            unit="1",
+            description="Evaluation score for bias in [0,1]",
+        )
+        self._metric_sentiment: Histogram = meter.create_histogram(
+            name="gen_ai.evaluation.sentiment",
+            unit="1",
+            description="Evaluation score for sentiment in [0,1]",
+        )
 
     def evaluate(self, invocation: LLMInvocation):
         # stub: integrate with deepevals SDK
@@ -48,36 +77,89 @@ class DeepEvalEvaluator(Evaluator):
         human_message = next((msg for msg in invocation.messages if msg.type == "human"), None)
         content = invocation.chat_generations[0].content
         if content is not None and content != "":
-            eval_arm = evaluate_answer_relevancy_metric(human_message.content, invocation.chat_generations[0].content, [])
-            self._do_telemetry(invocation.messages[1].content, invocation.chat_generations[0].content,
-                               invocation.span_id, invocation.trace_id, eval_arm)
+            eval_results = evaluate_all_metrics(human_message.content, invocation.chat_generations[0].content, [])
+            self._do_telemetry(invocation, eval_results)
 
-    def _do_telemetry(self, query, output, parent_span_id, parent_trace_id, eval_arm):
-
-        # emit event
-        body = {
-            "content": f"query: {query} output: {output}",
-        }
+    def _do_telemetry(self, invocation: LLMInvocation, eval_results):
+        body = {}
+    
         attributes = {
-            "gen_ai.evaluation.name": "relevance",
-            "gen_ai.evaluation.score": eval_arm.score,
-            "gen_ai.evaluation.reasoning": eval_arm.reason,
-            "gen_ai.evaluation.cost": eval_arm.evaluation_cost,
+            "gen_ai.operation.name": "evaluation",
+            "gen_ai.request.model": invocation.attributes.get("request_model"),
+            "gen_ai.provider.name": invocation.attributes.get("provider_name"),
         }
+        if invocation.attributes:
+            attributes.update(invocation.attributes)
+
+        if isinstance(eval_results, dict) and isinstance(eval_results.get("error"), dict):
+            err_type = eval_results.get("error", {}).get("type")
+            if err_type:
+                attributes["error.type"] = err_type
+        
+        evaluations: list[dict] = []
+        for metric_name, metric_data in eval_results.items():
+            if metric_name != "error" and isinstance(metric_data, dict):
+                if metric_name == "answerrelevancy":
+                    metric_name = "relevance"
+
+                name_lower = metric_name.lower()
+                score_val = metric_data.get("score", 0)
+                label_val = metric_data.get("label", "Unknown")
+                explanation_val = metric_data.get("reason", "")
+                # TODO: check if this should be the response id for chat llm invocation or eval LLM-as-judge
+                response_id = invocation.attributes.get("response_id") if invocation.attributes else None
+
+                eval_item = {
+                    "gen_ai.evaluation.name": name_lower,
+                    "gen_ai.evaluation.score.value": score_val,
+                    "gen_ai.evaluation.score.label": label_val,
+                    "gen_ai.evaluation.explanation": explanation_val,
+                }
+                if response_id:
+                    eval_item["gen_ai.response.id"] = response_id
+                # include error.type if present at top-level
+                err = eval_results.get("error") if isinstance(eval_results, dict) else None
+                if isinstance(err, dict) and err.get("type"):
+                    eval_item["error.type"] = err.get("type")
+
+                evaluations.append(eval_item)
+
+                # record metric
+                metric_attrs = {
+                    "gen_ai.operation.name": "evaluation",
+                    "gen_ai.request.model": invocation.attributes.get("request_model"),
+                    "gen_ai.provider.name": invocation.attributes.get("provider_name"),
+                    "gen_ai.evaluation.score.label": label_val,
+                }
+                if isinstance(err, dict) and err.get("type"):
+                    metric_attrs["error.type"] = err.get("type")
+                if name_lower == "relevance":
+                    self._metric_relevance.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+                elif name_lower == "hallucination":
+                    self._metric_hallucination.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+                elif name_lower == "toxicity":
+                    self._metric_toxicity.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+                elif name_lower == "bias":
+                    self._metric_bias.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+                elif name_lower == "sentiment":
+                    self._metric_sentiment.record(score_val, attributes={k: v for k, v in metric_attrs.items() if v is not None})
+
+        if evaluations:
+            body["gen_ai.evaluations"] = evaluations
 
         event = Event(
-            name="gen_ai.evaluation.message",
+            name="gen_ai.evaluation.results",
             attributes=attributes,
             body=body if body else None,
-            span_id=parent_span_id,
-            trace_id=parent_trace_id,
+            span_id=invocation.span_id,
+            trace_id=invocation.trace_id,
         )
         self._event_logger.emit(event)
 
         # create span
         span_context = SpanContext(
-            trace_id=parent_trace_id,
-            span_id=parent_span_id,
+            trace_id=invocation.trace_id,
+            span_id=invocation.span_id,
             is_remote=False,
         )
 
@@ -94,14 +176,16 @@ class DeepEvalEvaluator(Evaluator):
                 "gen_ai.operation.name": "evaluation",
             })
             span.set_attribute("gen_ai.operation.name", "evaluation")
-            span.set_attribute("gen_ai.evaluation.name", "relevance")
-            span.set_attribute("gen_ai.evaluation.score", eval_arm.score)
-            span.set_attribute("gen_ai.evaluation.label", "Pass")
-            span.set_attribute("gen_ai.evaluation.reasoning", eval_arm.reason)
-            span.set_attribute("gen_ai.evaluation.model", eval_arm.evaluation_model)
-            span.set_attribute("gen_ai.evaluation.cost", eval_arm.evaluation_cost)
-            #span.set_attribute("gen_ai.evaluation.verdict", eval_arm.verdicts)
-
+            # span.set_attribute("gen_ai.evaluation.name", "relevance")
+            # span.set_attribute("gen_ai.evaluation.score", eval_arm.score)
+            # span.set_attribute("gen_ai.evaluation.label", "Pass")
+            # span.set_attribute("gen_ai.evaluation.reasoning", eval_arm.reason)
+            # span.set_attribute("gen_ai.evaluation.model", eval_arm.evaluation_model)
+            # span.set_attribute("gen_ai.evaluation.cost", eval_arm.evaluation_cost)
+            # #span.set_attribute("gen_ai.evaluation.verdict", eval_arm.verdicts)
+            for attr_key, attr_value in attributes.items():
+                if attr_key != "gen_ai.operation.name":  # Skip duplicate
+                    span.set_attribute(attr_key, attr_value)
 
 class OpenLitEvaluator(Evaluator):
     """

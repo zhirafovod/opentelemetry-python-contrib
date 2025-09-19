@@ -17,7 +17,19 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from .data import ChatGeneration, Message
+import time
+from contextvars import Token
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Literal, Optional, Type, Union
+
+from typing_extensions import TypeAlias
+
+from opentelemetry.context import Context
+from opentelemetry.trace import Span
+from opentelemetry.util.types import AttributeValue
+
+ContextToken: TypeAlias = Token[Context]
 
 
 class ContentCapturingMode(Enum):
@@ -71,12 +83,30 @@ class OutputMessage:
     role: str
     parts: list[MessagePart]
     finish_reason: Union[str, FinishReason]
-    run_id: UUID
-    parent_run_id: Optional[UUID] = None
+
+
+@dataclass
+class LLMInvocation:
+    """
+    Represents a single LLM call invocation.
+    """
+
+    request_model: str
+    context_token: Optional[ContextToken] = None
+    span: Optional[Span] = None
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
-    messages: List[Message] = field(default_factory=list)
-    chat_generations: List[ChatGeneration] = field(default_factory=list)
+    input_messages: List[InputMessage] = field(default_factory=list)
+    output_messages: List[OutputMessage] = field(default_factory=list)
+    provider: Optional[str] = None
+    response_model_name: Optional[str] = None
+    response_id: Optional[str] = None
+    input_tokens: Optional[AttributeValue] = None
+    output_tokens: Optional[AttributeValue] = None
     attributes: Dict[str, Any] = field(default_factory=dict)
-    span_id: int = 0
-    trace_id: int = 0
+
+
+@dataclass
+class Error:
+    message: str
+    type: Type[BaseException]
