@@ -1,44 +1,238 @@
-OpenTelemetry Util for GenAI
-============================
+OpenTelemetry GenAI Utilities (opentelemetry-util-genai)
+========================================================
 
+.. contents:: Table of Contents
+   :depth: 2
+   :local:
+   :backlinks: entry
 
-The GenAI Utils package will include boilerplate and helpers to standardize instrumentation for Generative AI. 
-This package will provide APIs and decorators to minimize the work needed to instrument genai libraries, 
-while providing standardization for generating both types of otel, "spans and metrics" and "spans, metrics and events"
+Overview
+--------
+This package supplies foundational data types, helper logic, and lifecycle utilities for emitting OpenTelemetry signals around Generative AI (GenAI) model invocations.
 
-This package relies on environment variables to configure capturing of message content. 
-By default, message content will not be captured.
-Set the environment variable `OTEL_SEMCONV_STABILITY_OPT_IN` to `gen_ai_latest_experimental` to enable experimental features.
-And set the environment variable `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` to `SPAN_ONLY` or `SPAN_AND_EVENT` to capture message content in spans.
+Primary audiences:
 
-This package provides these span attributes:
+* Instrumentation authors (framework / model provider wrappers)
+* Advanced users building custom GenAI telemetry capture pipelines
+* Early adopters validating incubating GenAI semantic conventions (semconv)
 
-- `gen_ai.provider.name`: Str(openai)
-- `gen_ai.operation.name`: Str(chat)
-- `gen_ai.request.model`: Str(gpt-3.5-turbo)
-- `gen_ai.response.finish_reasons`: Slice(["stop"])
-- `gen_ai.response.model`: Str(gpt-3.5-turbo-0125)
-- `gen_ai.response.id`: Str(chatcmpl-Bz8yrvPnydD9pObv625n2CGBPHS13)
-- `gen_ai.usage.input_tokens`: Int(24)
-- `gen_ai.usage.output_tokens`: Int(7)
-- `gen_ai.input.messages`: Str('[{"role": "Human", "parts": [{"content": "hello world", "type": "text"}]}]')
-- `gen_ai.output.messages`: Str('[{"role": "AI", "parts": [{"content": "hello back", "type": "text"}], "finish_reason": "stop"}]')
+The current focus is the span lifecycle and (optionally) message content capture. Metric & event enriched generators exist in experimental form and may stabilize later.
 
-
-Installation
-------------
-
+High-Level Architecture
+-----------------------
 ::
 
-    pip install opentelemetry-util-genai
+    Application / Model SDK
+        -> Build LLMInvocation (request model, messages, attributes)
+        -> TelemetryHandler.start_llm(invocation)
+        -> Execute provider call (obtain output, tokens, metadata)
+        -> Populate invocation.output_messages / token counts / extra attributes
+        -> TelemetryHandler.stop_llm(invocation)  (or fail_llm on error)
+        -> OpenTelemetry exporter sends spans (and optionally metrics / events)
 
+Future / optional enrichment paths:
 
-Design Document
+* Metrics (token counts, durations) via metric-capable generators
+* Structured log events for input details & per-choice completions
+
+Core Concepts
+-------------
+* **LLMInvocation**: Mutable container representing a logical model call (request through response lifecycle).
+* **Messages** (``InputMessage`` / ``OutputMessage``): Chat style role + parts (``Text``, ``ToolCall``, ``ToolCallResponse`` or arbitrary future part types).
+* **ContentCapturingMode**: Enum controlling whether message content is recorded in spans, events, both, or not at all.
+* **TelemetryHandler**: High-level façade orchestrating start / stop / fail operations using a chosen generator.
+* **Generators**: Strategy classes translating invocations into OpenTelemetry signals.
+
+Current Generator Variants (see ``generators/`` README for deep detail):
+
+* ``SpanGenerator`` (default): spans only + optional input/output message attributes.
+* ``SpanMetricGenerator`` (experimental / planned): spans + metrics (duration, tokens) without events.
+* ``SpanMetricEventGenerator`` (experimental / planned): spans + metrics + structured log events.
+
+.. note:: See detailed generator strategy documentation in ``src/opentelemetry/util/genai/generators/README.rst``.
+
+Data Model Summary
+------------------
+Attributes follow incubating GenAI semantic conventions (subject to change). Key attributes (when enabled):
+
+* ``gen_ai.operation.name = "chat"``
+* ``gen_ai.request.model``
+* ``gen_ai.response.model`` (when provider response model differs)
+* ``gen_ai.provider.name``
+* ``gen_ai.input.messages`` (JSON array as string; gated by content capture)
+* ``gen_ai.output.messages`` (JSON array as string; gated by content capture)
+* ``gen_ai.usage.input_tokens`` / ``gen_ai.usage.output_tokens`` (future metric integration)
+
+Lifecycle API
+-------------
+1. Construct ``LLMInvocation``
+2. ``handler.start_llm(invocation)``
+3. Perform model request
+4. Populate ``invocation.output_messages`` (+ tokens / response IDs / extra attrs)
+5. ``handler.stop_llm(invocation)`` or ``handler.fail_llm(invocation, Error)``
+
+Public Types (abridged)
+-----------------------
+* ``class LLMInvocation``
+  * ``request_model: str`` (required)
+  * ``provider: Optional[str]``
+  * ``input_messages: list[InputMessage]``
+  * ``output_messages: list[OutputMessage]``
+  * ``attributes: dict[str, Any]`` (arbitrary span attributes)
+  * ``input_tokens`` / ``output_tokens`` (Optional[int | float])
+* ``class InputMessage(role: str, parts: list[MessagePart])``
+* ``class OutputMessage(role: str, parts: list[MessagePart], finish_reason: str)``
+* ``class Text(content: str)``
+* ``class ToolCall`` / ``ToolCallResponse``
+* ``class Error(message: str, type: Type[BaseException])``
+* ``enum ContentCapturingMode``: ``NO_CONTENT`` | ``SPAN_ONLY`` | ``EVENT_ONLY`` | ``SPAN_AND_EVENT``
+
+TelemetryHandler
+----------------
+Entry point helper (singleton via ``get_telemetry_handler``). Responsibilities:
+
+* Selects generator (currently ``SpanGenerator``) & configures capture behavior
+* Applies semantic convention schema URL
+* Shields instrumentation code from direct span manipulation
+
+Example Usage
+-------------
+.. code-block:: python
+
+   from opentelemetry.util.genai.handler import get_telemetry_handler
+   from opentelemetry.util.genai.types import (
+       LLMInvocation, InputMessage, OutputMessage, Text
+   )
+
+   handler = get_telemetry_handler()
+
+   invocation = LLMInvocation(
+       request_model="gpt-4o-mini",
+       provider="openai",
+       input_messages=[InputMessage(role="user", parts=[Text(content="Hello, world")])],
+       attributes={"custom_attr": "demo"},
+   )
+
+   handler.start_llm(invocation)
+   # ... perform provider call ...
+   invocation.output_messages = [
+       OutputMessage(role="assistant", parts=[Text(content="Hi there!")], finish_reason="stop")
+   ]
+   invocation.attributes["scenario"] = "basic-greeting"
+   handler.stop_llm(invocation)
+
+Error Flow Example
+------------------
+.. code-block:: python
+
+   from opentelemetry.util.genai.types import Error
+
+   try:
+       handler.start_llm(invocation)
+       # provider call that may raise
+   except Exception as exc:  # noqa: BLE001 (example)
+       handler.fail_llm(invocation, Error(message=str(exc), type=exc.__class__))
+       raise
+
+Configuration & Environment Variables
+-------------------------------------
+Content capture requires *experimental* GenAI semconv mode + explicit env var.
+
+1. Enable experimental semconv:
+
+   ``OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental``
+
+2. Select content capture mode:
+
+   ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=<MODE>``
+
+   Accepted values: ``NO_CONTENT`` (default), ``SPAN_ONLY``, ``EVENT_ONLY``, ``SPAN_AND_EVENT``.
+
+Rules:
+
+* Calling ``get_content_capturing_mode()`` outside experimental stability yields ``ValueError``.
+* Invalid values -> warning & fallback to ``NO_CONTENT``.
+* Handler re-evaluates mode at *each* ``start_llm`` allowing dynamic test changes.
+
+Generator Selection
+-------------------
+Currently the handler binds **SpanGenerator**. Future roadmapped enhancements may:
+
+* Allow explicit selection via constructor or environment
+* Promote metric/event generators as semconv & design stabilize
+
+Extensibility
+-------------
+Subclass ``BaseTelemetryGenerator``:
+
+.. code-block:: python
+
+   from opentelemetry.util.genai.generators import BaseTelemetryGenerator
+   from opentelemetry.util.genai.types import LLMInvocation, Error
+
+   class CustomGenerator(BaseTelemetryGenerator):
+       def start(self, invocation: LLMInvocation) -> None:
+           ...
+       def finish(self, invocation: LLMInvocation) -> None:
+           ...
+       def error(self, error: Error, invocation: LLMInvocation) -> None:
+           ...
+
+Inject your custom generator in a bespoke handler or fork the existing ``TelemetryHandler``.
+
+Threading / Concurrency
+-----------------------
+* A singleton handler is typical; OpenTelemetry SDK manages concurrency.
+* Do **not** reuse an ``LLMInvocation`` instance across requests.
+
+Stability Disclaimer
+--------------------
+GenAI semantic conventions are incubating; attribute names & enabling conditions may change. Track the project CHANGELOG & release notes.
+
+Troubleshooting
 ---------------
+* **Span missing message content**:
+  * Ensure experimental stability + capture env var set *before* ``start_llm``.
+  * Verify messages placed in ``input_messages``.
+* **No spans exported**:
+  * Confirm a ``TracerProvider`` is configured and set globally.
 
-The design document for the OpenTelemetry GenAI Utils can be found at: `Design Document <https://docs.google.com/document/d/1w9TbtKjuRX_wymS8DRSwPA03_VhrGlyx65hHAdNik1E/edit?tab=t.qneb4vabc1wc#heading=h.kh4j6stirken>`_
+Roadmap (Indicative)
+--------------------
+* Configurable generator selection (env / handler param)
+* Metrics stabilization (token counts & durations) via ``SpanMetricGenerator``
+* Event emission (choice logs) maturity & stabilization
+* Enhanced tool call structured representation
 
-References
-----------
+Minimal End-to-End Test Snippet
+--------------------------------
+.. code-block:: python
 
-* `OpenTelemetry Project <https://opentelemetry.io/>`_
+   from opentelemetry.sdk.trace import TracerProvider
+   from opentelemetry.sdk.trace.export import SimpleSpanProcessor, InMemorySpanExporter
+   from opentelemetry import trace
+
+   exporter = InMemorySpanExporter()
+   provider = TracerProvider()
+   provider.add_span_processor(SimpleSpanProcessor(exporter))
+   trace.set_tracer_provider(provider)
+
+   from opentelemetry.util.genai.handler import get_telemetry_handler
+   from opentelemetry.util.genai.types import LLMInvocation, InputMessage, OutputMessage, Text
+
+   handler = get_telemetry_handler()
+   inv = LLMInvocation(
+       request_model="demo-model",
+       provider="demo-provider",
+       input_messages=[InputMessage(role="user", parts=[Text(content="ping")])],
+   )
+   handler.start_llm(inv)
+   inv.output_messages = [OutputMessage(role="assistant", parts=[Text(content="pong")], finish_reason="stop")]
+   handler.stop_llm(inv)
+
+   spans = exporter.get_finished_spans()
+   assert spans and spans[0].name == "chat demo-model"
+
+License
+-------
+See parent repository LICENSE (Apache 2.0 unless otherwise stated).
