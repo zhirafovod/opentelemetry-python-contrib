@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from opentelemetry import trace
+from opentelemetry._logs import Logger
 from opentelemetry.metrics import Histogram
 from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord
 from opentelemetry.semconv._incubating.attributes import (
@@ -174,7 +175,7 @@ def _set_response_and_usage_attributes(
 
 
 def _emit_chat_generation_logs(
-    logger: Optional[trace.Logger],
+    logger: Optional[Logger],
     generations: List[OutputMessage],
     provider_name: Optional[str],
     framework: Optional[str],

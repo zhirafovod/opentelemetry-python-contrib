@@ -54,7 +54,12 @@ from typing import Any, Optional
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import get_tracer
 from opentelemetry.util.genai.generators import SpanGenerator
-from opentelemetry.util.genai.types import Error, LLMInvocation
+from opentelemetry.util.genai.types import (
+    ContentCapturingMode,
+    Error,
+    LLMInvocation,
+)
+from opentelemetry.util.genai.utils import get_content_capturing_mode
 from opentelemetry.util.genai.version import __version__
 
 
@@ -73,13 +78,40 @@ class TelemetryHandler:
             schema_url=Schemas.V1_36_0.value,
         )
 
-        self._generator = SpanGenerator(tracer=self._tracer)
+        capture_content = False
+        try:
+            mode = get_content_capturing_mode()
+            capture_content = mode in (
+                ContentCapturingMode.SPAN_ONLY,
+                ContentCapturingMode.SPAN_AND_EVENT,
+            )
+        except (
+            Exception
+        ):  # ValueError for default stability or other issues; ignore silently
+            capture_content = False
+        self._generator = SpanGenerator(
+            tracer=self._tracer, capture_content=capture_content
+        )
+
+    def _refresh_capture_content(
+        self,
+    ):  # re-evaluate env each start in case singleton created before patching
+        try:
+            mode = get_content_capturing_mode()
+            self._generator._capture_content = mode in (
+                ContentCapturingMode.SPAN_ONLY,
+                ContentCapturingMode.SPAN_AND_EVENT,
+            )
+        except Exception:
+            # Leave existing setting unchanged if stability mode default or invalid
+            pass
 
     def start_llm(
         self,
         invocation: LLMInvocation,
     ) -> LLMInvocation:
         """Start an LLM invocation and create a pending span entry."""
+        self._refresh_capture_content()
         self._generator.start(invocation)
         return invocation
 
