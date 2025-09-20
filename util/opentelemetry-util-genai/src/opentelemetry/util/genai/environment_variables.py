@@ -43,3 +43,52 @@ information, see
    <https://filesystem-spec.readthedocs.io/en/latest/features.html#url-chaining>`_ for advanced
    use cases.
 """
+
+# ---- Evaluation scaffolding (Phase 1) ----
+OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE = (
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE"
+)
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE
+
+Enable or disable GenAI evaluations. Accepted values (case-insensitive):
+
+* ``true`` / ``1`` / ``yes``: Enable evaluations
+* ``false`` / ``0`` / ``no`` (default): Disable evaluations
+
+If disabled, calls to ``TelemetryHandler.evaluate_llm`` will return an empty list without invoking evaluators.
+"""
+
+OTEL_INSTRUMENTATION_GENAI_EVALUATORS = "OTEL_INSTRUMENTATION_GENAI_EVALUATORS"
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_EVALUATORS
+
+Comma-separated list of evaluator names to run (e.g. ``deepeval,sentiment``). If not provided
+and explicit names are not passed to ``evaluate_llm``, no evaluators are run.
+"""
+
+OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE = (
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE"
+)
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE
+
+Controls creation of evaluation spans (future phases). Accepted values:
+
+* ``off`` (default): No evaluation spans are created.
+* ``aggregated``: A single span summarizing all evaluator results (not yet implemented).
+* ``per_metric``: One span per evaluation metric (not yet implemented).
+
+Phase 1 scaffolding defines the variable; span modes will be implemented in later phases.
+"""
+
+__all__ = [
+    # existing
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
+    "OTEL_INSTRUMENTATION_GENAI_UPLOAD_HOOK",
+    "OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH",
+    # evaluation
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE",
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATORS",
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE",
+]

@@ -106,3 +106,34 @@ class LLMInvocation:
 class Error:
     message: str
     type: Type[BaseException]
+
+
+@dataclass
+class EvaluationResult:
+    """Represents the outcome of a single evaluation metric.
+
+    Phase 1 scaffolding: produced by Evaluators. Additional fields (e.g., judge model,
+    threshold) can be added in later phases without breaking callers that only rely on
+    the present minimal contract.
+    """
+
+    metric_name: str
+    score: Optional[float] = None
+    label: Optional[str] = None
+    explanation: Optional[str] = None
+    error: Optional[Error] = None
+    attributes: Dict[str, Any] = field(default_factory=dict)
+
+
+__all__ = [
+    # existing exports intentionally implicit before; making explicit for new additions
+    "ContentCapturingMode",
+    "ToolCall",
+    "ToolCallResponse",
+    "Text",
+    "InputMessage",
+    "OutputMessage",
+    "LLMInvocation",
+    "Error",
+    "EvaluationResult",
+]
