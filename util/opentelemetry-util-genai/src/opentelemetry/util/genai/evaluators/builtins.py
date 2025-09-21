@@ -11,9 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Builtin evaluators (Phase 2).
+"""Builtin evaluators.
 
-These are lightweight reference evaluators that demonstrate the interface.
+Lightweight reference evaluators that demonstrate the interface.
 Heavy / optional dependencies are imported lazily. If the dependency is not
 available, the evaluator returns an EvaluationResult with an error field set.
 """
@@ -74,8 +74,9 @@ class LengthEvaluator(Evaluator):
 class DeepevalEvaluator(Evaluator):
     """Placeholder Deepeval evaluator.
 
-    Attempts to import deepeval. If unavailable, returns error. A real implementation
-    will map multiple metrics; for now we only return a single placeholder result.
+    Attempts to import deepeval. If unavailable, returns error. A future
+    integration may map multiple metrics; for now this returns a single
+    placeholder result when the dependency is present.
     """
 
     def evaluate(self, invocation: LLMInvocation):  # type: ignore[override]
@@ -91,7 +92,7 @@ class DeepevalEvaluator(Evaluator):
             metric_name="deepeval",
             score=None,
             label=None,
-            explanation="Deepeval integration not yet implemented in Phase 2",
+            explanation="Deepeval integration placeholder (no metrics recorded)",
         )
 
 

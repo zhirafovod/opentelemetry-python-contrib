@@ -44,7 +44,7 @@ information, see
    use cases.
 """
 
-# ---- Evaluation scaffolding (Phase 1) ----
+# ---- Evaluation configuration ----
 OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE = (
     "OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE"
 )
@@ -73,13 +73,11 @@ OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE = (
 """
 .. envvar:: OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE
 
-Controls creation of evaluation spans (future phases). Accepted values:
+Controls creation of evaluation spans. Accepted values:
 
 * ``off`` (default): No evaluation spans are created.
-* ``aggregated``: A single span summarizing all evaluator results (not yet implemented).
-* ``per_metric``: One span per evaluation metric (not yet implemented).
-
-Phase 1 scaffolding defines the variable; span modes will be implemented in later phases.
+* ``aggregated``: A single span summarizing all evaluator results (implemented).
+* ``per_metric``: One span per evaluation metric (implemented).
 """
 
 __all__ = [

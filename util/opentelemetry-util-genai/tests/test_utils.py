@@ -106,11 +106,17 @@ class TestTelemetryHandler(unittest.TestCase):
             SimpleSpanProcessor(cls.span_exporter)
         )
         trace.set_tracer_provider(tracer_provider)
+        cls.tracer_provider = tracer_provider
 
     def setUp(self):
         self.span_exporter = self.__class__.span_exporter
         self.span_exporter.clear()
-        self.telemetry_handler = get_telemetry_handler()
+        # Always recreate handler with our test provider to avoid stale singleton referencing old provider
+        if hasattr(get_telemetry_handler, "_default_handler"):
+            delattr(get_telemetry_handler, "_default_handler")
+        self.telemetry_handler = get_telemetry_handler(
+            tracer_provider=self.__class__.tracer_provider
+        )
 
     def tearDown(self):
         # Clear spans and reset the singleton telemetry handler so each test starts clean

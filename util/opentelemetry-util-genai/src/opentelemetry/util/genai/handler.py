@@ -54,13 +54,15 @@ from typing import Any, Optional
 
 from opentelemetry import _events as _otel_events
 from opentelemetry import metrics as _metrics
+from opentelemetry import trace as _trace_mod
 from opentelemetry.semconv.schemas import Schemas
-from opentelemetry.trace import get_tracer
+from opentelemetry.trace import Link, get_tracer
 from opentelemetry.util.genai import (
     evaluators as _genai_evaluators,  # noqa: F401  # trigger builtin registration
 )
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE,
+    OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE,
     OTEL_INSTRUMENTATION_GENAI_EVALUATORS,
 )
 from opentelemetry.util.genai.evaluators.registry import get_evaluator
@@ -83,6 +85,12 @@ class TelemetryHandler:
 
     def __init__(self, **kwargs: Any):
         tracer_provider = kwargs.get("tracer_provider")
+        # Store provider reference for later identity comparison (test isolation)
+        from opentelemetry import trace as _trace_mod_local
+
+        self._tracer_provider_ref = (
+            tracer_provider or _trace_mod_local.get_tracer_provider()
+        )
         self._tracer = get_tracer(
             __name__,
             __version__,
@@ -156,9 +164,10 @@ class TelemetryHandler:
     ) -> list[EvaluationResult]:
         """Run registered evaluators against a completed LLMInvocation.
 
-        Phase 2: Executes evaluator backends, records scores to a unified histogram
-        (gen_ai.evaluation.score) and emits a gen_ai.evaluations event containing all
-        metric results. Evaluation spans are not yet implemented (planned for Phase 3).
+        Executes evaluator backends, records scores to a unified histogram
+        (gen_ai.evaluation.score), emits a gen_ai.evaluations event, and optionally
+        creates evaluation spans controlled by OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE
+        (off | aggregated | per_metric).
 
         Evaluation enablement is controlled by the environment variable
         OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE. If not enabled, this
@@ -201,13 +210,53 @@ class TelemetryHandler:
             try:
                 evaluator = get_evaluator(name)
             except Exception as exc:  # unknown evaluator or construction error
-                results.append(
-                    EvaluationResult(
-                        metric_name=name,
-                        error=Error(message=str(exc), type=type(exc)),
+                # Attempt lazy re-registration of builtin evaluators if registry was cleared (common in tests)
+                if name.lower() in {"length", "sentiment", "deepeval"}:
+                    try:  # pragma: no cover - simple import side effect
+                        import importlib
+
+                        mod = importlib.import_module(
+                            "opentelemetry.util.genai.evaluators.builtins"
+                        )
+                        # Explicitly (re)register builtin evaluators in case module was imported before and registry cleared
+                        from opentelemetry.util.genai.evaluators.registry import (
+                            register_evaluator,
+                        )
+
+                        try:
+                            if hasattr(mod, "LengthEvaluator"):
+                                register_evaluator(
+                                    "length", lambda: mod.LengthEvaluator()
+                                )
+                            if hasattr(mod, "SentimentEvaluator"):
+                                register_evaluator(
+                                    "sentiment",
+                                    lambda: mod.SentimentEvaluator(),
+                                )
+                            if hasattr(mod, "DeepevalEvaluator"):
+                                register_evaluator(
+                                    "deepeval",
+                                    lambda: mod.DeepevalEvaluator(),
+                                )
+                        except Exception:
+                            pass
+                        evaluator = get_evaluator(name)
+                    except Exception:
+                        results.append(
+                            EvaluationResult(
+                                metric_name=name,
+                                error=Error(message=str(exc), type=type(exc)),
+                            )
+                        )
+                        continue
+                else:
+                    results.append(
+                        EvaluationResult(
+                            metric_name=name,
+                            error=Error(message=str(exc), type=type(exc)),
+                        )
                     )
-                )
-                continue
+                    continue
             try:
                 eval_out = evaluator.evaluate(invocation)
                 # Normalise: allow evaluator to return single or list
@@ -233,7 +282,7 @@ class TelemetryHandler:
                         error=Error(message=str(exc), type=type(exc)),
                     )
                 )
-        # Phase 2: emit metrics & event
+        # Emit metrics & event
         if results:
             evaluation_items = []
             for res in results:
@@ -300,17 +349,122 @@ class TelemetryHandler:
                     )
                 except Exception:  # pragma: no cover - defensive
                     pass
+
+                # Create evaluation spans based on span mode
+                span_mode = os.environ.get(
+                    OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE, "off"
+                ).lower()
+                if span_mode not in ("off", "aggregated", "per_metric"):
+                    span_mode = "off"
+                parent_link = None
+                if invocation.span:
+                    parent_link = Link(
+                        invocation.span.get_span_context(),
+                        attributes={"gen_ai.operation.name": "chat"},
+                    )
+                if span_mode == "aggregated":
+                    with self._tracer.start_as_current_span(
+                        "evaluation",
+                        links=[parent_link] if parent_link else None,
+                    ) as span:
+                        span.set_attribute(
+                            "gen_ai.operation.name", "evaluation"
+                        )
+                        span.set_attribute(
+                            "gen_ai.request.model", invocation.request_model
+                        )
+                        if invocation.provider:
+                            span.set_attribute(
+                                "gen_ai.provider.name", invocation.provider
+                            )
+                        span.set_attribute(
+                            "gen_ai.evaluation.count", len(evaluation_items)
+                        )
+                        # Aggregate score stats (only numeric)
+                        numeric_scores = [
+                            it.get("gen_ai.evaluation.score.value")
+                            for it in evaluation_items
+                            if isinstance(
+                                it.get("gen_ai.evaluation.score.value"),
+                                (int, float),
+                            )
+                        ]
+                        if numeric_scores:
+                            span.set_attribute(
+                                "gen_ai.evaluation.score.min",
+                                min(numeric_scores),
+                            )
+                            span.set_attribute(
+                                "gen_ai.evaluation.score.max",
+                                max(numeric_scores),
+                            )
+                            span.set_attribute(
+                                "gen_ai.evaluation.score.avg",
+                                sum(numeric_scores) / len(numeric_scores),
+                            )
+                        # Optionally store names list
+                        span.set_attribute(
+                            "gen_ai.evaluation.names",
+                            [
+                                it["gen_ai.evaluation.name"]
+                                for it in evaluation_items
+                            ],
+                        )
+                elif span_mode == "per_metric":
+                    for item in evaluation_items:
+                        name = item.get("gen_ai.evaluation.name", "unknown")
+                        span_name = f"evaluation.{name}"
+                        with self._tracer.start_as_current_span(
+                            span_name,
+                            links=[parent_link] if parent_link else None,
+                        ) as span:
+                            span.set_attribute(
+                                "gen_ai.operation.name", "evaluation"
+                            )
+                            span.set_attribute("gen_ai.evaluation.name", name)
+                            span.set_attribute(
+                                "gen_ai.request.model",
+                                invocation.request_model,
+                            )
+                            if invocation.provider:
+                                span.set_attribute(
+                                    "gen_ai.provider.name", invocation.provider
+                                )
+                            if "gen_ai.evaluation.score.value" in item:
+                                span.set_attribute(
+                                    "gen_ai.evaluation.score.value",
+                                    item["gen_ai.evaluation.score.value"],
+                                )
+                            if "gen_ai.evaluation.score.label" in item:
+                                span.set_attribute(
+                                    "gen_ai.evaluation.score.label",
+                                    item["gen_ai.evaluation.score.label"],
+                                )
+                            if "error.type" in item:
+                                span.set_attribute(
+                                    "error.type", item["error.type"]
+                                )
         return results
 
 
 def get_telemetry_handler(**kwargs: Any) -> TelemetryHandler:
     """
-    Returns a singleton TelemetryHandler instance.
+    Returns a singleton TelemetryHandler instance. If the global tracer provider
+    has changed since the handler was created, a new handler is instantiated so that
+    spans are recorded with the active provider (important for test isolation).
     """
     handler: Optional[TelemetryHandler] = getattr(
         get_telemetry_handler, "_default_handler", None
     )
-    if handler is None:
+    current_provider = _trace_mod.get_tracer_provider()
+    recreate = False
+    if handler is not None:
+        # Recreate if provider changed or handler lacks provider reference (older instance)
+        if not hasattr(handler, "_tracer_provider_ref"):
+            recreate = True
+        elif handler._tracer_provider_ref is not current_provider:  # type: ignore[attr-defined]
+            recreate = True
+    if handler is None or recreate:
         handler = TelemetryHandler(**kwargs)
         setattr(get_telemetry_handler, "_default_handler", handler)
     return handler
