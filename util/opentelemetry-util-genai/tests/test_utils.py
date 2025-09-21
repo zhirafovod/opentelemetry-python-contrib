@@ -236,3 +236,187 @@ class TestTelemetryHandler(unittest.TestCase):
         assert child_span.parent.span_id == parent_span.context.span_id
         # Parent should not have a parent (root)
         assert parent_span.parent is None
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="EVENT_ONLY",
+    )
+    def test_span_metric_event_generator_event_only_no_span_messages(self):
+        from opentelemetry.util.genai.environment_variables import (
+            OTEL_INSTRUMENTATION_GENAI_GENERATOR,
+        )
+
+        with patch.dict(
+            os.environ,
+            {OTEL_INSTRUMENTATION_GENAI_GENERATOR: "span_metric_event"},
+        ):
+            # Reset singleton to pick up generator env var
+            if hasattr(get_telemetry_handler, "_default_handler"):
+                delattr(get_telemetry_handler, "_default_handler")
+            handler = get_telemetry_handler(
+                tracer_provider=self.__class__.tracer_provider
+            )
+            message = InputMessage(
+                role="Human", parts=[Text(content="hello world")]
+            )
+            generation = OutputMessage(
+                role="AI", parts=[Text(content="ok")], finish_reason="stop"
+            )
+            invocation = LLMInvocation(
+                request_model="event-model",
+                input_messages=[message],
+                provider="test-provider",
+            )
+            handler.start_llm(invocation)
+            invocation.output_messages = [generation]
+            handler.stop_llm(invocation)
+            spans = self.span_exporter.get_finished_spans()
+            assert len(spans) == 1
+            span = spans[0]
+            # Should have basic attrs
+            assert span.attributes.get("gen_ai.operation.name") == "chat"
+            # Should NOT have message content attributes for event flavor
+            assert span.attributes.get("gen_ai.input.messages") is None
+            assert span.attributes.get("gen_ai.output.messages") is None
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="SPAN_ONLY",
+    )
+    def test_span_metric_event_generator_span_only_mode_still_no_span_messages(
+        self,
+    ):
+        from opentelemetry.util.genai.environment_variables import (
+            OTEL_INSTRUMENTATION_GENAI_GENERATOR,
+        )
+
+        with patch.dict(
+            os.environ,
+            {OTEL_INSTRUMENTATION_GENAI_GENERATOR: "span_metric_event"},
+        ):
+            if hasattr(get_telemetry_handler, "_default_handler"):
+                delattr(get_telemetry_handler, "_default_handler")
+            handler = get_telemetry_handler(
+                tracer_provider=self.__class__.tracer_provider
+            )
+            message = InputMessage(
+                role="Human", parts=[Text(content="hello world")]
+            )
+            generation = OutputMessage(
+                role="AI", parts=[Text(content="ok")], finish_reason="stop"
+            )
+            invocation = LLMInvocation(
+                request_model="event-model-2",
+                input_messages=[message],
+                provider="test-provider",
+            )
+            handler.start_llm(invocation)
+            invocation.output_messages = [generation]
+            handler.stop_llm(invocation)
+            spans = self.span_exporter.get_finished_spans()
+            assert len(spans) == 1
+            span = spans[0]
+            assert span.attributes.get("gen_ai.operation.name") == "chat"
+            # Even though capture mode requested SPAN_ONLY, event flavor suppresses span message attrs
+            assert span.attributes.get("gen_ai.input.messages") is None
+            assert span.attributes.get("gen_ai.output.messages") is None
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="SPAN_AND_EVENT",
+    )
+    def test_span_metric_event_generator_span_and_event_mode_behaves_like_event_only(
+        self,
+    ):
+        from opentelemetry.util.genai.environment_variables import (
+            OTEL_INSTRUMENTATION_GENAI_GENERATOR,
+        )
+
+        with patch.dict(
+            os.environ,
+            {OTEL_INSTRUMENTATION_GENAI_GENERATOR: "span_metric_event"},
+        ):
+            if hasattr(get_telemetry_handler, "_default_handler"):
+                delattr(get_telemetry_handler, "_default_handler")
+            handler = get_telemetry_handler(
+                tracer_provider=self.__class__.tracer_provider
+            )
+            message = InputMessage(role="Human", parts=[Text(content="hi")])
+            gen = OutputMessage(
+                role="AI", parts=[Text(content="ok")], finish_reason="stop"
+            )
+            inv = LLMInvocation(
+                request_model="event-model-3",
+                input_messages=[message],
+                provider="prov",
+            )
+            handler.start_llm(inv)
+            inv.output_messages = [gen]
+            handler.stop_llm(inv)
+            spans = self.span_exporter.get_finished_spans()
+            assert len(spans) == 1
+            span = spans[0]
+            assert span.attributes.get("gen_ai.input.messages") is None
+            assert span.attributes.get("gen_ai.output.messages") is None
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="SPAN_AND_EVENT",
+    )
+    def test_span_generator_span_and_event_mode_adds_messages(self):
+        # span flavor should capture on span when SPAN_AND_EVENT
+        from opentelemetry.util.genai.environment_variables import (
+            OTEL_INSTRUMENTATION_GENAI_GENERATOR,
+        )
+
+        with patch.dict(
+            os.environ, {OTEL_INSTRUMENTATION_GENAI_GENERATOR: "span"}
+        ):
+            if hasattr(get_telemetry_handler, "_default_handler"):
+                delattr(get_telemetry_handler, "_default_handler")
+            handler = get_telemetry_handler(
+                tracer_provider=self.__class__.tracer_provider
+            )
+            message = InputMessage(role="Human", parts=[Text(content="hi2")])
+            gen = OutputMessage(
+                role="AI", parts=[Text(content="ok2")], finish_reason="stop"
+            )
+            inv = LLMInvocation(
+                request_model="span-and-event",
+                input_messages=[message],
+                provider="prov",
+            )
+            handler.start_llm(inv)
+            inv.output_messages = [gen]
+            handler.stop_llm(inv)
+            span = self.span_exporter.get_finished_spans()[0]
+            assert span.attributes.get("gen_ai.input.messages") is not None
+            assert span.attributes.get("gen_ai.output.messages") is not None
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="EVENT_ONLY",
+    )
+    def test_span_generator_event_only_mode_does_not_add_messages(self):
+        from opentelemetry.util.genai.environment_variables import (
+            OTEL_INSTRUMENTATION_GENAI_GENERATOR,
+        )
+
+        with patch.dict(
+            os.environ, {OTEL_INSTRUMENTATION_GENAI_GENERATOR: "span"}
+        ):
+            if hasattr(get_telemetry_handler, "_default_handler"):
+                delattr(get_telemetry_handler, "_default_handler")
+            handler = get_telemetry_handler(
+                tracer_provider=self.__class__.tracer_provider
+            )
+            inv = LLMInvocation(
+                request_model="span-event-only",
+                input_messages=[],
+                provider="prov",
+            )
+            handler.start_llm(inv)
+            handler.stop_llm(inv)
+            span = self.span_exporter.get_finished_spans()[0]
+            assert span.attributes.get("gen_ai.input.messages") is None
+            assert span.attributes.get("gen_ai.output.messages") is None

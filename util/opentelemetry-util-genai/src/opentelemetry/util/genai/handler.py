@@ -110,7 +110,12 @@ class TelemetryHandler:
             schema_url=Schemas.V1_36_0.value,
         )
         self._event_logger = _otel_events.get_event_logger(__name__)
-        meter = _metrics.get_meter(__name__)
+        meter_provider = kwargs.get("meter_provider")
+        self._meter_provider = meter_provider  # store for flushing in tests
+        if meter_provider is not None:
+            meter = meter_provider.get_meter(__name__)
+        else:
+            meter = _metrics.get_meter(__name__)
         # Single histogram for all evaluation scores (name stable across metrics)
         self._evaluation_histogram = meter.create_histogram(
             name="gen_ai.evaluation.score",
@@ -143,11 +148,15 @@ class TelemetryHandler:
             capture_content = False
         if gen_choice == "span_metric_event":
             self._generator = SpanMetricEventGenerator(
-                tracer=self._tracer, capture_content=capture_content
+                tracer=self._tracer,
+                capture_content=capture_content,
+                meter=meter,
             )
         elif gen_choice == "span_metric":
             self._generator = SpanMetricGenerator(
-                tracer=self._tracer, capture_content=capture_content
+                tracer=self._tracer,
+                capture_content=capture_content,
+                meter=meter,
             )
         else:  # default fallback spans only
             self._generator = SpanGenerator(
@@ -188,6 +197,15 @@ class TelemetryHandler:
         """Finalize an LLM invocation successfully and end its span."""
         invocation.end_time = time.time()
         self._generator.finish(invocation)
+        # Force flush metrics if a custom provider with force_flush is present
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:  # pragma: no cover - defensive
+                self._meter_provider.force_flush()  # type: ignore[attr-defined]
+            except Exception:
+                pass
         return invocation
 
     def fail_llm(
@@ -196,6 +214,14 @@ class TelemetryHandler:
         """Fail an LLM invocation and end its span with error status."""
         invocation.end_time = time.time()
         self._generator.error(error, invocation)
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:  # pragma: no cover
+                self._meter_provider.force_flush()  # type: ignore[attr-defined]
+            except Exception:
+                pass
         return invocation
 
     def evaluate_llm(
