@@ -14,19 +14,13 @@
 
 
 import time
-from contextvars import Token
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Type, Union
 from uuid import UUID, uuid4
 
-from typing_extensions import TypeAlias
-
-from opentelemetry.context import Context
 from opentelemetry.trace import Span
 from opentelemetry.util.types import AttributeValue
-
-ContextToken: TypeAlias = Token[Context]
 
 
 class ContentCapturingMode(Enum):
@@ -91,7 +85,8 @@ class LLMInvocation:
     """
 
     request_model: str
-    context_token: Optional[ContextToken] = None
+    # Stores either a contextvars Token or a context manager (use_span) kept open until finish/error.
+    context_token: Optional[Any] = None
     span: Optional[Span] = None
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None

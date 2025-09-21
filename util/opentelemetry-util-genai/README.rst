@@ -148,18 +148,40 @@ Content capture requires *experimental* GenAI semconv mode + explicit env var.
 
    Accepted values: ``NO_CONTENT`` (default), ``SPAN_ONLY``, ``EVENT_ONLY``, ``SPAN_AND_EVENT``.
 
-Rules:
+3. (NEW) Select telemetry generator flavor:
 
-* Calling ``get_content_capturing_mode()`` outside experimental stability yields ``ValueError``.
-* Invalid values -> warning & fallback to ``NO_CONTENT``.
-* Handler re-evaluates mode at *each* ``start_llm`` allowing dynamic test changes.
+   ``OTEL_INSTRUMENTATION_GENAI_GENERATOR=<FLAVOR>``
+
+   Accepted values (case-insensitive):
+
+   * ``span`` (default) – spans only.
+   * ``span_metric`` – spans + metrics.
+   * ``span_metric_event`` – spans + metrics + structured log events (no message content on spans).
+
+Flavor vs Artifact Matrix
+~~~~~~~~~~~~~~~~~~~~~~~~~~
++---------------------+----------------------+-----------------------------+-------------------+---------------------------------------------+
+| Flavor              | Spans                | Metrics (duration/tokens)   | Events / Logs      | Where message content can appear            |
++=====================+======================+=============================+===================+=============================================+
+| span                | Yes                  | No                          | No                | Span attrs if mode=SPAN_ONLY/SPAN_AND_EVENT |
++---------------------+----------------------+-----------------------------+-------------------+---------------------------------------------+
+| span_metric         | Yes                  | Yes                         | No                | Span attrs if mode=SPAN_ONLY/SPAN_AND_EVENT |
++---------------------+----------------------+-----------------------------+-------------------+---------------------------------------------+
+| span_metric_event   | Yes (no msg content) | Yes                         | Yes (structured)  | Events only if mode=EVENT_ONLY/SPAN_AND_EVENT |
++---------------------+----------------------+-----------------------------+-------------------+---------------------------------------------+
+
+Content Capture Interplay Rules
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+* ``NO_CONTENT``: No message bodies recorded anywhere (spans/events) regardless of flavor.
+* ``SPAN_ONLY``: Applies only to ``span`` / ``span_metric`` flavors (messages serialized onto span attributes). Ignored for ``span_metric_event`` (treated as ``NO_CONTENT`` there).
+* ``EVENT_ONLY``: Applies only to ``span_metric_event`` (message bodies included in events). For other flavors behaves like ``NO_CONTENT``.
+* ``SPAN_AND_EVENT``: For ``span`` / ``span_metric`` behaves like ``SPAN_ONLY`` (events are not produced). For ``span_metric_event`` behaves like ``EVENT_ONLY`` (messages only in events to avoid duplication).
 
 Generator Selection
 -------------------
-Currently the handler binds **SpanGenerator**. Future roadmapped enhancements may:
+The handler now supports explicit generator selection via environment variable (see above). If an invalid value is supplied it falls back to ``span``.
 
-* Allow explicit selection via constructor or environment
-* Promote metric/event generators as semconv & design stabilize
+Previously this section noted future enhancements; the selection mechanism is now implemented.
 
 Extensibility
 -------------

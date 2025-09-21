@@ -50,15 +50,17 @@ Usage:
 
 import os
 import time
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from opentelemetry import _events as _otel_events
 from opentelemetry import metrics as _metrics
 from opentelemetry import trace as _trace_mod
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import Link, get_tracer
+
+# Side-effect import registers builtin evaluators
 from opentelemetry.util.genai import (
-    evaluators as _genai_evaluators,  # noqa: F401  # trigger builtin registration
+    evaluators as _genai_evaluators,  # noqa: F401
 )
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE,
@@ -66,11 +68,14 @@ from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_EVALUATORS,
     OTEL_INSTRUMENTATION_GENAI_GENERATOR,
 )
-from opentelemetry.util.genai.evaluators.registry import (  # re-added get_evaluator
+from opentelemetry.util.genai.evaluators.registry import (
     get_evaluator,
     register_evaluator,
 )
 from opentelemetry.util.genai.generators import SpanGenerator
+from opentelemetry.util.genai.generators.span_metric_event_generator import (
+    SpanMetricEventGenerator,
+)
 from opentelemetry.util.genai.generators.span_metric_generator import (
     SpanMetricGenerator,
 )
@@ -113,28 +118,38 @@ class TelemetryHandler:
             description="Scores produced by GenAI evaluators in [0,1] when applicable",
         )
 
-        capture_content = False
-        try:
-            mode = get_content_capturing_mode()
-            capture_content = mode in (
-                ContentCapturingMode.SPAN_ONLY,
-                ContentCapturingMode.SPAN_AND_EVENT,
-            )
-        except (
-            Exception
-        ):  # ValueError for default stability or other issues; ignore silently
-            capture_content = False
         # Generator selection via env var (experimental)
         gen_choice = (
             os.environ.get(OTEL_INSTRUMENTATION_GENAI_GENERATOR, "span")
             .strip()
             .lower()
         )
-        if gen_choice == "span_metric":
+        self._generator_kind = gen_choice
+        # Decide capture_content AFTER knowing generator kind so EVENT_ONLY works for event flavor.
+        capture_content = False
+        try:
+            mode = get_content_capturing_mode()
+            if gen_choice == "span_metric_event":
+                capture_content = mode in (
+                    ContentCapturingMode.EVENT_ONLY,
+                    ContentCapturingMode.SPAN_AND_EVENT,
+                )
+            else:  # span / span_metric
+                capture_content = mode in (
+                    ContentCapturingMode.SPAN_ONLY,
+                    ContentCapturingMode.SPAN_AND_EVENT,
+                )
+        except Exception:
+            capture_content = False
+        if gen_choice == "span_metric_event":
+            self._generator = SpanMetricEventGenerator(
+                tracer=self._tracer, capture_content=capture_content
+            )
+        elif gen_choice == "span_metric":
             self._generator = SpanMetricGenerator(
                 tracer=self._tracer, capture_content=capture_content
             )
-        else:  # default fallback
+        else:  # default fallback spans only
             self._generator = SpanGenerator(
                 tracer=self._tracer, capture_content=capture_content
             )
@@ -144,12 +159,20 @@ class TelemetryHandler:
     ):  # re-evaluate env each start in case singleton created before patching
         try:
             mode = get_content_capturing_mode()
-            self._generator._capture_content = mode in (
-                ContentCapturingMode.SPAN_ONLY,
-                ContentCapturingMode.SPAN_AND_EVENT,
-            )
+            if self._generator_kind == "span_metric_event":
+                new_value = mode in (
+                    ContentCapturingMode.EVENT_ONLY,
+                    ContentCapturingMode.SPAN_AND_EVENT,
+                )
+            else:
+                new_value = mode in (
+                    ContentCapturingMode.SPAN_ONLY,
+                    ContentCapturingMode.SPAN_AND_EVENT,
+                )
+            # Generators use _capture_content attribute; ignore if absent
+            if hasattr(self._generator, "_capture_content"):
+                self._generator._capture_content = new_value  # type: ignore[attr-defined]
         except Exception:
-            # Leave existing setting unchanged if stability mode default or invalid
             pass
 
     def start_llm(
@@ -229,7 +252,6 @@ class TelemetryHandler:
             try:
                 evaluator = get_evaluator(name)
             except Exception:
-                # Attempt lazy builtin re-registration only for known builtin names
                 if name.lower() in {"length", "sentiment", "deepeval"}:
                     try:  # pragma: no cover
                         import importlib
@@ -266,23 +288,11 @@ class TelemetryHandler:
             try:
                 eval_out = evaluator.evaluate(invocation)
                 if isinstance(eval_out, EvaluationResult):
-                    results.append(eval_out)
+                    payload = [eval_out]
                 elif isinstance(eval_out, list):
-                    for item in eval_out:
-                        if isinstance(item, EvaluationResult):
-                            results.append(item)
-                        else:
-                            results.append(
-                                EvaluationResult(
-                                    metric_name=name,
-                                    error=Error(
-                                        message="Evaluator returned non-EvaluationResult item",
-                                        type=TypeError,
-                                    ),
-                                )
-                            )
+                    payload = eval_out
                 else:
-                    results.append(
+                    payload = [
                         EvaluationResult(
                             metric_name=name,
                             error=Error(
@@ -290,7 +300,20 @@ class TelemetryHandler:
                                 type=TypeError,
                             ),
                         )
-                    )
+                    ]
+                for item in payload:
+                    if isinstance(item, EvaluationResult):
+                        results.append(item)
+                    else:
+                        results.append(
+                            EvaluationResult(
+                                metric_name=name,
+                                error=Error(
+                                    message="Evaluator returned non-EvaluationResult item",
+                                    type=TypeError,
+                                ),
+                            )
+                        )
             except Exception as exc:  # evaluator runtime error
                 results.append(
                     EvaluationResult(
@@ -300,9 +323,9 @@ class TelemetryHandler:
                 )
         # Emit metrics & event
         if results:
-            evaluation_items = []
+            evaluation_items: list[Dict[str, Any]] = []
             for res in results:
-                attrs = {
+                attrs: Dict[str, Any] = {
                     "gen_ai.operation.name": "evaluation",
                     "gen_ai.evaluation.name": res.metric_name,
                     "gen_ai.request.model": invocation.request_model,
@@ -326,7 +349,9 @@ class TelemetryHandler:
                     "gen_ai.evaluation.name": res.metric_name,
                 }
                 if isinstance(res.score, (int, float)):
-                    item["gen_ai.evaluation.score.value"] = res.score
+                    item["gen_ai.evaluation.score.value"] = (
+                        res.score
+                    )  # value is numeric; acceptable
                 if res.label is not None:
                     item["gen_ai.evaluation.score.label"] = res.label
                 if res.explanation:
