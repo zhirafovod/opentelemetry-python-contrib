@@ -45,25 +45,16 @@ from typing import Collection
 
 from wrapt import wrap_function_wrapper
 
-from opentelemetry.instrumentation.langchain.config import Config
-from opentelemetry.instrumentation.langchain.version import __version__
-from opentelemetry.instrumentation.langchain.package import _instruments
+from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.langchain.callback_handler import (
     OpenTelemetryLangChainCallbackHandler,
 )
-from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
+from opentelemetry.instrumentation.langchain.config import Config
+from opentelemetry.instrumentation.langchain.package import _instruments
 from opentelemetry.instrumentation.utils import unwrap
 
+# from opentelemetry.instrumentation.langchain.version import __version__
 
-from opentelemetry.genai.sdk.api import get_telemetry_client
-from opentelemetry.genai.sdk.api import TelemetryClient
-from .utils import (
-    should_emit_events,
-    get_evaluation_framework_name,
-)
-from opentelemetry.genai.sdk.evals import (
-    get_evaluator,
-)
 
 class LangChainInstrumentor(BaseInstrumentor):
     """
@@ -75,7 +66,9 @@ class LangChainInstrumentor(BaseInstrumentor):
     for downstream calls to OpenAI (or other providers).
     """
 
-    def __init__(self, exception_logger=None, disable_trace_injection: bool = False):
+    def __init__(
+        self, exception_logger=None, disable_trace_injection: bool = False
+    ):
         """
         :param disable_trace_injection: If True, do not wrap OpenAI invocation
                                         for trace-context injection.
@@ -84,27 +77,11 @@ class LangChainInstrumentor(BaseInstrumentor):
         self._disable_trace_injection = disable_trace_injection
         Config.exception_logger = exception_logger
 
-        self._telemetry: TelemetryClient | None = None
-
     def instrumentation_dependencies(self) -> Collection[str]:
         return _instruments
 
     def _instrument(self, **kwargs):
-        exporter_type_full = should_emit_events()
-
-        # Instantiate a singleton TelemetryClient bound to our tracer & meter
-        self._telemetry = get_telemetry_client(exporter_type_full, **kwargs)
-
-        # initialize evaluation framework if needed
-        evaluation_framework_name = get_evaluation_framework_name()
-        # TODO: add check for OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE
-        self._evaluation = get_evaluator(evaluation_framework_name)
-
-        otel_callback_handler = OpenTelemetryLangChainCallbackHandler(
-            telemetry_client=self._telemetry,
-            evaluation_client=self._evaluation,
-        )
-
+        otel_callback_handler = OpenTelemetryLangChainCallbackHandler()
         wrap_function_wrapper(
             module="langchain_core.callbacks",
             name="BaseCallbackManager.__init__",
@@ -117,8 +94,13 @@ class LangChainInstrumentor(BaseInstrumentor):
         """
         unwrap("langchain_core.callbacks.base", "BaseCallbackManager.__init__")
         if not self._disable_trace_injection:
-            unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._generate")
-            unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._agenerate")
+            unwrap(
+                "langchain_openai.chat_models.base", "BaseChatOpenAI._generate"
+            )
+            unwrap(
+                "langchain_openai.chat_models.base",
+                "BaseChatOpenAI._agenerate",
+            )
 
 
 class _BaseCallbackManagerInitWrapper:

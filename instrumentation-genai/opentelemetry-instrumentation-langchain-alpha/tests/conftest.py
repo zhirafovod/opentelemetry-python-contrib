@@ -5,6 +5,7 @@ import os
 
 import pytest
 import yaml
+
 # from openai import AsyncOpenAI, OpenAI
 from langchain_openai import ChatOpenAI
 
@@ -30,6 +31,9 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
+from opentelemetry.util.genai.environment_variables import (
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+)
 
 
 @pytest.fixture(scope="function", name="span_exporter")
@@ -85,6 +89,7 @@ def environment():
 def chatOpenAI_client():
     return ChatOpenAI()
 
+
 @pytest.fixture(scope="module")
 def vcr_config():
     return {
@@ -115,7 +120,9 @@ def instrument_no_content(
     )
 
     yield instrumentor
-    os.environ.pop(OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None)
+    os.environ.pop(
+        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None
+    )
     instrumentor.uninstrument()
 
 
@@ -134,7 +141,9 @@ def instrument_with_content(
     )
 
     yield instrumentor
-    os.environ.pop(OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None)
+    os.environ.pop(
+        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None
+    )
     instrumentor.uninstrument()
 
 
@@ -157,7 +166,35 @@ def instrument_with_content_unsampled(
     )
 
     yield instrumentor
-    os.environ.pop(OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None)
+    os.environ.pop(
+        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None
+    )
+    instrumentor.uninstrument()
+
+
+@pytest.fixture(scope="function")
+def instrument_with_content_util(
+    tracer_provider, event_logger_provider, meter_provider
+):
+    os.environ.update(
+        {
+            OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT: "True",  # capture content for spans/logs
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "SPAN_ONLY",  # util-genai content gate
+            # Removed deprecated OTEL_INSTRUMENTATION_LANGCHAIN_USE_UTIL_GENAI toggle (util-genai is always used)
+        }
+    )
+    instrumentor = LangChainInstrumentor()
+    instrumentor.instrument(
+        tracer_provider=tracer_provider,
+        event_logger_provider=event_logger_provider,
+        meter_provider=meter_provider,
+    )
+    yield instrumentor
+    for k in (
+        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT,
+        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    ):
+        os.environ.pop(k, None)
     instrumentor.uninstrument()
 
 
