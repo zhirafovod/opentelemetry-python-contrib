@@ -51,6 +51,7 @@ from .utils import (
 class SpanMetricGenerator(BaseTelemetryGenerator):
     """
     Generates only spans and metrics (no events).
+    Span name pattern aligned with SpanGenerator: "chat {request_model}".
     """
 
     def __init__(
@@ -101,15 +102,42 @@ class SpanMetricGenerator(BaseTelemetryGenerator):
             )
 
     def finish(self, invocation: LLMInvocation):
-        system = invocation.attributes.get("system")
+        # Ensure attributes mapping present for downstream helpers
+        request_model = (
+            invocation.attributes.get("request_model")
+            or invocation.request_model
+        )
+        invocation.attributes["request_model"] = request_model
+        framework = invocation.attributes.get("framework")
+        system = invocation.attributes.get("system") or invocation.provider
+        invocation.attributes["system"] = system
+        response_model = (
+            invocation.attributes.get("response_model_name")
+            or invocation.response_model_name
+        )
+        invocation.attributes["response_model_name"] = response_model
+        prompt_tokens = (
+            invocation.attributes.get("input_tokens")
+            or invocation.input_tokens
+        )
+        completion_tokens = (
+            invocation.attributes.get("output_tokens")
+            or invocation.output_tokens
+        )
+        invocation.attributes["input_tokens"] = prompt_tokens
+        invocation.attributes["output_tokens"] = completion_tokens
+        # Normalize message/chat generation compatibility lists
+        if not invocation.messages:
+            invocation.messages = invocation.input_messages
+        if not invocation.chat_generations:
+            invocation.chat_generations = invocation.output_messages
+
         span = self._start_span(
-            name=f"{system}.chat",
+            name=f"chat {request_model}",
             kind=SpanKind.CLIENT,
             parent_run_id=invocation.parent_run_id,
         )
-
         with use_span(span, end_on_exit=False) as span:
-            request_model = invocation.attributes.get("request_model")
             span_state = _SpanState(
                 span=span,
                 context=trace.get_current(),
@@ -118,12 +146,9 @@ class SpanMetricGenerator(BaseTelemetryGenerator):
                 start_time=invocation.start_time,
             )
             self.spans[invocation.run_id] = span_state
-
-            framework = invocation.attributes.get("framework")
             _set_initial_span_attributes(
                 span, request_model, system, framework
             )
-
             finish_reasons = _collect_finish_reasons(
                 invocation.chat_generations
             )
@@ -131,24 +156,17 @@ class SpanMetricGenerator(BaseTelemetryGenerator):
                 span.set_attribute(
                     GenAI.GEN_AI_RESPONSE_FINISH_REASONS, finish_reasons
                 )
-
-            response_model = invocation.attributes.get("response_model_name")
-            response_id = invocation.attributes.get("response_id")
-            prompt_tokens = invocation.attributes.get("input_tokens")
-            completion_tokens = invocation.attributes.get("output_tokens")
             _set_response_and_usage_attributes(
                 span,
                 response_model,
-                response_id,
+                invocation.response_id,
                 prompt_tokens,
                 completion_tokens,
             )
-
             _maybe_set_input_messages(
                 span, invocation.messages, self._capture_content
             )
             _set_chat_generation_attrs(span, invocation.chat_generations)
-
             metric_attributes = _get_metric_attributes(
                 request_model,
                 response_model,
@@ -162,25 +180,29 @@ class SpanMetricGenerator(BaseTelemetryGenerator):
                 completion_tokens,
                 metric_attributes,
             )
-
             self._end_span(invocation.run_id)
             _record_duration(
                 self._duration_histogram, invocation, metric_attributes
             )
 
     def error(self, error: Error, invocation: LLMInvocation):
-        system = invocation.attributes.get("system")
+        request_model = (
+            invocation.attributes.get("request_model")
+            or invocation.request_model
+        )
+        invocation.attributes["request_model"] = request_model
+        system = invocation.attributes.get("system") or invocation.provider
+        invocation.attributes["system"] = system
+        framework = invocation.attributes.get("framework")
         span = self._start_span(
-            name=f"{system}.chat",
+            name=f"chat {request_model}",
             kind=SpanKind.CLIENT,
             parent_run_id=invocation.parent_run_id,
         )
-
         with use_span(
             span,
             end_on_exit=False,
         ) as span:
-            request_model = invocation.attributes.get("request_model")
             span_state = _SpanState(
                 span=span,
                 context=trace.get_current(),
@@ -189,18 +211,16 @@ class SpanMetricGenerator(BaseTelemetryGenerator):
                 start_time=invocation.start_time,
             )
             self.spans[invocation.run_id] = span_state
-
             span.set_status(Status(StatusCode.ERROR, error.message))
             if span.is_recording():
                 span.set_attribute(
                     ErrorAttributes.ERROR_TYPE, error.type.__qualname__
                 )
-
             self._end_span(invocation.run_id)
-
-            response_model = invocation.attributes.get("response_model_name")
-            framework = invocation.attributes.get("framework")
-
+            response_model = (
+                invocation.attributes.get("response_model_name")
+                or invocation.response_model_name
+            )
             metric_attributes = _get_metric_attributes(
                 request_model,
                 response_model,
@@ -208,7 +228,6 @@ class SpanMetricGenerator(BaseTelemetryGenerator):
                 system,
                 framework,
             )
-
             if invocation.end_time is not None:
                 elapsed: float = invocation.end_time - invocation.start_time
                 self._duration_histogram.record(

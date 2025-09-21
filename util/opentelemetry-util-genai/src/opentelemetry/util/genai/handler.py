@@ -64,9 +64,16 @@ from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE,
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE,
     OTEL_INSTRUMENTATION_GENAI_EVALUATORS,
+    OTEL_INSTRUMENTATION_GENAI_GENERATOR,
 )
-from opentelemetry.util.genai.evaluators.registry import get_evaluator
+from opentelemetry.util.genai.evaluators.registry import (  # re-added get_evaluator
+    get_evaluator,
+    register_evaluator,
+)
 from opentelemetry.util.genai.generators import SpanGenerator
+from opentelemetry.util.genai.generators.span_metric_generator import (
+    SpanMetricGenerator,
+)
 from opentelemetry.util.genai.types import (
     ContentCapturingMode,
     Error,
@@ -117,9 +124,20 @@ class TelemetryHandler:
             Exception
         ):  # ValueError for default stability or other issues; ignore silently
             capture_content = False
-        self._generator = SpanGenerator(
-            tracer=self._tracer, capture_content=capture_content
+        # Generator selection via env var (experimental)
+        gen_choice = (
+            os.environ.get(OTEL_INSTRUMENTATION_GENAI_GENERATOR, "span")
+            .strip()
+            .lower()
         )
+        if gen_choice == "span_metric":
+            self._generator = SpanMetricGenerator(
+                tracer=self._tracer, capture_content=capture_content
+            )
+        else:  # default fallback
+            self._generator = SpanGenerator(
+                tracer=self._tracer, capture_content=capture_content
+            )
 
     def _refresh_capture_content(
         self,
@@ -207,70 +225,68 @@ class TelemetryHandler:
             invocation.end_time = time.time()
 
         for name in evaluators:
+            evaluator = None
             try:
                 evaluator = get_evaluator(name)
-            except Exception as exc:  # unknown evaluator or construction error
-                # Attempt lazy re-registration of builtin evaluators if registry was cleared (common in tests)
+            except Exception:
+                # Attempt lazy builtin re-registration only for known builtin names
                 if name.lower() in {"length", "sentiment", "deepeval"}:
-                    try:  # pragma: no cover - simple import side effect
+                    try:  # pragma: no cover
                         import importlib
 
                         mod = importlib.import_module(
                             "opentelemetry.util.genai.evaluators.builtins"
                         )
-                        # Explicitly (re)register builtin evaluators in case module was imported before and registry cleared
-                        from opentelemetry.util.genai.evaluators.registry import (
-                            register_evaluator,
-                        )
-
-                        try:
-                            if hasattr(mod, "LengthEvaluator"):
-                                register_evaluator(
-                                    "length", lambda: mod.LengthEvaluator()
-                                )
-                            if hasattr(mod, "SentimentEvaluator"):
-                                register_evaluator(
-                                    "sentiment",
-                                    lambda: mod.SentimentEvaluator(),
-                                )
-                            if hasattr(mod, "DeepevalEvaluator"):
-                                register_evaluator(
-                                    "deepeval",
-                                    lambda: mod.DeepevalEvaluator(),
-                                )
-                        except Exception:
-                            pass
+                        if hasattr(mod, "LengthEvaluator"):
+                            register_evaluator(
+                                "length", lambda: mod.LengthEvaluator()
+                            )
+                        if hasattr(mod, "SentimentEvaluator"):
+                            register_evaluator(
+                                "sentiment", lambda: mod.SentimentEvaluator()
+                            )
+                        if hasattr(mod, "DeepevalEvaluator"):
+                            register_evaluator(
+                                "deepeval", lambda: mod.DeepevalEvaluator()
+                            )
                         evaluator = get_evaluator(name)
                     except Exception:
-                        results.append(
-                            EvaluationResult(
-                                metric_name=name,
-                                error=Error(message=str(exc), type=type(exc)),
-                            )
-                        )
-                        continue
-                else:
+                        evaluator = None
+                if evaluator is None:
                     results.append(
                         EvaluationResult(
                             metric_name=name,
-                            error=Error(message=str(exc), type=type(exc)),
+                            error=Error(
+                                message=f"Unknown evaluator: {name}",
+                                type=LookupError,
+                            ),
                         )
                     )
                     continue
             try:
                 eval_out = evaluator.evaluate(invocation)
-                # Normalise: allow evaluator to return single or list
                 if isinstance(eval_out, EvaluationResult):
                     results.append(eval_out)
                 elif isinstance(eval_out, list):
-                    results.extend(eval_out)
+                    for item in eval_out:
+                        if isinstance(item, EvaluationResult):
+                            results.append(item)
+                        else:
+                            results.append(
+                                EvaluationResult(
+                                    metric_name=name,
+                                    error=Error(
+                                        message="Evaluator returned non-EvaluationResult item",
+                                        type=TypeError,
+                                    ),
+                                )
+                            )
                 else:
-                    # Unsupported return type -> mark as error
                     results.append(
                         EvaluationResult(
                             metric_name=name,
                             error=Error(
-                                message=f"Unsupported evaluation return type: {type(eval_out)}",
+                                message="Evaluator returned unsupported type",
                                 type=TypeError,
                             ),
                         )

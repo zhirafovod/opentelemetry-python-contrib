@@ -80,6 +80,19 @@ Controls creation of evaluation spans. Accepted values:
 * ``per_metric``: One span per evaluation metric (implemented).
 """
 
+OTEL_INSTRUMENTATION_GENAI_GENERATOR = "OTEL_INSTRUMENTATION_GENAI_GENERATOR"
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_GENERATOR
+
+Select telemetry generator strategy. Accepted values (case-insensitive):
+
+* ``span`` (default) - spans only (SpanGenerator)
+* ``span_metric`` - spans + metrics (SpanMetricGenerator)
+* ``span_metric_event`` - spans + metrics + events (SpanMetricEventGenerator)
+
+Invalid or unset values fallback to ``span``.
+"""
+
 __all__ = [
     # existing
     "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
@@ -89,4 +102,6 @@ __all__ = [
     "OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE",
     "OTEL_INSTRUMENTATION_GENAI_EVALUATORS",
     "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE",
+    # generator selection
+    "OTEL_INSTRUMENTATION_GENAI_GENERATOR",
 ]

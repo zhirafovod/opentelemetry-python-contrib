@@ -18,6 +18,7 @@ from contextvars import Token
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Type, Union
+from uuid import UUID, uuid4
 
 from typing_extensions import TypeAlias
 
@@ -85,6 +86,8 @@ class OutputMessage:
 class LLMInvocation:
     """
     Represents a single LLM call invocation.
+    Added optional fields (run_id, parent_run_id, messages, chat_generations) to
+    interoperate with advanced generators (SpanMetricGenerator, SpanMetricEventGenerator).
     """
 
     request_model: str
@@ -100,6 +103,12 @@ class LLMInvocation:
     input_tokens: Optional[AttributeValue] = None
     output_tokens: Optional[AttributeValue] = None
     attributes: Dict[str, Any] = field(default_factory=dict)
+    # Advanced generator compatibility fields
+    run_id: UUID = field(default_factory=uuid4)
+    parent_run_id: Optional[UUID] = None
+    # Unified views expected by span_metric* generators
+    messages: List[InputMessage] = field(default_factory=list)
+    chat_generations: List[OutputMessage] = field(default_factory=list)
 
 
 @dataclass
