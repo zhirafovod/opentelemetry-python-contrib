@@ -26,7 +26,6 @@ from unittest.mock import MagicMock, patch
 
 import fsspec
 
-from opentelemetry._logs import LogRecord
 from opentelemetry.test.test_base import TestBase
 from opentelemetry.util.genai import types
 from opentelemetry.util.genai._fsspec_upload.fsspec_hook import (
@@ -239,7 +238,7 @@ class TestFsspecUploadHookIntegration(TestBase):
 
     def test_upload_completions(self):
         tracer = self.tracer_provider.get_tracer(__name__)
-        log_record = LogRecord()
+        log_record = logging.LogRecord()
 
         with tracer.start_as_current_span("chat mymodel") as span:
             self.hook.upload(
@@ -281,12 +280,11 @@ class TestFsspecUploadHookIntegration(TestBase):
         )
 
     def test_stamps_empty_log(self):
-        log_record = LogRecord()
+        log_record = logging.LogRecord()
         self.hook.upload(
             inputs=FAKE_INPUTS,
             outputs=FAKE_OUTPUTS,
             system_instruction=FAKE_SYSTEM_INSTRUCTION,
-            log_record=log_record,
         )
 
         # stamp on both body and attributes
@@ -295,7 +293,7 @@ class TestFsspecUploadHookIntegration(TestBase):
         self.assertIn("gen_ai.system_instructions_ref", log_record.attributes)
 
     def test_upload_bytes(self) -> None:
-        log_record = LogRecord()
+        log_record = logging.LogRecord()
         self.hook.upload(
             inputs=[
                 types.InputMessage(
