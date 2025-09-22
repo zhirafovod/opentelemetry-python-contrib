@@ -11,3 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+
+class Config:
+    """
+    Shared static config for LangChain OTel instrumentation.
+    """
+
+    # Logger to handle exceptions during instrumentation
+    exception_logger = None
+
+    # Globally suppress instrumentation
+    _suppress_instrumentation = False
+
+    @classmethod
+    def suppress_instrumentation(cls, suppress: bool = True):
+        cls._suppress_instrumentation = suppress
+
+    @classmethod
+    def is_instrumentation_suppressed(cls) -> bool:
+        return cls._suppress_instrumentation

@@ -233,3 +233,6 @@ class Base64JsonEncoder(json.JSONEncoder):
         if isinstance(o, bytes):
             return b64encode(o).decode()
         return super().default(o)
+
+
+# ruff: noqa
