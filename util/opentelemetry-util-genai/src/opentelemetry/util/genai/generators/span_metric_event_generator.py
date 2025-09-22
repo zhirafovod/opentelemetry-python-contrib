@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import Dict, Optional
 from uuid import UUID
 
@@ -40,6 +41,8 @@ from .utils import (
     _set_response_and_usage_attributes,
     _SpanState,
 )
+
+_ENV_VAR = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
 
 
 class SpanMetricEventGenerator(BaseTelemetryGenerator):
@@ -94,8 +97,8 @@ class SpanMetricEventGenerator(BaseTelemetryGenerator):
         for k, v in invocation.attributes.items():
             span.set_attribute(k, v)
 
-        # Emit input message events/logs (structured) – no span attribute duplication.
-        if invocation.input_messages and self._logger:
+        # Emit input message events/logs (structured) – gated by environment var
+        if invocation.input_messages and self._logger and os.getenv(_ENV_VAR):
             for msg in invocation.input_messages:
                 log_record = _message_to_log_record(
                     msg,
@@ -143,8 +146,12 @@ class SpanMetricEventGenerator(BaseTelemetryGenerator):
             invocation.output_tokens,
         )
 
-        # Emit per-choice generation events
-        if invocation.chat_generations and self._logger:
+        # Emit per-choice generation events (gated by environment var)
+        if (
+            invocation.chat_generations
+            and self._logger
+            and os.getenv(_ENV_VAR)
+        ):
             try:
                 _emit_chat_generation_logs(
                     self._logger,
