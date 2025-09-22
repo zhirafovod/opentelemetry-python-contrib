@@ -202,25 +202,36 @@ Subclass ``BaseTelemetryGenerator``:
 
 Inject your custom generator in a bespoke handler or fork the existing ``TelemetryHandler``.
 
-Deepeval Evaluator Integration
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-For advanced evaluation scenarios, you can install the optional deepeval integration:
+Evaluation Integration
+~~~~~~~~~~~~~~~~~~~~~~
+You can integrate external evaluation packages to measure and annotate LLM invocations without modifying the core GenAI utilities. Evaluators implement the ``Evaluator`` interface, register themselves with the handler registry, and are dynamically loaded at runtime via environment variables.
+
+Example: deepeval integration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+The `deepeval` package provides a rich suite of LLM quality metrics (relevance, bias, hallucination, toxicity, etc.). To install and enable the deepeval evaluator:
 
 .. code-block:: bash
 
+   # Install the core utilities with deepeval support
    pip install opentelemetry-util-genai[deepeval]
 
-Then enable evaluations via environment variables before your application starts:
-
-.. code-block:: bash
-
+   # Enable evaluation and select the deepeval evaluator
    export OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE=true
    export OTEL_INSTRUMENTATION_GENAI_EVALUATORS=deepeval
 
-At runtime, ``TelemetryHandler.evaluate_llm`` will dynamically load and run the
-``DeepEvalEvaluator`` from the `opentelemetry-utils-genai-evals-deepeval` package.
+At runtime, after you start and stop your LLM invocation, call:
 
-Additional metrics (e.g. hallucination, toxicity) are planned in future releases.
+.. code-block:: python
+
+   from opentelemetry.util.genai.handler import get_telemetry_handler
+
+   handler = get_telemetry_handler()
+   # ... run your invocation lifecycle (start_llm, provider call, stop_llm) ...
+   results = handler.evaluate_llm(invocation)
+   for eval_result in results:
+       print(f"{eval_result.metric_name}: {eval_result.score} ({eval_result.label})")
+
+Beyond deepeval, you can create or install other evaluator packages by implementing the ``Evaluator`` interface and registering with the GenAI utilities registry. The handler will load any evaluators listed in ``OTEL_INSTRUMENTATION_GENAI_EVALUATORS``.
 
 Threading / Concurrency
 -----------------------
