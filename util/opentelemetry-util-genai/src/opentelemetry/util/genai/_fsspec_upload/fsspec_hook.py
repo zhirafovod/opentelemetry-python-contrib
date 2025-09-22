@@ -31,21 +31,9 @@ from uuid import uuid4
 import fsspec
 
 from opentelemetry._logs import LogRecord
-from opentelemetry.semconv._incubating.attributes import gen_ai_attributes
 from opentelemetry.trace import Span
 from opentelemetry.util.genai import types
 from opentelemetry.util.genai.upload_hook import UploadHook
-
-GEN_AI_INPUT_MESSAGES_REF: Final = (
-    gen_ai_attributes.GEN_AI_INPUT_MESSAGES + "_ref"
-)
-GEN_AI_OUTPUT_MESSAGES_REF: Final = (
-    gen_ai_attributes.GEN_AI_OUTPUT_MESSAGES + "_ref"
-)
-GEN_AI_SYSTEM_INSTRUCTIONS_REF: Final = (
-    gen_ai_attributes.GEN_AI_SYSTEM_INSTRUCTIONS + "_ref"
-)
-
 
 _logger = logging.getLogger(__name__)
 

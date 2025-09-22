@@ -25,8 +25,8 @@ from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 import fsspec
+from fsspec.implementations.memory import MemoryFileSystem
 
-from opentelemetry._logs import LogRecord
 from opentelemetry.test.test_base import TestBase
 from opentelemetry.util.genai import types
 from opentelemetry.util.genai._fsspec_upload.fsspec_hook import (
@@ -286,7 +286,6 @@ class TestFsspecUploadHookIntegration(TestBase):
             inputs=FAKE_INPUTS,
             outputs=FAKE_OUTPUTS,
             system_instruction=FAKE_SYSTEM_INSTRUCTION,
-            log_record=log_record,
         )
 
         # stamp on both body and attributes
