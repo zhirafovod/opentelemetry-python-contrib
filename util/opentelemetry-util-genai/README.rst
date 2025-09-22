@@ -46,8 +46,8 @@ Core Concepts
 Current Generator Variants (see ``generators/`` README for deep detail):
 
 * ``SpanGenerator`` (default): spans only + optional input/output message attributes.
-* ``SpanMetricGenerator`` (experimental / planned): spans + metrics (duration, tokens) without events.
-* ``SpanMetricEventGenerator`` (experimental / planned): spans + metrics + structured log events.
+* ``SpanMetricGenerator``: spans + metrics (duration, tokens) + optional input/output message attributes
+* ``SpanMetricEventGenerator``: spans + metrics + structured log events.
 
 .. note:: See detailed generator strategy documentation in ``src/opentelemetry/util/genai/generators/README.rst``.
 
@@ -201,6 +201,26 @@ Subclass ``BaseTelemetryGenerator``:
            ...
 
 Inject your custom generator in a bespoke handler or fork the existing ``TelemetryHandler``.
+
+Deepeval Evaluator Integration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+For advanced evaluation scenarios, you can install the optional deepeval integration:
+
+.. code-block:: bash
+
+   pip install opentelemetry-util-genai[deepeval]
+
+Then enable evaluations via environment variables before your application starts:
+
+.. code-block:: bash
+
+   export OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE=true
+   export OTEL_INSTRUMENTATION_GENAI_EVALUATORS=deepeval
+
+At runtime, ``TelemetryHandler.evaluate_llm`` will dynamically load and run the
+``DeepEvalEvaluator`` from the `opentelemetry-utils-genai-evals-deepeval` package.
+
+Additional metrics (e.g. hallucination, toxicity) are planned in future releases.
 
 Threading / Concurrency
 -----------------------

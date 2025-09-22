@@ -278,10 +278,13 @@ class TelemetryHandler:
             try:
                 evaluator = get_evaluator(name)
             except Exception:
-                if name.lower() in {"length", "sentiment", "deepeval"}:
-                    try:  # pragma: no cover
-                        import importlib
+                import importlib
 
+                evaluator = None
+                lower = name.lower()
+                # Built-in evaluators
+                if lower in {"length", "sentiment"}:
+                    try:  # pragma: no cover
                         mod = importlib.import_module(
                             "opentelemetry.util.genai.evaluators.builtins"
                         )
@@ -293,12 +296,26 @@ class TelemetryHandler:
                             register_evaluator(
                                 "sentiment", lambda: mod.SentimentEvaluator()
                             )
-                        if hasattr(mod, "DeepevalEvaluator"):
-                            register_evaluator(
-                                "deepeval", lambda: mod.DeepevalEvaluator()
-                            )
                         evaluator = get_evaluator(name)
                     except Exception:
+                        evaluator = None
+                # External DeepEval integration
+                if lower == "deepeval" and evaluator is None:
+                    try:
+                        # Load external deepeval integration from utils-genai-evals-deepeval package
+                        ext_mod = importlib.import_module(
+                            "opentelemetry.util.genai.evals.deepeval"
+                        )
+                        if hasattr(ext_mod, "DeepEvalEvaluator"):
+                            # factory captures handler's event_logger and tracer
+                            register_evaluator(
+                                "deepeval",
+                                lambda: ext_mod.DeepEvalEvaluator(
+                                    self._event_logger, self._tracer
+                                ),
+                            )
+                            evaluator = get_evaluator(name)
+                    except ImportError:
                         evaluator = None
                 if evaluator is None:
                     results.append(

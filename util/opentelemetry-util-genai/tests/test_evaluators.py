@@ -3,6 +3,7 @@
 # Evaluator tests: registry behavior, event & metric emission, and span modes.
 
 import os
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -307,6 +308,70 @@ class TestEvaluatorSpanModes(unittest.TestCase):
         self.assertIn("evaluation.length", metric_spans)
         self.assertIn("evaluation.dummy", metric_spans)
         self.assertIn("evaluation.dummy2", metric_spans)
+
+
+# ---------------- DeepEval dynamic loading tests -----------------
+class TestDeepEvalDynamicLoading(unittest.TestCase):
+    """Test that deepeval evaluator is dynamically loaded when package is installed and configured via env var."""
+
+    def setUp(self):
+        # Clear any existing evaluators and handler
+        if hasattr(get_telemetry_handler, "_default_handler"):
+            delattr(get_telemetry_handler, "_default_handler")
+        reg._EVALUATORS.clear()
+        # Prepare invocation
+        self.invocation = LLMInvocation(request_model="model-x")
+        self.invocation.input_messages.append(
+            InputMessage(role="user", parts=[Text(content="hello")])
+        )
+        self.invocation.output_messages.append(
+            OutputMessage(
+                role="assistant",
+                parts=[Text(content="world")],
+                finish_reason="stop",
+            )
+        )
+
+    @patch.dict(
+        os.environ,
+        {
+            OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE: "true",
+            OTEL_INSTRUMENTATION_GENAI_EVALUATORS: "deepeval",
+        },
+        clear=True,
+    )
+    def test_deepeval_dynamic_import(self):
+        # Simulate external module
+        class DummyDeepEval(Evaluator):
+            def evaluate(self, invocation):
+                return EvaluationResult(
+                    metric_name="deepeval", score=0.75, label="ok"
+                )
+
+        dummy_mod = type(sys)("dummy_mod")
+        dummy_mod.DeepEvalEvaluator = (
+            lambda event_logger, tracer: DummyDeepEval()
+        )
+        # Patch importlib to return our dummy module for deepeval integration
+        import importlib
+
+        orig_import = importlib.import_module
+
+        def fake_import(name, package=None):
+            if name == "opentelemetry.util.genai.evals.deepeval":
+                return dummy_mod
+            return orig_import(name, package)
+
+        with patch("importlib.import_module", fake_import):
+            handler = get_telemetry_handler()
+            results = handler.evaluate_llm(self.invocation)
+        # Verify dynamic loading and execution
+        self.assertEqual(len(results), 1)
+        res = results[0]
+        self.assertEqual(res.metric_name, "deepeval")
+        self.assertEqual(res.score, 0.75)
+        self.assertEqual(res.label, "ok")
+        self.assertIsNone(res.error)
 
 
 if __name__ == "__main__":  # pragma: no cover

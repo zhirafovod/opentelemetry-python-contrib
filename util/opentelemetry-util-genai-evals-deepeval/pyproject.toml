@@ -1,0 +1,20 @@
+[project]
+name = "opentelemetry-utils-genai-evals-deepeval"
+version = "0.1.0"
+description = "OpenTelemetry GenAI Deepeval Evaluator Integration"
+readme = "README.rst"
+authors = [ { name = "OpenTelemetry Authors" } ]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.7"
+dependencies = [
+    "opentelemetry-api>=1.0.0",
+    "opentelemetry-semantic-conventions>=0.39b0",
+    "deepeval>=0.1.0",
+]
+packages = ["opentelemetry.util.genai.evals.deepeval"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["opentelemetry.util.genai.evals.deepeval"]
