@@ -48,11 +48,12 @@ from opentelemetry.trace import (
     Tracer,
     set_span_in_context,
 )
-from opentelemetry.util.genai.span_utils import (
+
+from .span_utils import (
     _apply_error_attributes,
-    _apply_finish_attributes,
+    _apply_common_span_attributes,
 )
-from opentelemetry.util.genai.types import Error, LLMInvocation
+from .types import BaseInvocation, Error, LLMInvocation
 
 # Type alias matching the token type expected by opentelemetry.context.detach
 ContextToken: TypeAlias = Token[otel_context.Context]
@@ -63,13 +64,13 @@ class BaseTelemetryGenerator:
     Abstract base for emitters mapping GenAI types -> OpenTelemetry.
     """
 
-    def start(self, invocation: LLMInvocation) -> None:
+    def start(self, invocation: BaseInvocation) -> None:
         raise NotImplementedError
 
-    def finish(self, invocation: LLMInvocation) -> None:
+    def finish(self, invocation: BaseInvocation) -> None:
         raise NotImplementedError
 
-    def error(self, error: Error, invocation: LLMInvocation) -> None:
+    def error(self, error: Error, invocation: BaseInvocation) -> None:
         raise NotImplementedError
 
 
@@ -87,7 +88,7 @@ class SpanGenerator(BaseTelemetryGenerator):
         # Store the active span and its context attachment token
         self._active: Dict[UUID, tuple[Span, ContextToken]] = {}
 
-    def start(self, invocation: LLMInvocation):
+    def start(self, invocation: BaseInvocation):
         # Create a span and attach it as current; keep the token to detach later
         span = self._tracer.start_span(
             name=f"{GenAI.GenAiOperationNameValues.CHAT.value} {invocation.request_model}",
@@ -98,16 +99,16 @@ class SpanGenerator(BaseTelemetryGenerator):
             set_span_in_context(span)
         )
 
-    def finish(self, invocation: LLMInvocation):
+    def finish(self, invocation: BaseInvocation):
         if invocation.context_token is None or invocation.span is None:
             return
 
-        _apply_finish_attributes(invocation.span, invocation)
+        _apply_common_span_attributes(invocation.span, invocation)
         # Detach context and end span
         otel_context.detach(invocation.context_token)
         invocation.span.end()
 
-    def error(self, error: Error, invocation: LLMInvocation):
+    def error(self, error: Error, invocation: BaseInvocation):
         if invocation.context_token is None or invocation.span is None:
             return
 

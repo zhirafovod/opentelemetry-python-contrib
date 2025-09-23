@@ -18,11 +18,11 @@ from opentelemetry.util.genai.handler import TelemetryHandler
 from opentelemetry.util.genai.data import Error
 from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.utils import dont_throw
+from opentelemetry.util.genai.types import EmbeddingInvocation
+from opentelemetry.semconv._incubating.attributes import gen_ai_attributes
 
-#TODO remove later
-from opentelemetry.genai.sdk.api import TelemetryClient
-
-def embed_query_wrapper(telemetry_client: TelemetryClient):
+def embeddings_wrapper(telemetry_handler: TelemetryHandler):
+    #TODO update comment
     """Wrap the embed_query method of Embeddings classes to trace it."""
     
     @dont_throw
@@ -38,11 +38,17 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
         if isinstance(input_value, str):
             input_value = [input_value]
 
-        run_id = uuid.uuid4()
         embedding_kwargs = {
             "input": input_value,
         }
-        telemetry_client.start_embedding(run_id, model_name, **embedding_kwargs)
+
+        invocation = EmbeddingInvocation(
+            operation_name=gen_ai_attributes.GenAiOperationNameValues.EMBEDDINGS.value,
+            request_model=model_name,
+            attributes=embedding_kwargs
+        )
+
+        start_invocation = telemetry_handler.start_embedding(invocation)
 
         try:
             # Call the original method - wrapped is already bound to the instance
@@ -53,13 +59,15 @@ def embed_query_wrapper(telemetry_client: TelemetryClient):
                 dimension_count = len(result[0])
             else:
                 dimension_count = len(result)
+
+            start_invocation.dimension_count = dimension_count
             
-            telemetry_client.stop_embedding(run_id, dimension_count, output=result)
+            telemetry_handler.stop_embedding(start_invocation)
             return result
 
         except Exception as ex:
             embedding_error = Error(message=str(ex), type=type(ex))
-            telemetry_client.fail_embedding(run_id, embedding_error)
+            telemetry_handler.fail_embedding(start_invocation, embedding_error)
             raise
 
     return traced_method

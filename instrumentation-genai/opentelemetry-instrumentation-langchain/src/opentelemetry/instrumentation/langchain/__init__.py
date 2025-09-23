@@ -42,8 +42,6 @@ API
 """
 
 from typing import Collection
-
-from ._patch import patch_leaf_subclasses
 from wrapt import wrap_function_wrapper
 
 from langchain_core.embeddings import Embeddings
@@ -55,16 +53,15 @@ from opentelemetry.instrumentation.langchain.callback_handler import (
     OpenTelemetryLangChainCallbackHandler,
 )
 from opentelemetry.instrumentation.langchain.embeddings_handler import (
-    embed_query_wrapper
+    embeddings_wrapper
 )
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.utils import unwrap
-from opentelemetry.trace import get_tracer, set_span_in_context
-from opentelemetry.context import attach, detach
-from opentelemetry.semconv.schemas import Schemas
 
-from opentelemetry.genai.sdk.api import get_telemetry_client
-from opentelemetry.genai.sdk.api import TelemetryClient
+from opentelemetry.util.genai.handler import (
+    TelemetryHandler,
+    get_telemetry_handler,
+)
 from .utils import (
     should_emit_events,
     get_evaluation_framework_name,
@@ -111,32 +108,34 @@ class LangChainInstrumentor(BaseInstrumentor):
         self._disable_trace_injection = disable_trace_injection
         Config.exception_logger = exception_logger
 
-        self._telemetry: TelemetryClient | None = None
+        self._telemetry: TelemetryHandler | None = None
 
     def instrumentation_dependencies(self) -> Collection[str]:
         return _instruments
 
     def _instrument(self, **kwargs):
+        #TODO remove?
         exporter_type_full = should_emit_events()
 
         # Instantiate a singleton TelemetryClient bound to our tracer & meter
-        self._telemetry = get_telemetry_client(exporter_type_full, **kwargs)
+        self._telemetry = get_telemetry_handler(**kwargs)
 
         # initialize evaluation framework if needed
         evaluation_framework_name = get_evaluation_framework_name()
         # TODO: add check for OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE
         self._evaluation = get_evaluator(evaluation_framework_name)
 
-        otel_callback_handler = OpenTelemetryLangChainCallbackHandler(
-            telemetry_client=self._telemetry,
-            evaluation_client=self._evaluation,
-        )
+        #TODO refactor for utils
+        # otel_callback_handler = OpenTelemetryLangChainCallbackHandler(
+        #     telemetry_client=self._telemetry,
+        #     evaluation_client=self._evaluation,
+        # )
 
-        wrap_function_wrapper(
-            module="langchain_core.callbacks",
-            name="BaseCallbackManager.__init__",
-            wrapper=_BaseCallbackManagerInitWrapper(otel_callback_handler),
-        )
+        # wrap_function_wrapper(
+        #     module="langchain_core.callbacks",
+        #     name="BaseCallbackManager.__init__",
+        #     wrapper=_BaseCallbackManagerInitWrapper(otel_callback_handler),
+        # )
 
         self.wrap_embeddings()
 
@@ -147,7 +146,7 @@ class LangChainInstrumentor(BaseInstrumentor):
                 try:
                     # Get the appropriate wrapper based on method name
                     if method_name in ["embed_query","embed_documents"]:
-                        wrapper = embed_query_wrapper(self._telemetry)
+                        wrapper = embeddings_wrapper(self._telemetry)
                     else:
                         continue  # Skip unknown methods
 
@@ -156,10 +155,8 @@ class LangChainInstrumentor(BaseInstrumentor):
                         name=f"{patch_config["class_name"]}.{method_name}",
                         wrapper=wrapper,
                     )
-                except ImportError:
+                except ImportError or Exception:
                     # Provider not available, skip silently
-                    pass
-                except Exception:
                     # Log error but continue with other patches
                     pass
 

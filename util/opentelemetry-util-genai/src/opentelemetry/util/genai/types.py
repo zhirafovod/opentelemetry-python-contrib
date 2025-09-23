@@ -13,11 +13,6 @@
 # limitations under the License.
 
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
-from uuid import UUID
-
-import time
 from contextvars import Token
 from dataclasses import dataclass, field
 from enum import Enum
@@ -31,17 +26,70 @@ from opentelemetry.util.types import AttributeValue
 
 ContextToken: TypeAlias = Token[Context]
 
+class ContentCapturingMode(Enum):
+    # Do not capture content (default).
+    NO_CONTENT = 0
+    # Only capture content in spans.
+    SPAN_ONLY = 1
+    # Only capture content in events.
+    EVENT_ONLY = 2
+    # Capture content in both spans and events.
+    SPAN_AND_EVENT = 3
+
+@dataclass()
+class ToolCall:
+    arguments: Any
+    name: str
+    id: Optional[str]
+    type: Literal["tool_call"] = "tool_call"
+
+@dataclass()
+class ToolCallResponse:
+    response: Any
+    id: Optional[str]
+    type: Literal["tool_call_response"] = "tool_call_response"
+
+FinishReason = Literal[
+    "content_filter", "error", "length", "stop", "tool_calls"
+]
+
+@dataclass()
+class Text:
+    content: str
+    type: Literal["text"] = "text"
+
+MessagePart = Union[Text, ToolCall, ToolCallResponse, Any]
+
+@dataclass()
+class InputMessage:
+    role: str
+    parts: list[MessagePart]
+
+@dataclass()
+class OutputMessage:
+    role: str
+    parts: list[MessagePart]
+    finish_reason: Union[str, FinishReason]
 
 @dataclass
-class LLMInvocation:
+class BaseInvocation:
+    """
+    Represents a base invocation for GenAI operations, containing required fields.
+    """
+    operation_name: Optional[str] = None
+    error_type: Optional[str] = None
+    request_model: Optional[str] = None
+    context_token: Optional[ContextToken] = None
+    span: Optional[Span] = None
+    start_time: float = field(default_factory=time.time)
+    end_time: Optional[float] = None
+    attributes: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class LLMInvocation(BaseInvocation):
     """
     Represents a single LLM call invocation.
     """
-
-    run_id: UUID
-    parent_run_id: Optional[UUID] = None
-    start_time: float = field(default_factory=time.time)
-    end_time: Optional[float] = None
     input_messages: List[InputMessage] = field(default_factory=list)
     output_messages: List[OutputMessage] = field(default_factory=list)
     provider: Optional[str] = None
@@ -49,20 +97,15 @@ class LLMInvocation:
     response_id: Optional[str] = None
     input_tokens: Optional[AttributeValue] = None
     output_tokens: Optional[AttributeValue] = None
-    attributes: Dict[str, Any] = field(default_factory=dict)
-    span_id: int = 0
-    trace_id: int = 0
 
 @dataclass
-class EmbeddingInvocation:
+class EmbeddingInvocation(BaseInvocation):
     """
     Represents a single Embedding call invocation.
     """
-    run_id: UUID
-    parent_run_id: Optional[UUID] = None
-    start_time: float = field(default_factory=time.time)
-    end_time: float = None
-    dimension_count : int = 0
-    input: Optional[List[str]] = None
-    output: Optional[List[float]] = None
-    attributes: dict = field(default_factory=dict)
+    dimension_count: int = 0
+
+@dataclass
+class Error:
+    message: str
+    type: Type[BaseException]
