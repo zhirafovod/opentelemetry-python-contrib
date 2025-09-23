@@ -50,12 +50,9 @@ Usage:
 
 import time
 from typing import Any, Optional
-
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import get_tracer
-
 from opentelemetry.semconv.schemas import Schemas
-from opentelemetry.trace import get_tracer
 from opentelemetry.util.genai.generators import SpanGenerator
 from opentelemetry.util.genai.types import Error, LLMInvocation, EmbeddingInvocation
 from opentelemetry.semconv._incubating.attributes import gen_ai_attributes
@@ -99,7 +96,6 @@ class TelemetryHandler:
             tracer_provider,
             schema_url=Schemas.V1_36_0.value,
         )
-
         self._generator = SpanGenerator(tracer=self._tracer)
 
     @staticmethod
@@ -135,6 +131,61 @@ class TelemetryHandler:
 
     def fail_embedding(self, invocation: EmbeddingInvocation, error: Error) -> EmbeddingInvocation:
         """Fail an embedding invocation with error."""
+        self._generator.error(error, invocation)
+        return invocation
+
+    def start_embedding(
+        self,
+        run_id: UUID,
+        model_name: str,
+        parent_run_id: Optional[UUID] = None,
+        **attributes: Any,
+    ) -> None:
+        """Start an embedding invocation."""
+        # Create span attributes
+        span_attributes = {
+            gen_ai_attributes.GEN_AI_OPERATION_NAME: gen_ai_attributes.GenAiOperationNameValues.EMBEDDINGS.value,
+            gen_ai_attributes.GEN_AI_REQUEST_MODEL: model_name,
+        }
+        span_attributes.update(attributes)
+
+        invocation = EmbeddingInvocation(
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            attributes=span_attributes,
+            input=attributes.get("input", None),
+        )
+
+        with self._lock:
+            self._embedding_registry[invocation.run_id] = invocation
+
+        self._generator.start(invocation)
+
+    def stop_embedding(
+        self,
+        run_id: UUID,
+        dimension_count: int,
+        output: List[float],
+        **attributes: Any,
+    ) -> EmbeddingInvocation:
+        """Stop an embedding invocation with results."""
+        with self._lock:
+            invocation = self._embedding_registry.pop(run_id)
+        invocation.end_time = time.time()
+        invocation.dimension_count = dimension_count
+        invocation.attributes.update(attributes)
+        invocation.output = output
+        self._generator.finish(invocation)
+        return invocation
+
+    def fail_embedding(
+        self, run_id: UUID, error: Error, **attributes: Any
+    ) -> EmbeddingInvocation:
+        """Fail an embedding invocation with error."""
+        with self._lock:
+            invocation = self._embedding_registry.pop(run_id)
+        invocation.end_time = time.time()
+        invocation.attributes.update(**attributes)
         self._generator.error(error, invocation)
         return invocation
 

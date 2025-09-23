@@ -63,6 +63,7 @@ def embeddings_wrapper(telemetry_handler: TelemetryHandler):
             start_invocation.dimension_count = dimension_count
             
             telemetry_handler.stop_embedding(start_invocation)
+
             return result
 
         except Exception as ex:

@@ -160,6 +160,31 @@ class LangChainInstrumentor(BaseInstrumentor):
                     # Log error but continue with other patches
                     pass
 
+        self.wrap_embeddings()
+
+    def wrap_embeddings(self):
+        # Apply patches using the configuration
+        for patch_config in self.EMBEDDING_PATCHES:
+            for method_name in patch_config["methods"]:
+                try:
+                    # Get the appropriate wrapper based on method name
+                    if method_name in ["embed_query","embed_documents"]:
+                        wrapper = embed_query_wrapper(self._telemetry)
+                    else:
+                        continue  # Skip unknown methods
+
+                    wrap_function_wrapper(
+                        module=patch_config["module"],
+                        name=f"{patch_config["class_name"]}.{method_name}",
+                        wrapper=wrapper,
+                    )
+                except ImportError:
+                    # Provider not available, skip silently
+                    pass
+                except Exception:
+                    # Log error but continue with other patches
+                    pass
+
     def _uninstrument(self, **kwargs):
         """
         Cleanup instrumentation (unwrap).
