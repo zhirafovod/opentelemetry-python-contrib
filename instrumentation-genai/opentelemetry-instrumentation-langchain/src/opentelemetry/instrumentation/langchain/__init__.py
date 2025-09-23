@@ -13,103 +13,74 @@
 # limitations under the License.
 
 """
-Langchain instrumentation supporting `ChatOpenAI`, it can be enabled by
-using ``LangChainInstrumentor``.
-
-.. _langchain: https://pypi.org/project/langchain/
+Langchain instrumentation supporting `ChatOpenAI` and `ChatBedrock`, it can be enabled by
+using ``LangChainInstrumentor``. Other providers/LLMs may be supported in the future and telemetry for them is skipped for now.
 
 Usage
 -----
-
 .. code:: python
-
     from opentelemetry.instrumentation.langchain import LangChainInstrumentor
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
 
     LangChainInstrumentor().instrument()
-
-    llm = ChatOpenAI(model="gpt-3.5-turbo")
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, max_tokens=1000)
     messages = [
         SystemMessage(content="You are a helpful assistant!"),
         HumanMessage(content="What is the capital of France?"),
     ]
 
     result = llm.invoke(messages)
+    LangChainInstrumentor().uninstrument()
 
 API
 ---
 """
 
-__all__ = ["__version__"]
+from typing import Any, Callable, Collection
 
-from typing import Collection
+from langchain_core.callbacks import BaseCallbackHandler  # type: ignore
+from wrapt import wrap_function_wrapper  # type: ignore
 
-from wrapt import wrap_function_wrapper
-
-# from opentelemetry.genai.sdk.api import TelemetryClient, get_telemetry_client
-# from opentelemetry.genai.sdk.evals import (
-#     get_evaluator,
-# )
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.langchain.callback_handler import (
     OpenTelemetryLangChainCallbackHandler,
 )
-from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.package import _instruments
 from opentelemetry.instrumentation.langchain.version import __version__
 from opentelemetry.instrumentation.utils import unwrap
-from opentelemetry.util.genai.api import TelemetryClient, get_telemetry_client
-from opentelemetry.util.genai.evals import (
-    get_evaluator,
-)
-
-from .utils import (
-    get_evaluation_framework_name,
-    should_emit_events,
-)
+from opentelemetry.semconv.schemas import Schemas
+from opentelemetry.trace import get_tracer
 
 
 class LangChainInstrumentor(BaseInstrumentor):
     """
     OpenTelemetry instrumentor for LangChain.
-
     This adds a custom callback handler to the LangChain callback manager
-    to capture chain, LLM, and tool events. It also wraps the internal
-    OpenAI invocation points (BaseChatOpenAI) to inject W3C trace headers
-    for downstream calls to OpenAI (or other providers).
+    to capture LLM telemetry.
     """
 
     def __init__(
-        self, exception_logger=None, disable_trace_injection: bool = False
+        self,
     ):
-        """
-        :param disable_trace_injection: If True, do not wrap OpenAI invocation
-                                        for trace-context injection.
-        """
         super().__init__()
-        self._disable_trace_injection = disable_trace_injection
-        Config.exception_logger = exception_logger
-
-        self._telemetry: TelemetryClient | None = None
 
     def instrumentation_dependencies(self) -> Collection[str]:
         return _instruments
-
-    def _instrument(self, **kwargs):
-        exporter_type_full = should_emit_events()
-
-        # Instantiate a singleton TelemetryClient bound to our tracer & meter
-        self._telemetry = get_telemetry_client(exporter_type_full, **kwargs)
-
-        # initialize evaluation framework if needed
-        evaluation_framework_name = get_evaluation_framework_name()
-        # TODO: add check for OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE
-        self._evaluation = get_evaluator(evaluation_framework_name)
+    def _instrument(self, **kwargs: Any):
+        """
+        Enable Langchain instrumentation.
+        """
+        tracer_provider = kwargs.get("tracer_provider")
+        tracer = get_tracer(
+            __name__,
+            __version__,
+            tracer_provider,
+            schema_url=Schemas.V1_37_0.value,
+        )
 
         otel_callback_handler = OpenTelemetryLangChainCallbackHandler(
-            telemetry_client=self._telemetry,
-            evaluation_client=self._evaluation,
+            tracer=tracer,
         )
 
         wrap_function_wrapper(
@@ -118,35 +89,34 @@ class LangChainInstrumentor(BaseInstrumentor):
             wrapper=_BaseCallbackManagerInitWrapper(otel_callback_handler),
         )
 
-    def _uninstrument(self, **kwargs):
+    def _uninstrument(self, **kwargs: Any):
         """
         Cleanup instrumentation (unwrap).
         """
-        unwrap("langchain_core.callbacks.base", "BaseCallbackManager.__init__")
-        if not self._disable_trace_injection:
-            unwrap(
-                "langchain_openai.chat_models.base", "BaseChatOpenAI._generate"
-            )
-            unwrap(
-                "langchain_openai.chat_models.base",
-                "BaseChatOpenAI._agenerate",
-            )
+        unwrap("langchain_core.callbacks.base.BaseCallbackManager", "__init__")
 
 
 class _BaseCallbackManagerInitWrapper:
     """
-    Wrap the BaseCallbackManager __init__ to insert
-    custom callback handler in the manager's handlers list.
+    Wrap the BaseCallbackManager __init__ to insert custom callback handler in the manager's handlers list.
     """
 
-    def __init__(self, callback_handler):
+    def __init__(
+        self, callback_handler: OpenTelemetryLangChainCallbackHandler
+    ):
         self._otel_handler = callback_handler
 
-    def __call__(self, wrapped, instance, args, kwargs):
+    def __call__(
+        self,
+        wrapped: Callable[..., None],
+        instance: BaseCallbackHandler,  # type: ignore
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ):
         wrapped(*args, **kwargs)
         # Ensure our OTel callback is present if not already.
-        for handler in instance.inheritable_handlers:
+        for handler in instance.inheritable_handlers:  # type: ignore
             if isinstance(handler, type(self._otel_handler)):
                 break
         else:
-            instance.add_handler(self._otel_handler, inherit=True)
+            instance.add_handler(self._otel_handler, inherit=True)  # type: ignore

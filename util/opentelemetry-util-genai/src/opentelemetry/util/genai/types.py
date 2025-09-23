@@ -13,30 +13,18 @@
 # limitations under the License.
 
 import time
+from contextvars import Token
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
-from uuid import UUID
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 
-from .data import ChatGeneration, Message, ToolFunction, ToolOutput
+from typing_extensions import TypeAlias
 
+from opentelemetry.context import Context
+from opentelemetry.trace import Span
+from opentelemetry.util.types import AttributeValue
 
-@dataclass
-class LLMInvocation:
-    """
-    Represents a single LLM call invocation.
-    """
-
-    run_id: UUID
-    parent_run_id: Optional[UUID] = None
-    start_time: float = field(default_factory=time.time)
-    end_time: float = None
-    messages: List[Message] = field(default_factory=list)
-    chat_generations: List[ChatGeneration] = field(default_factory=list)
-    tool_functions: List[ToolFunction] = field(default_factory=list)
-    attributes: dict = field(default_factory=dict)
-    span_id: int = 0
-    trace_id: int = 0
+ContextToken: TypeAlias = Token[Context]
 
 
 class ContentCapturingMode(Enum):
@@ -105,18 +93,48 @@ class OutputMessage:
     role: str
     parts: list[MessagePart]
     finish_reason: Union[str, FinishReason]
-    run_id: UUID
-    parent_run_id: Optional[UUID] = None
+
+
+def _new_input_messages() -> List[InputMessage]:
+    return []
+
+
+def _new_output_messages() -> List[OutputMessage]:
+    return []
+
+
+def _new_str_any_dict() -> Dict[str, Any]:
+    return {}
+
+
+@dataclass
+class LLMInvocation:
+    """
+    Represents a single LLM call invocation. When creating an LLMInvocation object,
+    only update the data attributes. The span and context_token attributes are
+    set by the TelemetryHandler.
+    """
+
+    request_model: str
+    context_token: Optional[ContextToken] = None
+    span: Optional[Span] = None
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
-    messages: List[Message] = field(default_factory=list)
-    chat_generations: List[ChatGeneration] = field(default_factory=list)
-    attributes: Dict[str, Any] = field(default_factory=dict)
-    span_id: int = 0
-    trace_id: int = 0
+    input_messages: List[InputMessage] = field(
+        default_factory=_new_input_messages
+    )
+    output_messages: List[OutputMessage] = field(
+        default_factory=_new_output_messages
+    )
+    provider: Optional[str] = None
+    response_model_name: Optional[str] = None
+    response_id: Optional[str] = None
+    input_tokens: Optional[AttributeValue] = None
+    output_tokens: Optional[AttributeValue] = None
+    attributes: Dict[str, Any] = field(default_factory=_new_str_any_dict)
 
 
-class ObserveSpanKindValues(Enum):
-    TOOL = "tool"
-    LLM = "llm"
-    UNKNOWN = "unknown"
+@dataclass
+class Error:
+    message: str
+    type: Type[BaseException]

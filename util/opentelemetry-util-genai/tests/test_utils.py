@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -25,32 +25,25 @@ from opentelemetry.instrumentation._semconv import (
     OTEL_SEMCONV_STABILITY_OPT_IN,
     _OpenTelemetrySemanticConventionStability,
 )
-from opentelemetry.sdk._logs import LoggerProvider
-from opentelemetry.sdk._logs.export import (
-    InMemoryLogExporter,
-    SimpleLogRecordProcessor,
-)
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-from opentelemetry.util.genai.client import (
-    ContentCapturingMode,
-    llm_start,
-    llm_stop,
+from opentelemetry.semconv.attributes import (
+    error_attributes as ErrorAttributes,
 )
+from opentelemetry.trace.status import StatusCode
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
 )
-from opentelemetry.util.genai.handler import (
-    TelemetryHandler,
-    llm_start,
-    llm_stop,
-)
+from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
-    ChatGeneration,
-    Message,
+    ContentCapturingMode,
+    InputMessage,
+    LLMInvocation,
+    OutputMessage,
+    Text,
 )
 from opentelemetry.util.genai.utils import get_content_capturing_mode
 
@@ -111,125 +104,198 @@ class TestVersion(unittest.TestCase):
         self.assertIn("INVALID_VALUE is not a valid option for ", cm.output[0])
 
 
-@pytest.fixture(name="span_exporter")
-def span_exporter_fixture():
-    """Set up telemetry providers for testing"""
-    # Set up in-memory span exporter to capture spans
-    memory_exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(memory_exporter))
+class TestTelemetryHandler(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.span_exporter = InMemorySpanExporter()
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(
+            SimpleSpanProcessor(cls.span_exporter)
+        )
+        trace.set_tracer_provider(tracer_provider)
 
-    # Set the tracer provider
-    trace.set_tracer_provider(tracer_provider)
+    def setUp(self):
+        self.span_exporter = self.__class__.span_exporter
+        self.span_exporter.clear()
+        self.telemetry_handler = get_telemetry_handler()
 
-    yield memory_exporter
+    def tearDown(self):
+        # Clear spans and reset the singleton telemetry handler so each test starts clean
+        self.span_exporter.clear()
+        if hasattr(get_telemetry_handler, "_default_handler"):
+            delattr(get_telemetry_handler, "_default_handler")
 
-    # Cleanup
-    memory_exporter.clear()
-    # Reset to default tracer provider
-    trace.set_tracer_provider(trace.NoOpTracerProvider())
-
-
-@pytest.mark.usefixtures("span_exporter")
-def test_llm_start_and_stop_creates_span(
-    request: pytest.FixtureRequest,
-):
-    run_id = uuid4()
-    message = Message(content="hello world", type="Human", name="message name")
-    chat_generation = ChatGeneration(content="hello back", type="AI")
-
-    # Start and stop LLM invocation
-    llm_start(
-        [message], run_id=run_id, custom_attr="value", system="test-system"
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="SPAN_ONLY",
     )
-    invocation = llm_stop(
-        run_id, chat_generations=[chat_generation], extra="info"
+    def test_llm_start_and_stop_creates_span(self):  # pylint: disable=no-self-use
+        message = InputMessage(
+            role="Human", parts=[Text(content="hello world")]
+        )
+        chat_generation = OutputMessage(
+            role="AI", parts=[Text(content="hello back")], finish_reason="stop"
+        )
+
+        # Start and stop LLM invocation using context manager
+        invocation = LLMInvocation(
+            request_model="test-model",
+            input_messages=[message],
+            provider="test-provider",
+            attributes={"custom_attr": "value"},
+        )
+
+        with self.telemetry_handler.llm(invocation):
+            assert invocation.span is not None
+            invocation.output_messages = [chat_generation]
+            invocation.attributes.update({"extra": "info"})
+
+        # Get the spans that were created
+        spans = self.span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "chat test-model"
+        assert span.kind == trace.SpanKind.CLIENT
+
+        # Verify span attributes
+        assert span.attributes is not None
+        span_attrs = span.attributes
+        assert span_attrs.get("gen_ai.operation.name") == "chat"
+        assert span_attrs.get("gen_ai.provider.name") == "test-provider"
+        assert span.start_time is not None
+        assert span.end_time is not None
+        assert span.end_time > span.start_time
+        assert invocation.attributes.get("custom_attr") == "value"
+        assert invocation.attributes.get("extra") == "info"
+
+        # Check messages captured on span
+        input_messages_json = span_attrs.get("gen_ai.input.messages")
+        output_messages_json = span_attrs.get("gen_ai.output.messages")
+        assert input_messages_json is not None
+        assert output_messages_json is not None
+        assert isinstance(input_messages_json, str)
+        assert isinstance(output_messages_json, str)
+        input_messages = json.loads(input_messages_json)
+        output_messages = json.loads(output_messages_json)
+        assert len(input_messages) == 1
+        assert len(output_messages) == 1
+        assert input_messages[0].get("role") == "Human"
+        assert output_messages[0].get("role") == "AI"
+        assert output_messages[0].get("finish_reason") == "stop"
+        assert (
+            output_messages[0].get("parts")[0].get("content") == "hello back"
+        )
+
+        # Check that extra attributes are added to the span
+        assert span_attrs.get("extra") == "info"
+        assert span_attrs.get("custom_attr") == "value"
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="SPAN_ONLY",
     )
+    def test_llm_manual_start_and_stop_creates_span(self):
+        message = InputMessage(role="Human", parts=[Text(content="hi")])
+        chat_generation = OutputMessage(
+            role="AI", parts=[Text(content="ok")], finish_reason="stop"
+        )
 
-    # Get the spans that were created
-    exporter: InMemorySpanExporter = request.getfixturevalue("span_exporter")
-    spans = exporter.get_finished_spans()
+        invocation = LLMInvocation(
+            request_model="manual-model",
+            input_messages=[message],
+            provider="test-provider",
+            attributes={"manual": True},
+        )
 
-    # Verify span was created
-    assert len(spans) == 1
-    span = spans[0]
+        self.telemetry_handler.start_llm(invocation)
+        assert invocation.span is not None
+        invocation.output_messages = [chat_generation]
+        invocation.attributes.update({"extra_manual": "yes"})
+        self.telemetry_handler.stop_llm(invocation)
 
-    # Verify span properties
-    assert span.name == "test-system.chat"
-    assert span.kind == trace.SpanKind.CLIENT
+        spans = self.span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "chat manual-model"
+        assert span.kind == trace.SpanKind.CLIENT
+        assert span.start_time is not None
+        assert span.end_time is not None
+        assert span.end_time > span.start_time
 
-    # Verify span attributes
-    assert span.attributes.get("gen_ai.operation.name") == "chat"
-    assert span.attributes.get("gen_ai.system") == "test-system"
-    # Add more attribute checks as needed
+        attrs = span.attributes
+        assert attrs is not None
+        assert attrs.get("manual") is True
+        assert attrs.get("extra_manual") == "yes"
 
-    # Verify span timing
-    assert span.start_time is not None
-    assert span.end_time is not None
-    assert span.end_time > span.start_time
-
-    # Verify invocation data
-    assert invocation.run_id == run_id
-    assert invocation.attributes.get("custom_attr") == "value"
-    assert invocation.attributes.get("extra") == "info"
-
-
-def test_structured_logs_emitted():
-    # Configure in-memory log exporter and provider
-    log_exporter = InMemoryLogExporter()
-    logger_provider = LoggerProvider()
-    logger_provider.add_log_record_processor(
-        SimpleLogRecordProcessor(log_exporter)
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="SPAN_ONLY",
     )
+    def test_parent_child_span_relationship(self):
+        message = InputMessage(role="Human", parts=[Text(content="hi")])
+        chat_generation = OutputMessage(
+            role="AI", parts=[Text(content="ok")], finish_reason="stop"
+        )
 
-    # Build a dedicated TelemetryHandler using our logger provider
-    handler = TelemetryHandler(
-        emitter_type_full=True,
-        logger_provider=logger_provider,
-    )
+        # Start parent and child using nested contexts (child becomes child span of parent)
+        parent_invocation = LLMInvocation(
+            request_model="parent-model",
+            input_messages=[message],
+            provider="test-provider",
+        )
+        child_invocation = LLMInvocation(
+            request_model="child-model",
+            input_messages=[message],
+            provider="test-provider",
+        )
 
-    run_id = uuid4()
-    message = Message(content="hello world", type="user", name="msg")
-    generation = ChatGeneration(
-        content="hello back",
-        type="assistant",
-        finish_reason="stop",
-    )
+        with self.telemetry_handler.llm(parent_invocation):
+            with self.telemetry_handler.llm(child_invocation):
+                # Stop child first by exiting inner context
+                child_invocation.output_messages = [chat_generation]
+            # Then stop parent by exiting outer context
+            parent_invocation.output_messages = [chat_generation]
 
-    # Start and stop via the handler (emits logs at start and finish)
-    handler.start_llm(
-        [message], run_id=run_id, system="test-system", framework="pytest"
-    )
-    handler.stop_llm(run_id, chat_generations=[generation])
+        spans = self.span_exporter.get_finished_spans()
+        assert len(spans) == 2
 
-    # Collect logs
-    logs = log_exporter.get_finished_logs()
-    # Expect one input-detail log and one choice log
-    assert len(logs) == 2
-    records = [ld.log_record for ld in logs]
+        # Identify spans irrespective of export order
+        child_span = next(s for s in spans if s.name == "chat child-model")
+        parent_span = next(s for s in spans if s.name == "chat parent-model")
 
-    # Assert the first record contains structured details for the input message
-    # Note: order of records is exporter-specific; sort by event.name for stability
-    records_by_event = {
-        rec.attributes.get("event.name"): rec for rec in records
-    }
+        # Same trace
+        assert child_span.context.trace_id == parent_span.context.trace_id
+        # Child has parent set to parent's span id
+        assert child_span.parent is not None
+        assert child_span.parent.span_id == parent_span.context.span_id
+        # Parent should not have a parent (root)
+        assert parent_span.parent is None
 
-    input_rec = records_by_event["gen_ai.client.inference.operation.details"]
-    assert input_rec.attributes.get("gen_ai.provider.name") == "test-system"
-    assert input_rec.attributes.get("gen_ai.framework") == "pytest"
-    assert input_rec.body == {
-        "type": "user",
-        "content": "hello world",
-    }
+    def test_llm_context_manager_error_path_records_error_status_and_attrs(
+        self,
+    ):
+        class BoomError(RuntimeError):
+            pass
 
-    choice_rec = records_by_event["gen_ai.choice"]
-    assert choice_rec.attributes.get("gen_ai.provider.name") == "test-system"
-    assert choice_rec.attributes.get("gen_ai.framework") == "pytest"
-    assert choice_rec.body == {
-        "index": 0,
-        "finish_reason": "stop",
-        "message": {
-            "type": "assistant",
-            "content": "hello back",
-        },
-    }
+        message = InputMessage(role="user", parts=[Text(content="hi")])
+        invocation = LLMInvocation(
+            request_model="test-model",
+            input_messages=[message],
+            provider="test-provider",
+        )
+
+        with self.assertRaises(BoomError):
+            with self.telemetry_handler.llm(invocation):
+                # Simulate user code that fails inside the invocation
+                raise BoomError("boom")
+
+        # One span should have been exported and should be in error state
+        spans = self.span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.status.status_code == StatusCode.ERROR
+        assert (
+            span.attributes.get(ErrorAttributes.ERROR_TYPE)
+            == BoomError.__qualname__
+        )
+        assert invocation.end_time is not None

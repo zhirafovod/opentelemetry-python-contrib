@@ -3,51 +3,65 @@
 import json
 import os
 
+import boto3
 import pytest
 import yaml
-
-# from openai import AsyncOpenAI, OpenAI
+from langchain_aws import ChatBedrock
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
 from opentelemetry.instrumentation.langchain import LangChainInstrumentor
-from opentelemetry.instrumentation.langchain.utils import (
-    OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT,
-)
-from opentelemetry.sdk._events import EventLoggerProvider
-from opentelemetry.sdk._logs import LoggerProvider
-from opentelemetry.sdk._logs.export import (
-    InMemoryLogExporter,
-    SimpleLogRecordProcessor,
-)
-from opentelemetry.sdk.metrics import (
-    MeterProvider,
-)
-from opentelemetry.sdk.metrics.export import (
-    InMemoryMetricReader,
-)
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
-from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
+
+
+@pytest.fixture(scope="function", name="chat_openai_gpt_3_5_turbo_model")
+def fixture_chat_openai_gpt_3_5_turbo_model():
+    llm = ChatOpenAI(
+        model="gpt-3.5-turbo",
+        temperature=0.1,
+        max_tokens=100,
+        top_p=0.9,
+        frequency_penalty=0.5,
+        presence_penalty=0.5,
+        stop_sequences=["\n", "Human:", "AI:"],
+        seed=100,
+    )
+    yield llm
+
+
+@pytest.fixture(scope="function", name="us_amazon_nova_lite_v1_0")
+def fixture_us_amazon_nova_lite_v1_0():
+    llm_model_value = "us.amazon.nova-lite-v1:0"
+    llm = ChatBedrock(
+        model_id=llm_model_value,
+        client=boto3.client(
+            "bedrock-runtime",
+            aws_access_key_id="test_key",
+            aws_secret_access_key="test_secret",
+            region_name="us-west-2",
+            aws_account_id="test_account",
+        ),
+        provider="amazon",
+        temperature=0.1,
+        max_tokens=100,
+    )
+    yield llm
+
+
+@pytest.fixture(scope="function", name="gemini")
+def fixture_gemini():
+    llm_model_value = "gemini-2.5-pro"
+    llm = ChatGoogleGenerativeAI(model=llm_model_value, api_key="test_key")
+    yield llm
 
 
 @pytest.fixture(scope="function", name="span_exporter")
 def fixture_span_exporter():
     exporter = InMemorySpanExporter()
-    yield exporter
-
-
-@pytest.fixture(scope="function", name="log_exporter")
-def fixture_log_exporter():
-    exporter = InMemoryLogExporter()
-    yield exporter
-
-
-@pytest.fixture(scope="function", name="metric_reader")
-def fixture_metric_reader():
-    exporter = InMemoryMetricReader()
     yield exporter
 
 
@@ -57,23 +71,17 @@ def fixture_tracer_provider(span_exporter):
     provider.add_span_processor(SimpleSpanProcessor(span_exporter))
     return provider
 
-
-@pytest.fixture(scope="function", name="event_logger_provider")
-def fixture_event_logger_provider(log_exporter):
-    provider = LoggerProvider()
-    provider.add_log_record_processor(SimpleLogRecordProcessor(log_exporter))
-    event_logger_provider = EventLoggerProvider(provider)
-
-    return event_logger_provider
-
-
-@pytest.fixture(scope="function", name="meter_provider")
-def fixture_meter_provider(metric_reader):
-    meter_provider = MeterProvider(
-        metric_readers=[metric_reader],
+@pytest.fixture(scope="function")
+def start_instrumentation(
+    tracer_provider,
+):
+    instrumentor = LangChainInstrumentor()
+    instrumentor.instrument(
+        tracer_provider=tracer_provider,
     )
 
-    return meter_provider
+    yield instrumentor
+    instrumentor.uninstrument()
 
 
 @pytest.fixture(autouse=True)
@@ -81,10 +89,6 @@ def environment():
     if not os.getenv("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = "test_openai_api_key"
 
-
-@pytest.fixture
-def chatOpenAI_client():
-    return ChatOpenAI()
 
 
 @pytest.fixture(scope="module")
@@ -99,75 +103,6 @@ def vcr_config():
         "decode_compressed_response": True,
         "before_record_response": scrub_response_headers,
     }
-
-
-@pytest.fixture(scope="function")
-def instrument_no_content(
-    tracer_provider, event_logger_provider, meter_provider
-):
-    os.environ.update(
-        {OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT: "False"}
-    )
-
-    instrumentor = LangChainInstrumentor()
-    instrumentor.instrument(
-        tracer_provider=tracer_provider,
-        event_logger_provider=event_logger_provider,
-        meter_provider=meter_provider,
-    )
-
-    yield instrumentor
-    os.environ.pop(
-        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None
-    )
-    instrumentor.uninstrument()
-
-
-@pytest.fixture(scope="function")
-def instrument_with_content(
-    tracer_provider, event_logger_provider, meter_provider
-):
-    os.environ.update(
-        {OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT: "True"}
-    )
-    instrumentor = LangChainInstrumentor()
-    instrumentor.instrument(
-        tracer_provider=tracer_provider,
-        event_logger_provider=event_logger_provider,
-        meter_provider=meter_provider,
-    )
-
-    yield instrumentor
-    os.environ.pop(
-        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None
-    )
-    instrumentor.uninstrument()
-
-
-@pytest.fixture(scope="function")
-def instrument_with_content_unsampled(
-    span_exporter, event_logger_provider, meter_provider
-):
-    os.environ.update(
-        {OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT: "True"}
-    )
-
-    tracer_provider = TracerProvider(sampler=ALWAYS_OFF)
-    tracer_provider.add_span_processor(SimpleSpanProcessor(span_exporter))
-
-    instrumentor = LangChainInstrumentor()
-    instrumentor.instrument(
-        tracer_provider=tracer_provider,
-        event_logger_provider=event_logger_provider,
-        meter_provider=meter_provider,
-    )
-
-    yield instrumentor
-    os.environ.pop(
-        OTEL_INSTRUMENTATION_LANGCHAIN_CAPTURE_MESSAGE_CONTENT, None
-    )
-    instrumentor.uninstrument()
-
 
 class LiteralBlockScalar(str):
     """Formats the string as a literal block scalar, preserving whitespace and
