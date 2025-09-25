@@ -34,6 +34,9 @@ class SpanGenerator(BaseSpanGenerator):
     by ``BaseSpanGenerator``). No metrics or events are produced.
     """
 
+    role = "span"
+    name = "semconv_span"
+
     def __init__(
         self, tracer: Optional[Tracer] = None, capture_content: bool = False
     ):  # noqa: D401

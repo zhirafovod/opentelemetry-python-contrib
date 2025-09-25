@@ -1,23 +1,5 @@
 # Copyright The OpenTelemetry Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""Span + Metrics generator.
-
-Refactored to subclass BaseSpanGenerator to avoid duplication of span lifecycle
-logic. Adds duration & token usage metrics plus richer response attributes while
-still optionally capturing input/output messages on the span (no events emitted).
-"""
-
+# (file rewritten during composite refactor Phase 1 to remove legacy duplicate logic)
 from __future__ import annotations
 
 from typing import Optional
@@ -67,23 +49,26 @@ class SpanMetricGenerator(BaseSpanGenerator):
         )
         self._token_histogram: Histogram = instruments.token_usage_histogram
 
-    # Hooks -----------------------------------------------------------------
     def _on_before_end(
         self, invocation: LLMInvocation, error: Optional[Error]
     ):  # type: ignore[override]
         span = invocation.span
         if span is None:
             return
-        # Normalize unified lists for helper expectations.
-        if not invocation.messages:
-            invocation.messages = invocation.input_messages
-        if not invocation.chat_generations:
-            invocation.chat_generations = invocation.output_messages
+        messages = (
+            getattr(invocation, "messages", None) or invocation.input_messages
+        )
+        chat_generations = (
+            getattr(invocation, "chat_generations", None)
+            or invocation.output_messages
+        )
+        try:
+            setattr(invocation, "messages", messages)
+            setattr(invocation, "chat_generations", chat_generations)
+        except Exception:  # pragma: no cover
+            pass
         if error is None:
-            # Finish reasons & usage/response attrs only on success path
-            finish_reasons = _collect_finish_reasons(
-                invocation.chat_generations
-            )
+            finish_reasons = _collect_finish_reasons(chat_generations)
             if finish_reasons:
                 span.set_attribute(
                     GenAI.GEN_AI_RESPONSE_FINISH_REASONS, finish_reasons
@@ -95,17 +80,12 @@ class SpanMetricGenerator(BaseSpanGenerator):
                 invocation.input_tokens,
                 invocation.output_tokens,
             )
-            # Input / output messages captured by BaseSpanGenerator already for content; ensure input if capture enabled
-            _maybe_set_input_messages(
-                span, invocation.messages, self._capture_content
-            )
-            _set_chat_generation_attrs(span, invocation.chat_generations)
+            _maybe_set_input_messages(span, messages, self._capture_content)
+            _set_chat_generation_attrs(span, chat_generations)
         else:
-            # Error status already set by BaseSpanGenerator.error; no extra generation attrs
             span.set_attribute(
                 ErrorAttributes.ERROR_TYPE, error.type.__qualname__
             )
-        # Metrics (record tokens only if available & not error)
         metric_attrs = _get_metric_attributes(
             invocation.request_model,
             invocation.response_model_name,
@@ -122,19 +102,15 @@ class SpanMetricGenerator(BaseSpanGenerator):
             )
         _record_duration(self._duration_histogram, invocation, metric_attrs)
 
-    # Override error to ensure span status + hook logic executes once
     def error(self, error: Error, invocation: LLMInvocation) -> None:  # type: ignore[override]
         span = invocation.span
         if span is None:
-            # Start a span if start() not called
             self.start(invocation)
             span = invocation.span
         if span is None:
             return
         span.set_status(Status(StatusCode.ERROR, error.message))
-        # Call before_end hook with error
         self._on_before_end(invocation, error)
-        # End span after context exit
         if invocation.context_token is not None:
             try:
                 invocation.context_token.__exit__(None, None, None)

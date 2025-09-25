@@ -113,6 +113,15 @@ class LLMInvocation:
     output_messages: List[OutputMessage] = field(
         default_factory=_new_output_messages
     )
+    # Added in composite refactor Phase 1 for backward compatibility with
+    # generators that previously stashed normalized lists dynamically.
+    # "messages" mirrors input_messages at start; "chat_generations" mirrors
+    # output_messages. They can be overwritten by generators as needed without
+    # risking AttributeError during lifecycle hooks.
+    messages: List[InputMessage] = field(default_factory=_new_input_messages)
+    chat_generations: List[OutputMessage] = field(
+        default_factory=_new_output_messages
+    )
     provider: Optional[str] = None
     response_model_name: Optional[str] = None
     response_id: Optional[str] = None
@@ -157,4 +166,5 @@ __all__ = [
     "LLMInvocation",
     "Error",
     "EvaluationResult",
+    # backward compatibility normalization helpers
 ]

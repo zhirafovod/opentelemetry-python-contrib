@@ -62,6 +62,11 @@ from opentelemetry.trace import Link, get_tracer
 from opentelemetry.util.genai import (
     evaluators as _genai_evaluators,  # noqa: F401
 )
+from opentelemetry.util.genai.emission.emitters_content_events import (
+    ContentEventsEmitter,
+)
+from opentelemetry.util.genai.emission.emitters_metrics import MetricsEmitter
+from opentelemetry.util.genai.emission_composite import CompositeGenerator
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE,
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE,
@@ -73,12 +78,6 @@ from opentelemetry.util.genai.evaluators.registry import (
     register_evaluator,
 )
 from opentelemetry.util.genai.generators import SpanGenerator
-from opentelemetry.util.genai.generators.span_metric_event_generator import (
-    SpanMetricEventGenerator,
-)
-from opentelemetry.util.genai.generators.span_metric_generator import (
-    SpanMetricGenerator,
-)
 from opentelemetry.util.genai.types import (
     ContentCapturingMode,
     Error,
@@ -147,21 +146,30 @@ class TelemetryHandler:
         except Exception:
             capture_content = False
         if gen_choice == "span_metric_event":
-            self._generator = SpanMetricEventGenerator(
+            # Phase 2: compose span + metrics + content events
+            span_emitter = SpanGenerator(
                 tracer=self._tracer,
-                capture_content=capture_content,
-                meter=meter,
+                capture_content=False,  # event flavor keeps span lean
             )
+            metrics_emitter = MetricsEmitter(meter=meter)
+            content_emitter = ContentEventsEmitter(
+                capture_content=capture_content
+            )
+            emitters = [span_emitter, metrics_emitter, content_emitter]
         elif gen_choice == "span_metric":
-            self._generator = SpanMetricGenerator(
-                tracer=self._tracer,
-                capture_content=capture_content,
-                meter=meter,
-            )
-        else:  # default fallback spans only
-            self._generator = SpanGenerator(
+            # Compose span + metrics (legacy class retained for direct import tests)
+            span_emitter = SpanGenerator(
                 tracer=self._tracer, capture_content=capture_content
             )
+            metrics_emitter = MetricsEmitter(meter=meter)
+            emitters = [span_emitter, metrics_emitter]
+        else:  # default fallback spans only
+            span_emitter = SpanGenerator(
+                tracer=self._tracer, capture_content=capture_content
+            )
+            emitters = [span_emitter]
+        # Phase 1: wrap in composite (single element) to prepare for multi-emitter
+        self._generator = CompositeGenerator(emitters)
 
     def _refresh_capture_content(
         self,
@@ -169,18 +177,35 @@ class TelemetryHandler:
         try:
             mode = get_content_capturing_mode()
             if self._generator_kind == "span_metric_event":
-                new_value = mode in (
+                # For event flavor: NEVER put messages on span, only control event emission
+                new_value_events = mode in (
                     ContentCapturingMode.EVENT_ONLY,
                     ContentCapturingMode.SPAN_AND_EVENT,
                 )
+                emitters = getattr(self._generator, "_generators", [])  # type: ignore[attr-defined]
+                for em in emitters:
+                    if getattr(
+                        em, "role", None
+                    ) == "content_event" and hasattr(em, "_capture_content"):
+                        try:
+                            em._capture_content = new_value_events  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                return  # do not touch span emitter capture flag
             else:
                 new_value = mode in (
                     ContentCapturingMode.SPAN_ONLY,
                     ContentCapturingMode.SPAN_AND_EVENT,
                 )
-            # Generators use _capture_content attribute; ignore if absent
-            if hasattr(self._generator, "_capture_content"):
-                self._generator._capture_content = new_value  # type: ignore[attr-defined]
+                # Generators use _capture_content attribute; ignore if absent
+                if hasattr(self._generator, "_capture_content"):
+                    try:
+                        if hasattr(self._generator, "set_capture_content"):
+                            self._generator.set_capture_content(new_value)  # type: ignore[call-arg]
+                        else:
+                            self._generator._capture_content = new_value  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
         except Exception:
             pass
 
