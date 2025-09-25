@@ -289,3 +289,28 @@ class TestTelemetryHandler(unittest.TestCase):
             == BoomError.__qualname__
         )
         assert invocation.end_time is not None
+
+    @patch.dict(os.environ, {"OTEL_GENAI_USE_CUSTOM_GENERATOR": "1"})
+    def test_custom_generator_swapping(self):
+        # Reset handler singleton to ensure env var is respected
+        if hasattr(get_telemetry_handler, "_default_handler"):
+            delattr(get_telemetry_handler, "_default_handler")
+        handler = get_telemetry_handler()
+        message = InputMessage(role="Human", parts=[Text(content="test swap")])
+        invocation = LLMInvocation(
+            request_model="swap-model",
+            input_messages=[message],
+            provider="swap-provider",
+        )
+        handler.start_llm(invocation)
+        handler.stop_llm(invocation)
+        spans = self.span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        attrs = span.attributes
+        # The custom generator should add these attributes
+        assert attrs.get("custom.attribute") == "custom_value"
+        assert attrs.get("custom.flag") is True
+        # Clean up handler singleton for isolation
+        if hasattr(get_telemetry_handler, "_default_handler"):
+            delattr(get_telemetry_handler, "_default_handler")

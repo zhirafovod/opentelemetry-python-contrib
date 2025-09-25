@@ -8,7 +8,7 @@ from opentelemetry.util.genai.generators.semconv_generator import (
 
 
 class CustomSemConvGenerator(SemConvGenerator):
-    def _on_after_stop(self, data):
+    def _on_before_stop(self, data):
         # Add arbitrary attributes to the span after stop
         if hasattr(data, "span") and data.span is not None:
             data.span.set_attribute("custom.attribute", "custom_value")
