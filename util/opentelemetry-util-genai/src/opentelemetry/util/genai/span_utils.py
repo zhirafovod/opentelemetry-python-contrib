@@ -17,7 +17,7 @@ from dataclasses import asdict
 from typing import Any, Dict, List
 
 from opentelemetry.semconv._incubating.attributes import (
-    gen_ai_attributes as GenAI,
+    gen_ai_attributes,
 )
 from opentelemetry.semconv.attributes import (
     error_attributes as ErrorAttributes,
@@ -49,38 +49,46 @@ def _apply_common_span_attributes(
     request_model = invocation.request_model
     provider = invocation.provider
     span.update_name(
-        f"{GenAI.GenAiOperationNameValues.CHAT.value} {request_model}"
+        f"{gen_ai_attributes.GenAiOperationNameValues.CHAT.value} {request_model}"
     )
     span.set_attribute(
-        GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.CHAT.value
+        gen_ai_attributes.GEN_AI_OPERATION_NAME,
+        gen_ai_attributes.GenAiOperationNameValues.CHAT.value,
     )
     if request_model:
-        span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
+        span.set_attribute(
+            gen_ai_attributes.GEN_AI_REQUEST_MODEL, request_model
+        )
     if provider is not None:
         # TODO: clean provider name to match GenAiProviderNameValues?
-        span.set_attribute(GenAI.GEN_AI_PROVIDER_NAME, provider)
+        span.set_attribute(gen_ai_attributes.GEN_AI_PROVIDER_NAME, provider)
 
     finish_reasons: List[str] = []
     for gen in invocation.output_messages:
         finish_reasons.append(gen.finish_reason)
     if finish_reasons:
         span.set_attribute(
-            GenAI.GEN_AI_RESPONSE_FINISH_REASONS, finish_reasons
+            gen_ai_attributes.GEN_AI_RESPONSE_FINISH_REASONS, finish_reasons
         )
 
     if invocation.response_model_name is not None:
         span.set_attribute(
-            GenAI.GEN_AI_RESPONSE_MODEL, invocation.response_model_name
+            gen_ai_attributes.GEN_AI_RESPONSE_MODEL,
+            invocation.response_model_name,
         )
     if invocation.response_id is not None:
-        span.set_attribute(GenAI.GEN_AI_RESPONSE_ID, invocation.response_id)
+        span.set_attribute(
+            gen_ai_attributes.GEN_AI_RESPONSE_ID, invocation.response_id
+        )
     if isinstance(invocation.input_tokens, (int, float)):
         span.set_attribute(
-            GenAI.GEN_AI_USAGE_INPUT_TOKENS, invocation.input_tokens
+            gen_ai_attributes.GEN_AI_USAGE_INPUT_TOKENS,
+            invocation.input_tokens,
         )
     if isinstance(invocation.output_tokens, (int, float)):
         span.set_attribute(
-            GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, invocation.output_tokens
+            gen_ai_attributes.GEN_AI_USAGE_OUTPUT_TOKENS,
+            invocation.output_tokens,
         )
 
 
@@ -96,12 +104,12 @@ def _maybe_set_span_messages(
         return
     if input_messages:
         span.set_attribute(
-            GenAI.GEN_AI_INPUT_MESSAGES,
+            gen_ai_attributes.GEN_AI_INPUT_MESSAGES,
             json.dumps([asdict(message) for message in input_messages]),
         )
     if output_messages:
         span.set_attribute(
-            GenAI.GEN_AI_OUTPUT_MESSAGES,
+            gen_ai_attributes.GEN_AI_OUTPUT_MESSAGES,
             json.dumps([asdict(message) for message in output_messages]),
         )
 
