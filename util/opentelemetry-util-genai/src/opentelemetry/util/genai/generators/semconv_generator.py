@@ -11,6 +11,9 @@ should be implemented in subclasses or future versions.
 from typing import Any
 
 from opentelemetry import context as otel_context
+from opentelemetry.instrumentation._semconv import (
+    _OpenTelemetrySemanticConventionStability,
+)
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes,
 )
@@ -40,6 +43,9 @@ class SemConvGenerator(BaseGenerator):
     """
 
     def __init__(self, tracer_provider: Any = None):
+        super().__init__()
+        # Ensure semantic conventions are initialized
+        _OpenTelemetrySemanticConventionStability._initialize()
         schema_url = Schemas.V1_36_0.value
         self._tracer = get_tracer(
             __name__,
@@ -184,10 +190,10 @@ class SemConvGenerator(BaseGenerator):
             ):
                 for k, v in data.attributes.items():
                     span.set_attribute(k, v)
-            span.set_status(Status(StatusCode.ERROR, error.message))
+            span.set_status(Status(StatusCode.ERROR, str(error)))
             if span.is_recording():
                 span.set_attribute(
-                    error_attributes.ERROR_TYPE, error.type.__qualname__
+                    error_attributes.ERROR_TYPE, type(error).__qualname__
                 )
             if isinstance(data, LLMInvocation):
                 self._set_llm_attributes(span, data)
