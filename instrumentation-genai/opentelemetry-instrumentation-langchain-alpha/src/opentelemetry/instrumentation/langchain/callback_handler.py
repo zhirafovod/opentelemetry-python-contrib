@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import logging
-from typing import List, Optional, Union, Any, Dict
+from threading import Lock
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -22,35 +23,76 @@ from langchain_core.outputs import LLMResult
 
 from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.utils import dont_throw
-from .utils import get_property_value
-from opentelemetry.genai.sdk.data import (
-    Message,
-    ChatGeneration,
-    Error,
-    ToolOutput, ToolFunction, ToolFunctionCall
+from opentelemetry.util.genai.handler import (
+    get_telemetry_handler as _get_util_handler,
 )
-from .utils import should_enable_evaluation
-from opentelemetry.genai.sdk.api import TelemetryClient
-from opentelemetry.genai.sdk.evals import Evaluator
-from opentelemetry.genai.sdk.types import LLMInvocation
+from opentelemetry.util.genai.types import (
+    Error as UtilError,
+)
+from opentelemetry.util.genai.types import (
+    InputMessage as UtilInputMessage,
+)
+from opentelemetry.util.genai.types import (
+    LLMInvocation as UtilLLMInvocation,
+)
+from opentelemetry.util.genai.types import (
+    OutputMessage as UtilOutputMessage,
+)
+from opentelemetry.util.genai.types import (
+    Text as UtilText,
+)
+
+from .utils import get_property_value
 
 logger = logging.getLogger(__name__)
 
 
 class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
-    """
-    A callback handler for LangChain that uses OpenTelemetry to create spans
-    for chains, LLM calls, and tools.
-    """
+    """LangChain callback handler using opentelemetry-util-genai only (legacy genai-sdk removed)."""
 
-    def __init__(
-        self,
-        telemetry_client: TelemetryClient,
-        evaluation_client: Evaluator,
-    ) -> None:
+    def __init__(self):
         super().__init__()
-        self._telemetry_client = telemetry_client
-        self._evaluation_client = evaluation_client
+        self._telemetry_handler = _get_util_handler()
+        self._invocations: dict[UUID, UtilLLMInvocation] = {}
+        self._lock = Lock()
+
+    def _build_input_messages(
+        self, messages: List[List[BaseMessage]]
+    ) -> list[UtilInputMessage]:
+        result: list[UtilInputMessage] = []
+        for sub in messages:
+            for m in sub:
+                role = (
+                    getattr(m, "type", None)
+                    or m.__class__.__name__.replace("Message", "").lower()
+                )
+                content = get_property_value(m, "content")
+                result.append(
+                    UtilInputMessage(
+                        role=role, parts=[UtilText(content=str(content))]
+                    )
+                )
+        return result
+
+    def _add_tool_definition_attrs(self, invocation_params: dict, attrs: dict):
+        tools = invocation_params.get("tools") if invocation_params else None
+        if not tools:
+            return
+        for idx, tool in enumerate(tools):
+            fn = tool.get("function") if isinstance(tool, dict) else None
+            if not fn:
+                continue
+            name = fn.get("name")
+            desc = fn.get("description")
+            params = fn.get("parameters")
+            if name:
+                attrs[f"gen_ai.request.function.{idx}.name"] = name
+            if desc:
+                attrs[f"gen_ai.request.function.{idx}.description"] = desc
+            if params is not None:
+                attrs[f"gen_ai.request.function.{idx}.parameters"] = str(
+                    params
+                )
 
     @dont_throw
     def on_chat_model_start(
@@ -66,91 +108,41 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
     ):
         if Config.is_instrumentation_suppressed():
             return
-
-        system = serialized.get("name", kwargs.get("name", "ChatLLM"))
-        invocation_params =  kwargs.get("invocation_params", {})
-
-        attributes = {
-            "system": system,
-            # TODO: add below to opentelemetry.semconv._incubating.attributes.gen_ai_attributes
-            "framework": "langchain",
-        }
-
-        if invocation_params:
-            request_model = invocation_params.get("model_name")
-            if request_model:
-                attributes.update({"request_model": request_model})
-            top_p = invocation_params.get("top_p")
-            if top_p:
-                attributes.update({"request_top_p": top_p})
-            frequency_penalty = invocation_params.get("frequency_penalty")
-            if frequency_penalty:
-                attributes.update({"request_frequency_penalty": frequency_penalty})
-            presence_penalty = invocation_params.get("presence_penalty")
-            if presence_penalty:
-                attributes.update({"request_presence_penalty": presence_penalty})
-            stop_sequences = invocation_params.get("stop")
-            if stop_sequences:
-                attributes.update({"request_stop_sequences": stop_sequences})
-            seed = invocation_params.get("seed")
-            if seed:
-                attributes.update({"request_seed": seed})
-
+        invocation_params = kwargs.get("invocation_params") or {}
+        request_model = (
+            invocation_params.get("model_name")
+            or serialized.get("name")
+            or "unknown-model"
+        )
+        provider_name = (metadata or {}).get("ls_provider")
+        attrs: dict[str, Any] = {"framework": "langchain"}
+        # copy selected params
+        for key in (
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "stop",
+            "seed",
+        ):
+            if key in invocation_params and invocation_params[key] is not None:
+                attrs[f"request_{key}"] = invocation_params[key]
         if metadata:
-            max_tokens = metadata.get("ls_max_tokens")
-            if max_tokens:
-                attributes.update({"request_max_tokens": max_tokens})
-            provider_name = metadata.get("ls_provider")
-            if provider_name:
-                # TODO: add to semantic conventions
-                attributes.update({"provider_name": provider_name})
-            temperature = metadata.get("ls_temperature")
-            if temperature:
-                attributes.update({"request_temperature": temperature})
-
-        # invoked during first invoke to llm with tool start --
-        tool_functions: List[ToolFunction] = []
-        tools = kwargs.get("invocation_params").get("tools") if kwargs.get("invocation_params") else None
-        if tools is not None:
-            for index, tool in enumerate(tools):
-                function = tool.get("function")
-                if function is not None:
-                    tool_function = ToolFunction(
-                        name=function.get("name"),
-                        description=function.get("description"),
-                        parameters=str(function.get("parameters"))
-                    )
-                    tool_functions.append(tool_function)
-        # tool end --
-
-
-        prompts: list[Message] = []
-        for sub_messages in messages:
-            for message in sub_messages:
-                # llm invoked with  all messages tool support start --
-                additional_kwargs = get_property_value(message, "additional_kwargs")
-                tool_calls = get_property_value(additional_kwargs, "tool_calls")
-                tool_function_calls = []
-                for tool_call in tool_calls or []:
-                    tool_function_call = ToolFunctionCall(
-                        id=tool_call.get("id"),
-                        name=tool_call.get("function").get("name"),
-                        arguments=str(tool_call.get("function").get("arguments")),
-                        type=tool_call.get("type"),
-                    )
-                    tool_function_calls.append(tool_function_call)
-                # tool support end --
-                prompt = Message(
-                    name=get_property_value(message, "name"),
-                    content=get_property_value(message, "content"),
-                    type=get_property_value(message, "type"),
-                    tool_call_id=get_property_value(message, "tool_call_id"),
-                    tool_function_calls=tool_function_calls,
-                )
-                prompts.append(prompt)
-
-        # Invoke genai-sdk api
-        self._telemetry_client.start_llm(prompts, tool_functions, run_id, parent_run_id, **attributes)
+            if metadata.get("ls_max_tokens") is not None:
+                attrs["request_max_tokens"] = metadata.get("ls_max_tokens")
+            if metadata.get("ls_temperature") is not None:
+                attrs["request_temperature"] = metadata.get("ls_temperature")
+        self._add_tool_definition_attrs(invocation_params, attrs)
+        input_messages = self._build_input_messages(messages)
+        inv = UtilLLMInvocation(
+            request_model=request_model,
+            provider=provider_name,
+            input_messages=input_messages,
+            attributes=attrs,
+        )
+        # no need for messages/chat_generations fields; generator uses input_messages and output_messages
+        self._telemetry_handler.start_llm(inv)
+        with self._lock:
+            self._invocations[run_id] = inv
 
     @dont_throw
     def on_llm_end(
@@ -163,116 +155,47 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
     ):
         if Config.is_instrumentation_suppressed():
             return
-
-        chat_generations: list[ChatGeneration] = []
-        tool_function_calls: list[ToolFunctionCall] = []
-        for generation in getattr(response, "generations", []):
-            for chat_generation in generation:
-                # llm creates tool calls during first llm invoke tool support start --
-                tool_calls = chat_generation.message.additional_kwargs.get("tool_calls")
-                for tool_call in tool_calls or []:
-                    tool_function_call = ToolFunctionCall(
-                        id=tool_call.get("id"),
-                        name=tool_call.get("function").get("name"),
-                        arguments=tool_call.get("function").get("arguments"),
-                        type=tool_call.get("type"),
-                    )
-                    tool_function_calls.append(tool_function_call)
-                # tool support end --
-                if chat_generation.generation_info is not None:
-                    finish_reason = chat_generation.generation_info.get("finish_reason")
-                    content = get_property_value(chat_generation.message, "content")
-                    chat = ChatGeneration(
-                        content=content,
-                        type=chat_generation.type,
-                        finish_reason=finish_reason,
-                        tool_function_calls=tool_function_calls,
-                    )
-                    chat_generations.append(chat)
-
-        response_model = response_id = None
-        llm_output = response.llm_output
-        if llm_output is not None:
-            response_model = llm_output.get("model_name") or llm_output.get("model")
-            response_id = llm_output.get("id")
-
-        input_tokens = output_tokens = None
-        usage = response.llm_output.get("usage") or response.llm_output.get("token_usage")
-        if usage:
-            input_tokens = usage.get("prompt_tokens", 0)
-            output_tokens = usage.get("completion_tokens", 0)
-
-        attributes = {
-            "response_model_name": response_model,
-            "response_id": response_id,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-        }
-
-        # Invoke genai-sdk api
-        invocation: LLMInvocation =  self._telemetry_client.stop_llm(run_id=run_id, chat_generations=chat_generations, **attributes)
-
-        # generates evaluation child spans.
-        # pass only required attributes to evaluation client
-        if should_enable_evaluation():
-            #import asyncio
-            #asyncio.create_task(self._evaluation_client.evaluate(invocation))
-        # self._evaluation_client.evaluate(invocation)
-            # Configurable sampling rate via environment variable
-            import os
-            import random
-            sampling_rate = int(os.environ.get("OTEL_GENAI_EVALUATION_SAMPLING_RATE", "1"))
-            print(f"Sampling rate: {sampling_rate}")
-            if random.randint(1, sampling_rate) == 1:
-                try:
-                    self._evaluation_client.evaluate(invocation)
-                except Exception as e:
-                    print(f"Evaluation failed: {e}")
-                    # Continue execution even if evaluation fails
-
-
-    @dont_throw
-    def on_tool_start(
-        self,
-        serialized: dict,
-        input_str: str,
-        *,
-        run_id: UUID,
-        parent_run_id: Optional[UUID] = None,
-        tags: Optional[list[str]] = None,
-        metadata: Optional[dict[str, Any]] = None,
-        **kwargs,
-    ):
-        if Config.is_instrumentation_suppressed():
+        with self._lock:
+            inv = self._invocations.pop(run_id, None)
+        if not inv:
             return
-
-        tool_name = serialized.get("name") or kwargs.get("name") or "execute_tool"
-        attributes = {
-            "tool_name": tool_name,
-            "description": serialized.get("description"),
-        }
-
-        # Invoke genai-sdk api
-        self._telemetry_client.start_tool(run_id=run_id, input_str=input_str, **attributes)
-
-    @dont_throw
-    def on_tool_end(
-        self,
-        output: Any,
-        *,
-        run_id: UUID,
-        parent_run_id: Optional[UUID] = None,
-        **kwargs,
-    ):
-        if Config.is_instrumentation_suppressed():
-            return
-
-        output = ToolOutput(
-            content=get_property_value(output, "content"),
-            tool_call_id=get_property_value(output, "tool_call_id"),
+        generations = getattr(response, "generations", [])
+        content_text = None
+        finish_reason = "stop"
+        if generations:
+            first_list = generations[0]
+            if first_list:
+                first = first_list[0]
+                content_text = get_property_value(first.message, "content")
+                if getattr(first, "generation_info", None):
+                    finish_reason = first.generation_info.get(
+                        "finish_reason", finish_reason
+                    )
+        if content_text is not None:
+            inv.output_messages = [
+                UtilOutputMessage(
+                    role="assistant",
+                    parts=[UtilText(content=str(content_text))],
+                    finish_reason=finish_reason,
+                )
+            ]
+        # no additional assignments needed; generator uses output_messages
+        llm_output = getattr(response, "llm_output", None) or {}
+        response_model = llm_output.get("model_name") or llm_output.get(
+            "model"
         )
-        # Invoke genai-sdk api
-        self._telemetry_client.stop_tool(run_id=run_id, output=output)
+        response_id = llm_output.get("id")
+        usage = llm_output.get("usage") or llm_output.get("token_usage") or {}
+        inv.response_model_name = response_model
+        inv.response_id = response_id
+        if usage:
+            inv.input_tokens = usage.get("prompt_tokens")
+            inv.output_tokens = usage.get("completion_tokens")
+        self._telemetry_handler.stop_llm(inv)
+        try:
+            self._telemetry_handler.evaluate_llm(inv)
+        except Exception:  # pragma: no cover
+            pass
 
     @dont_throw
     def on_llm_error(
@@ -285,21 +208,23 @@ class OpenTelemetryLangChainCallbackHandler(BaseCallbackHandler):
     ):
         if Config.is_instrumentation_suppressed():
             return
+        with self._lock:
+            inv = self._invocations.pop(run_id, None)
+        if not inv:
+            return
+        self._telemetry_handler.fail_llm(
+            inv, UtilError(message=str(error), type=type(error))
+        )
 
-        llm_error = Error(message=str(error), type=type(error))
-        self._telemetry_client.fail_llm(run_id=run_id, error=llm_error, **kwargs)
+    # Tool callbacks currently no-op (tool definitions captured on start)
+    @dont_throw
+    def on_tool_start(self, *args, **kwargs):
+        return
 
     @dont_throw
-    def on_tool_error(
-        self,
-        error: BaseException,
-        *,
-        run_id: UUID,
-        parent_run_id: Optional[UUID] = None,
-        **kwargs,
-    ):
-        if Config.is_instrumentation_suppressed():
-            return
+    def on_tool_end(self, *args, **kwargs):
+        return
 
-        tool_error = Error(message=str(error), type=type(error))
-        self._telemetry_client.fail_tool(run_id=run_id, error=tool_error, **kwargs)
+    @dont_throw
+    def on_tool_error(self, *args, **kwargs):
+        return

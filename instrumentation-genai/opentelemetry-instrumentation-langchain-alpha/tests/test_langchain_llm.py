@@ -3,8 +3,10 @@
 This module contains tests that verify the integration between LangChain LLM calls
 and OpenTelemetry for observability, including spans, logs, and metrics.
 """
+
 # Standard library imports
-import json,os
+import json
+import os
 from typing import Any, Dict, List, Optional
 
 # Third-party imports
@@ -16,11 +18,14 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+
 from opentelemetry.sdk.metrics.export import Metric
 from opentelemetry.sdk.trace import ReadableSpan, Span
-from opentelemetry.semconv._incubating.attributes import event_attributes as EventAttributes
-from opentelemetry.semconv._incubating.metrics import gen_ai_metrics
+from opentelemetry.semconv._incubating.attributes import (
+    event_attributes as EventAttributes,
+)
 from opentelemetry.semconv._incubating.attributes import gen_ai_attributes
+from opentelemetry.semconv._incubating.metrics import gen_ai_metrics
 
 # Constants
 CHAT = gen_ai_attributes.GenAiOperationNameValues.CHAT.value
@@ -39,7 +44,6 @@ def assert_openai_completion_attributes(
     operation_name: str = "chat",
 ) -> None:
     """Verify OpenAI completion attributes in a span.
-    
     Args:
         span: The span to check
         request_model: Expected request model name
@@ -67,7 +71,10 @@ def assert_all_openai_attributes(
 ):
     assert span.name == span_name
 
-    assert operation_name == span.attributes[gen_ai_attributes.GEN_AI_OPERATION_NAME]
+    assert (
+        operation_name
+        == span.attributes[gen_ai_attributes.GEN_AI_OPERATION_NAME]
+    )
 
     assert request_model == "gpt-4o-mini"
 
@@ -81,7 +88,9 @@ def assert_all_openai_attributes(
             == span.attributes[gen_ai_attributes.GEN_AI_USAGE_INPUT_TOKENS]
         )
     else:
-        assert gen_ai_attributes.GEN_AI_USAGE_INPUT_TOKENS not in span.attributes
+        assert (
+            gen_ai_attributes.GEN_AI_USAGE_INPUT_TOKENS not in span.attributes
+        )
 
     if output_tokens:
         assert (
@@ -97,7 +106,6 @@ def _assert_tool_request_functions_on_span(
     span: Span, expected_tool_names: List[str]
 ) -> None:
     """Verify tool request functions in span attributes.
-    
     Args:
         span: The span to check
         expected_tool_names: List of expected tool names
@@ -108,8 +116,8 @@ def _assert_tool_request_functions_on_span(
         assert f"gen_ai.request.function.{i}.parameters" in span.attributes
 
 
-
 # Log Assertion Helpers
+
 
 def assert_message_in_logs(
     log: Any,
@@ -118,7 +126,6 @@ def assert_message_in_logs(
     parent_span: Span,
 ) -> None:
     """Verify a log message has the expected content and parent span.
-    
     Args:
         log: The log record to check
         event_name: Expected event name
@@ -127,7 +134,7 @@ def assert_message_in_logs(
     """
     assert log.log_record.attributes[EventAttributes.EVENT_NAME] == event_name
     # assert (
-        # TODO: use constant from GenAIAttributes.GenAiSystemValues after it is added there
+    # TODO: use constant from GenAIAttributes.GenAiSystemValues after it is added there
     #         log.log_record.attributes[gen_ai_attributes.GEN_AI_SYSTEM]
     #         == "langchain"
     # )
@@ -149,7 +156,9 @@ def assert_log_parent(log, span):
             log.log_record.trace_flags == span.get_span_context().trace_flags
         )
 
+
 # Metric Assertion Helpers
+
 
 def remove_none_values(body):
     result = {}
@@ -164,9 +173,10 @@ def remove_none_values(body):
             result[key] = value
     return result
 
+
 def assert_duration_metric(metric: Metric, parent_span: Span) -> None:
     """Verify duration metric has expected structure and values.
-    
+
     Args:
         metric: The metric to verify
         parent_span: Parent span for context verification
@@ -175,8 +185,15 @@ def assert_duration_metric(metric: Metric, parent_span: Span) -> None:
     assert len(metric.data.data_points) >= 1
     assert metric.data.data_points[0].sum > 0
 
-    assert_duration_metric_attributes(metric.data.data_points[0].attributes, parent_span)
-    assert_exemplars(metric.data.data_points[0].exemplars, metric.data.data_points[0].sum, parent_span)
+    assert_duration_metric_attributes(
+        metric.data.data_points[0].attributes, parent_span
+    )
+    assert_exemplars(
+        metric.data.data_points[0].exemplars,
+        metric.data.data_points[0].sum,
+        parent_span,
+    )
+
 
 def assert_exemplars(exemplars, sum, parent_span):
     assert len(exemplars) >= 1
@@ -184,9 +201,10 @@ def assert_exemplars(exemplars, sum, parent_span):
     assert exemplars[0].span_id == parent_span.get_span_context().span_id
     assert exemplars[0].trace_id == parent_span.get_span_context().trace_id
 
+
 def assert_token_usage_metric(metric: Metric, parent_span: Span) -> None:
     """Verify token usage metric has expected structure and values.
-    
+
     Args:
         metric: The metric to verify
         parent_span: Parent span for context verification
@@ -195,64 +213,88 @@ def assert_token_usage_metric(metric: Metric, parent_span: Span) -> None:
     assert len(metric.data.data_points) == 2
 
     assert metric.data.data_points[0].sum > 0
-    assert_token_usage_metric_attributes(metric.data.data_points[0].attributes, parent_span)
-    assert_exemplars(metric.data.data_points[0].exemplars, metric.data.data_points[0].sum, parent_span)
+    assert_token_usage_metric_attributes(
+        metric.data.data_points[0].attributes, parent_span
+    )
+    assert_exemplars(
+        metric.data.data_points[0].exemplars,
+        metric.data.data_points[0].sum,
+        parent_span,
+    )
 
     assert metric.data.data_points[1].sum > 0
-    assert_token_usage_metric_attributes(metric.data.data_points[1].attributes, parent_span)
-    assert_exemplars(metric.data.data_points[1].exemplars, metric.data.data_points[1].sum, parent_span)
+    assert_token_usage_metric_attributes(
+        metric.data.data_points[1].attributes, parent_span
+    )
+    assert_exemplars(
+        metric.data.data_points[1].exemplars,
+        metric.data.data_points[1].sum,
+        parent_span,
+    )
 
 
-def assert_duration_metric_attributes(attributes: Dict[str, Any], parent_span: Span) -> None:
+def assert_duration_metric_attributes(
+    attributes: Dict[str, Any], parent_span: Span
+) -> None:
     """Verify duration metric attributes.
-    
+
     Args:
         attributes: Metric attributes to verify
         parent_span: Parent span for context verification
     """
     assert len(attributes) == 5
     # assert attributes.get(gen_ai_attributes.GEN_AI_SYSTEM) == "langchain"
-    assert attributes.get(
-        gen_ai_attributes.GEN_AI_OPERATION_NAME) == gen_ai_attributes.GenAiOperationNameValues.CHAT.value
-    assert attributes.get(gen_ai_attributes.GEN_AI_REQUEST_MODEL) == parent_span.attributes[
-        gen_ai_attributes.GEN_AI_REQUEST_MODEL
-    ]
-    assert attributes.get(gen_ai_attributes.GEN_AI_RESPONSE_MODEL) == parent_span.attributes[
-        gen_ai_attributes.GEN_AI_RESPONSE_MODEL
-    ]
+    assert (
+        attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME)
+        == gen_ai_attributes.GenAiOperationNameValues.CHAT.value
+    )
+    assert (
+        attributes.get(gen_ai_attributes.GEN_AI_REQUEST_MODEL)
+        == parent_span.attributes[gen_ai_attributes.GEN_AI_REQUEST_MODEL]
+    )
+    assert (
+        attributes.get(gen_ai_attributes.GEN_AI_RESPONSE_MODEL)
+        == parent_span.attributes[gen_ai_attributes.GEN_AI_RESPONSE_MODEL]
+    )
 
 
 def assert_token_usage_metric_attributes(
     attributes: Dict[str, Any], parent_span: Span
 ) -> None:
     """Verify token usage metric attributes.
-    
     Args:
         attributes: Metric attributes to verify
         parent_span: Parent span for context verification
     """
     assert len(attributes) == 6
     # assert attributes.get(gen_ai_attributes.GEN_AI_SYSTEM) == "langchain"
-    assert attributes.get(
-        gen_ai_attributes.GEN_AI_OPERATION_NAME) == gen_ai_attributes.GenAiOperationNameValues.CHAT.value
-    assert attributes.get(gen_ai_attributes.GEN_AI_REQUEST_MODEL) == parent_span.attributes[
-        gen_ai_attributes.GEN_AI_REQUEST_MODEL
-    ]
-    assert attributes.get(gen_ai_attributes.GEN_AI_RESPONSE_MODEL) == parent_span.attributes[
-        gen_ai_attributes.GEN_AI_RESPONSE_MODEL
-    ]
+    assert (
+        attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME)
+        == gen_ai_attributes.GenAiOperationNameValues.CHAT.value
+    )
+    assert (
+        attributes.get(gen_ai_attributes.GEN_AI_REQUEST_MODEL)
+        == parent_span.attributes[gen_ai_attributes.GEN_AI_REQUEST_MODEL]
+    )
+    assert (
+        attributes.get(gen_ai_attributes.GEN_AI_RESPONSE_MODEL)
+        == parent_span.attributes[gen_ai_attributes.GEN_AI_RESPONSE_MODEL]
+    )
 
 
-def assert_duration_metric_with_tool(metric: Metric, spans: List[Span]) -> None:
+def assert_duration_metric_with_tool(
+    metric: Metric, spans: List[Span]
+) -> None:
     """Verify duration metric when tools are involved.
-    
+
     Args:
         metric: The metric to verify
         spans: List of spans for context verification
     """
     assert spans, "No LLM CHAT spans found"
     llm_points = [
-        dp for dp in metric.data.data_points
+        dp
+        for dp in metric.data.data_points
         if dp.attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME) == CHAT
     ]
     assert len(llm_points) >= 1
@@ -261,23 +303,27 @@ def assert_duration_metric_with_tool(metric: Metric, spans: List[Span]) -> None:
         assert_duration_metric_attributes(dp.attributes, spans[0])
 
 
-def assert_token_usage_metric_with_tool(metric: Metric, spans: List[Span]) -> None:
+def assert_token_usage_metric_with_tool(
+    metric: Metric, spans: List[Span]
+) -> None:
     """Verify token usage metric when tools are involved.
-    
+
     Args:
         metric: The metric to verify
         spans: List of spans for context verification
     """
     assert spans, "No LLM CHAT spans found"
     llm_points = [
-        dp for dp in metric.data.data_points
+        dp
+        for dp in metric.data.data_points
         if dp.attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME) == CHAT
     ]
-    assert len(llm_points) >= 2  # Should have both input and output token metrics
+    assert (
+        len(llm_points) >= 2
+    )  # Should have both input and output token metrics
     for dp in llm_points:
         assert dp.sum > 0
         assert_token_usage_metric_attributes(dp.attributes, spans[0])
-
 
 
 ###########################################
@@ -293,17 +339,19 @@ def assert_token_usage_metric_with_tool(metric: Metric, spans: List[Span]) -> No
 # Test Functions
 ###########################################
 
+
 def _get_llm_spans(spans: List[Span]) -> List[Span]:
     """Filter spans to get only LLM chat spans.
-    
+
     Args:
         spans: List of spans to filter
-        
+
     Returns:
         List of spans that are LLM chat operations
     """
     return [
-        s for s in spans
+        s
+        for s in spans
         if s.attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME) == CHAT
     ]
 
@@ -328,7 +376,6 @@ def test_langchain_call(
     monkeypatch,
 ) -> None:
     """Test basic LLM call with telemetry verification.
-    
     This test verifies that:
     1. The LLM call completes successfully
     2. Spans are generated with correct attributes
@@ -358,7 +405,6 @@ def test_langchain_call(
     assert response.content == "The capital of France is Paris."
 
     # --- Verify Telemetry ---
-    
     # 1. Check spans
     spans = span_exporter.get_finished_spans()
     assert spans, "No spans were exported"
@@ -384,10 +430,7 @@ def test_langchain_call(
     chat_generation_event = {
         "index": 0,
         "finish_reason": "stop",
-        "message": {
-            "content": response.content,
-            "type": "ChatGeneration"
-        }
+        "message": {"content": response.content, "type": "ChatGeneration"},
     }
     # assert_message_in_logs(logs[2], "gen_ai.choice", chat_generation_event, spans[0])
 
@@ -411,10 +454,10 @@ def test_langchain_call_with_tools(
     log_exporter,
     metric_reader,
     instrument_with_content: None,
-    monkeypatch
+    monkeypatch,
 ) -> None:
     """Test LLM call with tool usage and verify telemetry.
-    
+
     This test verifies:
     1. Tool definitions and bindings work correctly
     2. Tool execution and response handling
@@ -437,42 +480,49 @@ def test_langchain_call_with_tools(
     llm = ChatOpenAI(
         temperature=0.1,
         api_key=os.getenv("OPENAI_API_KEY"),
-        base_url='https://chat-ai.cisco.com/openai/deployments/gpt-4o-mini',
-        model='gpt-4o-mini',
+        base_url="https://chat-ai.cisco.com/openai/deployments/gpt-4o-mini",
+        model="gpt-4o-mini",
         default_headers={"api-key": os.getenv("OPENAI_API_KEY")},
         model_kwargs={"user": json.dumps({"appkey": os.getenv("APPKEY")})},
     )
-    
+
     tools = [add, multiply]
     llm_with_tools = llm.bind_tools(tools)
-    
+
     # Test conversation flow
     messages = [HumanMessage("Please add 2 and 3, then multiply 2 and 3.")]
-    
+
     # First LLM call - should return tool calls
     ai_msg = llm_with_tools.invoke(messages)
     messages.append(ai_msg)
-    
+
     # Process tool calls
-    tool_calls = getattr(ai_msg, "tool_calls", None) or \
-                ai_msg.additional_kwargs.get("tool_calls", [])
-    
+    tool_calls = getattr(
+        ai_msg, "tool_calls", None
+    ) or ai_msg.additional_kwargs.get("tool_calls", [])
+
     # Execute tools and collect results
     name_map = {"add": add, "multiply": multiply}
     for tc in tool_calls:
         fn = tc.get("function", {})
         tool_name = (fn.get("name") or tc.get("name") or "").lower()
         arg_str = fn.get("arguments")
-        args = json.loads(arg_str) if isinstance(arg_str, str) else (tc.get("args") or {})
-        
+        args = (
+            json.loads(arg_str)
+            if isinstance(arg_str, str)
+            else (tc.get("args") or {})
+        )
+
         selected_tool = name_map[tool_name]
         tool_output = selected_tool.invoke(args)
-        
-        messages.append(ToolMessage(
-            content=str(tool_output), 
-            name=tool_name,
-            tool_call_id=tc.get("id", "")
-        ))
+
+        messages.append(
+            ToolMessage(
+                content=str(tool_output),
+                name=tool_name,
+                tool_call_id=tc.get("id", ""),
+            )
+        )
 
     # Final LLM call with tool results
     final = llm_with_tools.invoke(messages)
@@ -488,7 +538,11 @@ def test_langchain_call_with_tools(
     logs = log_exporter.get_finished_logs()
     assert len(logs) >= 3  # system/user + gen_ai.choice
 
-    choice_logs = [l for l in logs if l.log_record.attributes.get("event.name") == "gen_ai.choice"]
+    choice_logs = [
+        l
+        for l in logs
+        if l.log_record.attributes.get("event.name") == "gen_ai.choice"
+    ]
     assert len(choice_logs) >= 1
     body = dict(choice_logs[0].log_record.body or {})
     assert "message" in body and isinstance(body["message"], dict)
@@ -507,15 +561,18 @@ def test_langchain_call_with_tools(
 
 
 # Tool-related Assertion Helpers
-def assert_duration_metric_with_tool(metric: Metric, spans: List[Span]) -> None:
+def assert_duration_metric_with_tool(
+    metric: Metric, spans: List[Span]
+) -> None:
     """Verify duration metric attributes when tools are involved.
-    
+
     Args:
         metric: The metric data points to verify
         spans: List of spans for context verification
     """
     llm_points = [
-        dp for dp in metric.data.data_points
+        dp
+        for dp in metric.data.data_points
         if dp.attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME) == CHAT
     ]
     assert len(llm_points) >= 1
@@ -525,9 +582,11 @@ def assert_duration_metric_with_tool(metric: Metric, spans: List[Span]) -> None:
             assert_exemplar_matches_any_llm_span(dp.exemplars, spans)
 
 
-def assert_token_usage_metric_with_tool(metric: Metric, spans: List[Span]) -> None:
+def assert_token_usage_metric_with_tool(
+    metric: Metric, spans: List[Span]
+) -> None:
     """Verify token usage metric when tools are involved.
-    
+
     Args:
         metric: The metric to verify
         spans: List of spans for context verification
@@ -536,16 +595,20 @@ def assert_token_usage_metric_with_tool(metric: Metric, spans: List[Span]) -> No
 
     # Only consider CHAT datapoints (ignore tool)
     llm_points = [
-        dp for dp in metric.data.data_points
+        dp
+        for dp in metric.data.data_points
         if dp.attributes.get(gen_ai_attributes.GEN_AI_OPERATION_NAME) == CHAT
     ]
     assert len(llm_points) >= 2
 
     for dp in llm_points:
         assert dp.sum > 0
-        assert_token_usage_metric_attributes(dp.attributes, spans[0])  # use attrs from any LLM span
+        assert_token_usage_metric_attributes(
+            dp.attributes, spans[0]
+        )  # use attrs from any LLM span
         if getattr(dp, "exemplars", None):
             assert_exemplar_matches_any_llm_span(dp.exemplars, spans)
+
 
 def assert_exemplar_matches_any_llm_span(exemplars, spans):
     assert exemplars and len(exemplars) >= 1
@@ -553,6 +616,8 @@ def assert_exemplar_matches_any_llm_span(exemplars, spans):
     by_id = {s.get_span_context().span_id: s for s in spans}
     for ex in exemplars:
         s = by_id.get(ex.span_id)
-        assert s is not None, f"exemplar.span_id not found among LLM spans: {ex.span_id}"
+        assert (
+            s is not None
+        ), f"exemplar.span_id not found among LLM spans: {ex.span_id}"
         # Optional: also ensure consistent trace
         assert ex.trace_id == s.get_span_context().trace_id

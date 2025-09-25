@@ -43,8 +43,15 @@ def _apply_common_span_attributes(
     operation_name = invocation.operation_name
     request_model = invocation.request_model
 
+    span.update_name(
+        f"{GenAI.GenAiOperationNameValues.CHAT.value} {request_model}"
+    )
+
     if operation_name:
-        span.set_attribute(GenAI.GEN_AI_OPERATION_NAME, operation_name)
+        span.set_attribute(
+            GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.CHAT.value
+        )
+
     if request_model:
         span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
 

@@ -27,6 +27,10 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
+from opentelemetry.semconv.attributes import (
+    error_attributes as ErrorAttributes,
+)
+from opentelemetry.trace.status import StatusCode
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
 )
@@ -132,19 +136,15 @@ class TestTelemetryHandler(unittest.TestCase):
             role="AI", parts=[Text(content="hello back")], finish_reason="stop"
         )
 
-        # Start and stop LLM invocation
-        invocation = LLMInvocation(
-            request_model="test-model",
-            input_messages=[message],
-            provider="test-provider",
-            attributes={"custom_attr": "value"},
-        )
-
-        self.telemetry_handler.start_llm(invocation)
-        assert invocation.span is not None
-        invocation.output_messages = [chat_generation]
-        invocation.attributes.update({"extra": "info"})
-        self.telemetry_handler.stop_llm(invocation)
+        # Start and stop LLM invocation using context manager
+        with self.telemetry_handler.llm() as invocation:
+            invocation.request_model = "test-model"
+            invocation.input_messages = [message]
+            invocation.provider = "test-provider"
+            invocation.attributes = {"custom_attr": "value"}
+            assert invocation.span is not None
+            invocation.output_messages = [chat_generation]
+            invocation.attributes.update({"extra": "info"})
 
         # Get the spans that were created
         spans = self.span_exporter.get_finished_spans()
@@ -190,33 +190,63 @@ class TestTelemetryHandler(unittest.TestCase):
         stability_mode="gen_ai_latest_experimental",
         content_capturing="SPAN_ONLY",
     )
+    def test_llm_manual_start_and_stop_creates_span(self):
+        message = InputMessage(role="Human", parts=[Text(content="hi")])
+        chat_generation = OutputMessage(
+            role="AI", parts=[Text(content="ok")], finish_reason="stop"
+        )
+
+        invocation = LLMInvocation(
+            request_model="manual-model",
+            input_messages=[message],
+            provider="test-provider",
+            attributes={"manual": True},
+        )
+
+        self.telemetry_handler.start_llm(invocation)
+        assert invocation.span is not None
+        invocation.output_messages = [chat_generation]
+        invocation.attributes.update({"extra_manual": "yes"})
+        self.telemetry_handler.stop_llm(invocation)
+
+        spans = self.span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "chat manual-model"
+        assert span.kind == trace.SpanKind.CLIENT
+        assert span.start_time is not None
+        assert span.end_time is not None
+        assert span.end_time > span.start_time
+
+        attrs = span.attributes
+        assert attrs is not None
+        assert attrs.get("manual") is True
+        assert attrs.get("extra_manual") == "yes"
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="SPAN_ONLY",
+    )
     def test_parent_child_span_relationship(self):
         message = InputMessage(role="Human", parts=[Text(content="hi")])
         chat_generation = OutputMessage(
             role="AI", parts=[Text(content="ok")], finish_reason="stop"
         )
 
-        # Start parent and child (child references parent_run_id)
-        parent_invocation = LLMInvocation(
-            request_model="parent-model",
-            input_messages=[message],
-            provider="test-provider",
-        )
-        child_invocation = LLMInvocation(
-            request_model="child-model",
-            input_messages=[message],
-            provider="test-provider",
-        )
-
-        # Pass invocation data to start_llm
-        self.telemetry_handler.start_llm(parent_invocation)
-        self.telemetry_handler.start_llm(child_invocation)
-
-        # Stop child first, then parent (order should not matter)
-        child_invocation.output_messages = [chat_generation]
-        parent_invocation.output_messages = [chat_generation]
-        self.telemetry_handler.stop_llm(child_invocation)
-        self.telemetry_handler.stop_llm(parent_invocation)
+        with self.telemetry_handler.llm() as parent_invocation:
+            parent_invocation.request_model = "parent-model"
+            parent_invocation.input_messages = [message]
+            parent_invocation.provider = "test-provider"
+            # Perform things here, calling a tool, processing, etc.
+            with self.telemetry_handler.llm() as child_invocation:
+                child_invocation.request_model = "child-model"
+                child_invocation.input_messages = [message]
+                child_invocation.provider = "test-provider"
+                # Perform things here, calling a tool, processing, etc.
+                # Stop child first by exiting inner context
+                child_invocation.output_messages = [chat_generation]
+            # Then stop parent by exiting outer context
+            parent_invocation.output_messages = [chat_generation]
 
         spans = self.span_exporter.get_finished_spans()
         assert len(spans) == 2
@@ -232,3 +262,32 @@ class TestTelemetryHandler(unittest.TestCase):
         assert child_span.parent.span_id == parent_span.context.span_id
         # Parent should not have a parent (root)
         assert parent_span.parent is None
+
+    def test_llm_context_manager_error_path_records_error_status_and_attrs(
+        self,
+    ):
+        class BoomError(RuntimeError):
+            pass
+
+        message = InputMessage(role="user", parts=[Text(content="hi")])
+        invocation = LLMInvocation(
+            request_model="test-model",
+            input_messages=[message],
+            provider="test-provider",
+        )
+
+        with self.assertRaises(BoomError):
+            with self.telemetry_handler.llm(invocation):
+                # Simulate user code that fails inside the invocation
+                raise BoomError("boom")
+
+        # One span should have been exported and should be in error state
+        spans = self.span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.status.status_code == StatusCode.ERROR
+        assert (
+            span.attributes.get(ErrorAttributes.ERROR_TYPE)
+            == BoomError.__qualname__
+        )
+        assert invocation.end_time is not None

@@ -13,29 +13,24 @@
 # limitations under the License.
 
 """
-Langchain instrumentation supporting `ChatOpenAI`, it can be enabled by
-using ``LangChainInstrumentor``.
-
-.. _langchain: https://pypi.org/project/langchain/
+Langchain instrumentation supporting `ChatOpenAI` and `ChatBedrock`, it can be enabled by
+using ``LangChainInstrumentor``. Other providers/LLMs may be supported in the future and telemetry for them is skipped for now.
 
 Usage
 -----
-
 .. code:: python
-
     from opentelemetry.instrumentation.langchain import LangChainInstrumentor
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
 
     LangChainInstrumentor().instrument()
-
-    llm = ChatOpenAI(model="gpt-3.5-turbo")
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, max_tokens=1000)
     messages = [
         SystemMessage(content="You are a helpful assistant!"),
         HumanMessage(content="What is the capital of France?"),
     ]
-
     result = llm.invoke(messages)
+    LangChainInstrumentor().uninstrument()
 
 API
 ---
@@ -57,6 +52,8 @@ from opentelemetry.instrumentation.langchain.embeddings_handler import (
 )
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.utils import unwrap
+from opentelemetry.semconv.schemas import Schemas
+from opentelemetry.trace import get_tracer
 
 from opentelemetry.util.genai.handler import (
     TelemetryHandler,
@@ -73,11 +70,8 @@ from opentelemetry.genai.sdk.evals import (
 class LangChainInstrumentor(BaseInstrumentor):
     """
     OpenTelemetry instrumentor for LangChain.
-
     This adds a custom callback handler to the LangChain callback manager
-    to capture chain, LLM, and tool events. It also wraps the internal
-    OpenAI invocation points (BaseChatOpenAI) to inject W3C trace headers
-    for downstream calls to OpenAI (or other providers).
+    to capture LLM telemetry.
     """
     
     # Class-level configuration for embedding patches
@@ -99,11 +93,9 @@ class LangChainInstrumentor(BaseInstrumentor):
         },
     ]
 
-    def __init__(self, exception_logger=None, disable_trace_injection: bool = False):
-        """
-        :param disable_trace_injection: If True, do not wrap OpenAI invocation
-                                        for trace-context injection.
-        """
+    def __init__(
+        self,
+    ):
         super().__init__()
         self._disable_trace_injection = disable_trace_injection
         Config.exception_logger = exception_logger
@@ -185,7 +177,7 @@ class LangChainInstrumentor(BaseInstrumentor):
                     # Log error but continue with other patches
                     pass
 
-    def _uninstrument(self, **kwargs):
+    def _uninstrument(self, **kwargs: Any):
         """
         Cleanup instrumentation (unwrap).
         """
@@ -210,18 +202,25 @@ class LangChainInstrumentor(BaseInstrumentor):
 
 class _BaseCallbackManagerInitWrapper:
     """
-    Wrap the BaseCallbackManager __init__ to insert
-    custom callback handler in the manager's handlers list.
+    Wrap the BaseCallbackManager __init__ to insert custom callback handler in the manager's handlers list.
     """
 
-    def __init__(self, callback_handler):
+    def __init__(
+        self, callback_handler: OpenTelemetryLangChainCallbackHandler
+    ):
         self._otel_handler = callback_handler
 
-    def __call__(self, wrapped, instance, args, kwargs):
+    def __call__(
+        self,
+        wrapped: Callable[..., None],
+        instance: BaseCallbackHandler,  # type: ignore
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ):
         wrapped(*args, **kwargs)
         # Ensure our OTel callback is present if not already.
-        for handler in instance.inheritable_handlers:
+        for handler in instance.inheritable_handlers:  # type: ignore
             if isinstance(handler, type(self._otel_handler)):
                 break
         else:
-            instance.add_handler(self._otel_handler, inherit=True)
+            instance.add_handler(self._otel_handler, inherit=True)  # type: ignore

@@ -1,8 +1,8 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-def main():
 
+def main():
     llm = ChatOpenAI(model="gpt-3.5-turbo")
 
     messages = [
