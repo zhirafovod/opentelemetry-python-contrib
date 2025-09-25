@@ -21,7 +21,11 @@ from typing_extensions import TypeAlias
 
 from opentelemetry.context import Context
 from opentelemetry.util.genai.types.generic import (
+    ContentCapturingMode,
     GenAI,
+    InputMessage,
+    OutputMessage,
+    Text,
 )
 from opentelemetry.util.genai.types.invocations import (
     LLMInvocation,
@@ -37,4 +41,14 @@ class Error:
     type: Type[BaseException]
 
 
-__all__ = ["GenAI", "LLMInvocation", "ToolInvocation", "ContextToken"]
+__all__ = [
+    "GenAI",
+    "LLMInvocation",
+    "ToolInvocation",
+    "ContextToken",
+    "InputMessage",
+    "OutputMessage",
+    "Error",
+    "ContentCapturingMode",
+    "Text",
+]
