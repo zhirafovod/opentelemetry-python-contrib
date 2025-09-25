@@ -18,15 +18,16 @@ COPY opentelemetry-instrumentation-langchain/examples/manual/requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download NLTK data for sentiment analysis
-RUN python -c "import nltk; nltk.download('vader_lexicon', download_dir='/usr/local/nltk_data')"
+# Download NLTK data for sentiment analysis (optional)
+RUN python -c "import nltk; nltk.download('vader_lexicon', download_dir='/usr/local/nltk_data')" || true
 
-# Copy the local packages source code
-COPY opentelemetry-genai-sdk /tmp/opentelemetry-genai-sdk
+# Copy the local packages source code (util-genai + instrumentation)
+# Legacy opentelemetry-genai-sdk removed.
+COPY opentelemetry-util-genai /tmp/opentelemetry-util-genai
 COPY opentelemetry-instrumentation-langchain /tmp/opentelemetry-instrumentation-langchain
 
 # Install local packages in editable mode
-RUN pip install -e /tmp/opentelemetry-genai-sdk
+RUN pip install -e /tmp/opentelemetry-util-genai
 RUN pip install -e /tmp/opentelemetry-instrumentation-langchain
 
 # Copy application code
