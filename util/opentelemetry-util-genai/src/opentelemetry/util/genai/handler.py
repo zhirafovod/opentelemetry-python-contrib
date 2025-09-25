@@ -58,10 +58,14 @@ Usage:
     handler.fail_llm(invocation, Error(type="...", message="..."))
 """
 
+import os
 import time
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
+from opentelemetry.util.genai.generators.custom_semconv_generator import (
+    CustomSemConvGenerator,
+)
 from opentelemetry.util.genai.generators.semconv_generator import (
     SemConvGenerator,
 )
@@ -75,7 +79,13 @@ class TelemetryHandler:
     """
 
     def __init__(self, **kwargs: Any):
-        self._generator = SemConvGenerator(**kwargs)
+        use_custom_generator = os.getenv(
+            "OTEL_GENAI_USE_CUSTOM_GENERATOR", ""
+        ).lower() in ("1", "true", "yes")
+        if use_custom_generator:
+            self._generator = CustomSemConvGenerator(**kwargs)
+        else:
+            self._generator = SemConvGenerator(**kwargs)
 
     def start_llm(
         self,
