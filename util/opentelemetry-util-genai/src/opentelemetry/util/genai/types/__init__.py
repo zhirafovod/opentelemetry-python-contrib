@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import time
 from contextvars import Token
 from dataclasses import dataclass, field
 from enum import Enum
@@ -22,7 +21,7 @@ from typing import Any, Dict, List, Literal, Optional, Type, Union
 from typing_extensions import TypeAlias
 
 from opentelemetry.context import Context
-from opentelemetry.trace import Span
+from opentelemetry.util.genai.types.generic import GenAI
 from opentelemetry.util.types import AttributeValue
 
 ContextToken: TypeAlias = Token[Context]
@@ -94,18 +93,13 @@ def _new_str_any_dict() -> Dict[str, Any]:
 
 
 @dataclass
-class LLMInvocation:
+class LLMInvocation(GenAI):
     """
     Represents a single LLM call invocation. When creating an LLMInvocation object,
     only update the data attributes. The span and context_token attributes are
     set by the TelemetryHandler.
     """
 
-    request_model: str
-    context_token: Optional[ContextToken] = None
-    span: Optional[Span] = None
-    start_time: float = field(default_factory=time.time)
-    end_time: Optional[float] = None
     input_messages: List[InputMessage] = field(
         default_factory=_new_input_messages
     )
@@ -117,7 +111,6 @@ class LLMInvocation:
     response_id: Optional[str] = None
     input_tokens: Optional[AttributeValue] = None
     output_tokens: Optional[AttributeValue] = None
-    attributes: Dict[str, Any] = field(default_factory=_new_str_any_dict)
 
 
 @dataclass

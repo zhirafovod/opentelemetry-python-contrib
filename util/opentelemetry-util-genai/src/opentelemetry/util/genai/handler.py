@@ -62,7 +62,9 @@ import time
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
-from opentelemetry.util.genai.generators import SpanGenerator
+from opentelemetry.util.genai.generators.semconv_generator import (
+    SemConvGenerator,
+)
 from opentelemetry.util.genai.types import Error, LLMInvocation
 
 
@@ -73,7 +75,7 @@ class TelemetryHandler:
     """
 
     def __init__(self, **kwargs: Any):
-        self._generator = SpanGenerator(**kwargs)
+        self._generator = SemConvGenerator(**kwargs)
 
     def start_llm(
         self,
@@ -86,7 +88,7 @@ class TelemetryHandler:
     def stop_llm(self, invocation: LLMInvocation) -> LLMInvocation:
         """Finalize an LLM invocation successfully and end its span."""
         invocation.end_time = time.time()
-        self._generator.finish(invocation)
+        self._generator.stop(invocation)
         return invocation
 
     def fail_llm(
@@ -94,7 +96,7 @@ class TelemetryHandler:
     ) -> LLMInvocation:
         """Fail an LLM invocation and end its span with error status."""
         invocation.end_time = time.time()
-        self._generator.error(error, invocation)
+        self._generator.fail(invocation, error)
         return invocation
 
     @contextmanager
