@@ -14,106 +14,27 @@
 
 
 from contextvars import Token
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Type, Union
+from dataclasses import dataclass
+from typing import Type
 
 from typing_extensions import TypeAlias
 
 from opentelemetry.context import Context
-from opentelemetry.util.genai.types.generic import GenAI
-from opentelemetry.util.types import AttributeValue
+from opentelemetry.util.genai.types.generic import (
+    GenAI,
+)
+from opentelemetry.util.genai.types.invocations import (
+    LLMInvocation,
+    ToolInvocation,
+)
 
 ContextToken: TypeAlias = Token[Context]
-
-
-class ContentCapturingMode(Enum):
-    # Do not capture content (default).
-    NO_CONTENT = 0
-    # Only capture content in spans.
-    SPAN_ONLY = 1
-    # Only capture content in events.
-    EVENT_ONLY = 2
-    # Capture content in both spans and events.
-    SPAN_AND_EVENT = 3
-
-
-@dataclass()
-class ToolCall:
-    arguments: Any
-    name: str
-    id: Optional[str]
-    type: Literal["tool_call"] = "tool_call"
-
-
-@dataclass()
-class ToolCallResponse:
-    response: Any
-    id: Optional[str]
-    type: Literal["tool_call_response"] = "tool_call_response"
-
-
-FinishReason = Literal[
-    "content_filter", "error", "length", "stop", "tool_calls"
-]
-
-
-@dataclass()
-class Text:
-    content: str
-    type: Literal["text"] = "text"
-
-
-MessagePart = Union[Text, ToolCall, ToolCallResponse, Any]
-
-
-@dataclass()
-class InputMessage:
-    role: str
-    parts: list[MessagePart]
-
-
-@dataclass()
-class OutputMessage:
-    role: str
-    parts: list[MessagePart]
-    finish_reason: Union[str, FinishReason]
-
-
-def _new_input_messages() -> List[InputMessage]:
-    return []
-
-
-def _new_output_messages() -> List[OutputMessage]:
-    return []
-
-
-def _new_str_any_dict() -> Dict[str, Any]:
-    return {}
-
-
-@dataclass
-class LLMInvocation(GenAI):
-    """
-    Represents a single LLM call invocation. When creating an LLMInvocation object,
-    only update the data attributes. The span and context_token attributes are
-    set by the TelemetryHandler.
-    """
-
-    input_messages: List[InputMessage] = field(
-        default_factory=_new_input_messages
-    )
-    output_messages: List[OutputMessage] = field(
-        default_factory=_new_output_messages
-    )
-    provider: Optional[str] = None
-    response_model_name: Optional[str] = None
-    response_id: Optional[str] = None
-    input_tokens: Optional[AttributeValue] = None
-    output_tokens: Optional[AttributeValue] = None
 
 
 @dataclass
 class Error:
     message: str
     type: Type[BaseException]
+
+
+__all__ = ["GenAI", "LLMInvocation", "ToolInvocation", "ContextToken"]
