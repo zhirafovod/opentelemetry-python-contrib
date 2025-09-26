@@ -36,36 +36,24 @@ API
 ---
 """
 
-from typing import Collection
-from wrapt import wrap_function_wrapper
+from typing import Any, Callable, Collection
 
-from langchain_core.embeddings import Embeddings
+from langchain_core.callbacks import BaseCallbackHandler  # type: ignore
+from wrapt import wrap_function_wrapper  # type: ignore
 
-from opentelemetry.instrumentation.langchain.config import Config
-from opentelemetry.instrumentation.langchain.version import __version__
-from opentelemetry.instrumentation.langchain.package import _instruments
+from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.langchain.callback_handler import (
     OpenTelemetryLangChainCallbackHandler,
 )
-from opentelemetry.instrumentation.langchain.embeddings_handler import (
-    embeddings_wrapper
-)
-from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
+from opentelemetry.instrumentation.langchain.package import _instruments
+from opentelemetry.instrumentation.langchain.version import __version__
 from opentelemetry.instrumentation.utils import unwrap
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import get_tracer
 
-from opentelemetry.util.genai.handler import (
-    TelemetryHandler,
-    get_telemetry_handler,
-)
-from .utils import (
-    should_emit_events,
-    get_evaluation_framework_name,
-)
-from opentelemetry.genai.sdk.evals import (
-    get_evaluator,
-)
+#embeddings imports
+from opentelemetry.instrumentation.langchain.embeddings_handler import embeddings_wrapper
+from opentelemetry.util.genai.handler import get_telemetry_handler
 
 class LangChainInstrumentor(BaseInstrumentor):
     """
@@ -97,37 +85,35 @@ class LangChainInstrumentor(BaseInstrumentor):
         self,
     ):
         super().__init__()
-        self._disable_trace_injection = disable_trace_injection
-        Config.exception_logger = exception_logger
-
-        self._telemetry: TelemetryHandler | None = None
 
     def instrumentation_dependencies(self) -> Collection[str]:
         return _instruments
 
-    def _instrument(self, **kwargs):
-        #TODO remove?
-        exporter_type_full = should_emit_events()
+    def _instrument(self, **kwargs: Any):
+        """
+        Enable Langchain instrumentation.
+        """
+        tracer_provider = kwargs.get("tracer_provider")
+        tracer = get_tracer(
+            __name__,
+            __version__,
+            tracer_provider,
+            schema_url=Schemas.V1_37_0.value,
+        )
 
+        otel_callback_handler = OpenTelemetryLangChainCallbackHandler(
+            tracer=tracer,
+        )
+
+        wrap_function_wrapper(
+            module="langchain_core.callbacks",
+            name="BaseCallbackManager.__init__",
+            wrapper=_BaseCallbackManagerInitWrapper(otel_callback_handler),
+        )
+
+        #embeddings
         # Instantiate a singleton TelemetryClient bound to our tracer & meter
         self._telemetry = get_telemetry_handler(**kwargs)
-
-        # initialize evaluation framework if needed
-        evaluation_framework_name = get_evaluation_framework_name()
-        # TODO: add check for OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE
-        self._evaluation = get_evaluator(evaluation_framework_name)
-
-        #TODO refactor for utils
-        # otel_callback_handler = OpenTelemetryLangChainCallbackHandler(
-        #     telemetry_client=self._telemetry,
-        #     evaluation_client=self._evaluation,
-        # )
-
-        # wrap_function_wrapper(
-        #     module="langchain_core.callbacks",
-        #     name="BaseCallbackManager.__init__",
-        #     wrapper=_BaseCallbackManagerInitWrapper(otel_callback_handler),
-        # )
 
         self.wrap_embeddings()
 
@@ -152,36 +138,10 @@ class LangChainInstrumentor(BaseInstrumentor):
                     # Log error but continue with other patches
                     pass
 
-        self.wrap_embeddings()
-
-    def wrap_embeddings(self):
-        # Apply patches using the configuration
-        for patch_config in self.EMBEDDING_PATCHES:
-            for method_name in patch_config["methods"]:
-                try:
-                    # Get the appropriate wrapper based on method name
-                    if method_name in ["embed_query","embed_documents"]:
-                        wrapper = embed_query_wrapper(self._telemetry)
-                    else:
-                        continue  # Skip unknown methods
-
-                    wrap_function_wrapper(
-                        module=patch_config["module"],
-                        name=f"{patch_config["class_name"]}.{method_name}",
-                        wrapper=wrapper,
-                    )
-                except ImportError:
-                    # Provider not available, skip silently
-                    pass
-                except Exception:
-                    # Log error but continue with other patches
-                    pass
-
     def _uninstrument(self, **kwargs: Any):
         """
         Cleanup instrumentation (unwrap).
         """
-
         unwrap("langchain_core.callbacks.base", "BaseCallbackManager.__init__")
 
         # Unwrap all embedding patches
@@ -194,11 +154,6 @@ class LangChainInstrumentor(BaseInstrumentor):
                     )
                 except Exception:
                     pass
-
-        if not self._disable_trace_injection:
-            unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._generate")
-            unwrap("langchain_openai.chat_models.base", "BaseChatOpenAI._agenerate")
-
 
 class _BaseCallbackManagerInitWrapper:
     """

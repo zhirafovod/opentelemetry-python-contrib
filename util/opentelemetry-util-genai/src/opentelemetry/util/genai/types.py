@@ -26,11 +26,15 @@ from opentelemetry.util.types import AttributeValue
 
 ContextToken: TypeAlias = Token[Context]
 
-@dataclass
-class LLMInvocation:
-    """
-    Represents a single LLM call invocation.
-    """
+class ContentCapturingMode(Enum):
+    # Do not capture content (default).
+    NO_CONTENT = 0
+    # Only capture content in spans.
+    SPAN_ONLY = 1
+    # Only capture content in events.
+    EVENT_ONLY = 2
+    # Capture content in both spans and events.
+    SPAN_AND_EVENT = 3
 
 @dataclass()
 class ToolCall:

@@ -30,27 +30,20 @@ def main():
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
     # configure tracing
-    # Check if TracerProvider is already set to avoid "Overriding of current TracerProvider is not allowed" error
-    try:
-        current_provider = trace.get_tracer_provider()
-        # If we get a NoOpTracerProvider, we need to set a real one
-        if current_provider.__class__.__name__ == 'NoOpTracerProvider':
-            trace.set_tracer_provider(TracerProvider())
-    except Exception:
-        # If there's any issue, set a new TracerProvider
-        trace.set_tracer_provider(TracerProvider())
-    trace.get_tracer_provider().add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter())
-    )
+    provider = TracerProvider()
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
 
     metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter())
-    metrics.set_meter_provider(MeterProvider(metric_readers=[metric_reader]))
+    meter_provider = MeterProvider(metric_readers=[metric_reader])
+    metrics.set_meter_provider(meter_provider)
 
     # configure logging and events
-    _logs.set_logger_provider(LoggerProvider())
-    _logs.get_logger_provider().add_log_record_processor(
+    logger_provider = LoggerProvider()
+    logger_provider.add_log_record_processor(
         BatchLogRecordProcessor(OTLPLogExporter())
     )
+    _logs.set_logger_provider(logger_provider)
     _events.set_event_logger_provider(EventLoggerProvider())
 
     # Set up instrumentation
@@ -92,8 +85,8 @@ def main():
     )
 
     # Single query embedding
-    # response = client.embed_query("Hello from Azure")
-    # print(response)
+    response = client.embed_query("Hello from Azure")
+    print(f"Received embedding of length: {len(response)}")
 
     # Batch embedding multiple documents
     documents = [

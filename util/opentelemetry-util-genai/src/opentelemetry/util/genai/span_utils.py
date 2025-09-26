@@ -27,7 +27,7 @@ from opentelemetry.trace import (
 )
 from opentelemetry.trace.status import Status, StatusCode
 from opentelemetry.util.genai.utils import (
-    ContentCapturingMode,
+    # ContentCapturingMode,
     get_content_capturing_mode,
     is_experimental_mode,
 )
@@ -86,10 +86,10 @@ def _apply_llm_attributes(invocation, span):
             GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, invocation.output_tokens
         )
     #TODO should these really only be added conditionally?
-    if not is_experimental_mode() or get_content_capturing_mode() not in (
-        ContentCapturingMode.SPAN_ONLY,
-        ContentCapturingMode.SPAN_AND_EVENT,
-    ):
+    # if not is_experimental_mode() or get_content_capturing_mode() not in (
+    #     ContentCapturingMode.SPAN_ONLY,
+    #     ContentCapturingMode.SPAN_AND_EVENT,
+    # ):
         return
     if invocation.input_messages:
         span.set_attribute(

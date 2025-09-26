@@ -27,8 +27,8 @@ def embeddings_wrapper(telemetry_handler: TelemetryHandler):
     
     @dont_throw
     def traced_method(wrapped, instance, args, kwargs):
-        if Config.is_instrumentation_suppressed():
-            return wrapped(*args, **kwargs)
+        # if Config.is_instrumentation_suppressed():
+        #     return wrapped(*args, **kwargs)
         
         # Get model information from the instance
         model_name = getattr(instance, 'model', None) or getattr(instance, 'model_name', None) or instance.__class__.__name__

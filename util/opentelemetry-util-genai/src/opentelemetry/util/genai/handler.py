@@ -59,38 +59,28 @@ Usage:
 """
 
 import time
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Optional, Iterator
+from opentelemetry import context as otel_context
+from opentelemetry import trace
+from opentelemetry.trace import (
+    SpanKind,
+    Tracer,
+    get_tracer,
+    set_span_in_context,
+)
 from opentelemetry.semconv.schemas import Schemas
-from opentelemetry.trace import get_tracer
-from opentelemetry.semconv.schemas import Schemas
-from opentelemetry.util.genai.generators import SpanGenerator
 from opentelemetry.util.genai.types import Error, LLMInvocation, EmbeddingInvocation
-from opentelemetry.semconv._incubating.attributes import gen_ai_attributes
+from opentelemetry.semconv._incubating.attributes import (
+    gen_ai_attributes as GenAI,
+)
+from opentelemetry.util.genai.span_utils import (
+    _apply_error_attributes,
+    _apply_common_span_attributes,
+)
 
 # TODO: Get the tool version for emitting spans, use GenAI Utils for now
 from .version import __version__
-
-
-def _apply_known_attrs_to_invocation(
-    invocation: LLMInvocation, attributes: dict[str, Any]
-) -> None:
-    """Pop known fields from attributes and set them on the invocation.
-
-    Mutates the provided attributes dict by popping known keys, leaving
-    only unknown/custom attributes behind for the caller to persist into
-    invocation.attributes.
-    """
-    if "provider" in attributes:
-        invocation.provider = attributes.pop("provider")
-    if "response_model_name" in attributes:
-        invocation.response_model_name = attributes.pop("response_model_name")
-    if "response_id" in attributes:
-        invocation.response_id = attributes.pop("response_id")
-    if "input_tokens" in attributes:
-        invocation.input_tokens = attributes.pop("input_tokens")
-    if "output_tokens" in attributes:
-        invocation.output_tokens = attributes.pop("output_tokens")
-
 
 class TelemetryHandler:
     """
@@ -115,6 +105,7 @@ class TelemetryHandler:
     def start_llm(self,invocation: LLMInvocation) -> LLMInvocation:
         """Start an LLM invocation and create a pending span entry."""
         # Create a span and attach it as current; keep the token to detach later
+        invocation.start_time = time.time()
         span = self._tracer.start_span(
             name=f"{GenAI.GenAiOperationNameValues.CHAT.value} {invocation.request_model}",
             kind=SpanKind.CLIENT,
@@ -132,8 +123,7 @@ class TelemetryHandler:
             # TODO: Provide feedback that this invocation was not started
             return invocation
 
-        _apply_finish_attributes(invocation.span, invocation)
-        # Detach context and end span
+        _apply_common_span_attributes(invocation.span, invocation)
         otel_context.detach(invocation.context_token)
         invocation.span.end()
         return invocation
@@ -148,80 +138,47 @@ class TelemetryHandler:
             return invocation
 
         _apply_error_attributes(invocation.span, error)
-        # Detach context and end span
         otel_context.detach(invocation.context_token)
         invocation.span.end()
         return invocation
 
     def start_embedding(self, invocation: EmbeddingInvocation) -> EmbeddingInvocation:
         """Start an embedding invocation."""
-        self._generator.start(invocation)
+        invocation.start_time = time.time()
+        span = self._tracer.start_span(
+            name=f"{GenAI.GenAiOperationNameValues.CHAT.value} {invocation.request_model}",
+            kind=SpanKind.CLIENT,
+        )
+        invocation.span = span
+        invocation.context_token = otel_context.attach(
+            set_span_in_context(span)
+        )
         return invocation
 
     def stop_embedding(self, invocation: EmbeddingInvocation) -> EmbeddingInvocation:
         """Stop an embedding invocation with results."""
-        self._generator.finish(invocation)
+        invocation.end_time = time.time()
+        if invocation.context_token is None or invocation.span is None:
+            # TODO: Provide feedback that this invocation was not started
+            return invocation
+
+        _apply_common_span_attributes(invocation.span, invocation)
+        otel_context.detach(invocation.context_token)
+        invocation.span.end()
         return invocation
 
     def fail_embedding(self, invocation: EmbeddingInvocation, error: Error) -> EmbeddingInvocation:
         """Fail an embedding invocation with error."""
-        self._generator.error(error, invocation)
-        return invocation
-
-    def start_embedding(
-        self,
-        run_id: UUID,
-        model_name: str,
-        parent_run_id: Optional[UUID] = None,
-        **attributes: Any,
-    ) -> None:
-        """Start an embedding invocation."""
-        # Create span attributes
-        span_attributes = {
-            gen_ai_attributes.GEN_AI_OPERATION_NAME: gen_ai_attributes.GenAiOperationNameValues.EMBEDDINGS.value,
-            gen_ai_attributes.GEN_AI_REQUEST_MODEL: model_name,
-        }
-        span_attributes.update(attributes)
-
-        invocation = EmbeddingInvocation(
-            run_id=run_id,
-            parent_run_id=parent_run_id,
-            attributes=span_attributes,
-            input=attributes.get("input", None),
-        )
-
-        with self._lock:
-            self._embedding_registry[invocation.run_id] = invocation
-
-        self._generator.start(invocation)
-
-    def stop_embedding(
-        self,
-        run_id: UUID,
-        dimension_count: int,
-        output: List[float],
-        **attributes: Any,
-    ) -> EmbeddingInvocation:
-        """Stop an embedding invocation with results."""
-        with self._lock:
-            invocation = self._embedding_registry.pop(run_id)
         invocation.end_time = time.time()
-        invocation.dimension_count = dimension_count
-        invocation.attributes.update(attributes)
-        invocation.output = output
-        self._generator.finish(invocation)
+        if invocation.context_token is None or invocation.span is None:
+            # TODO: Provide feedback that this invocation was not started
+            return invocation
+
+        _apply_error_attributes(invocation.span, error)
+        otel_context.detach(invocation.context_token)
+        invocation.span.end()
         return invocation
 
-    def fail_embedding(
-        self, run_id: UUID, error: Error, **attributes: Any
-    ) -> EmbeddingInvocation:
-        """Fail an embedding invocation with error."""
-        with self._lock:
-            invocation = self._embedding_registry.pop(run_id)
-        invocation.end_time = time.time()
-        invocation.attributes.update(**attributes)
-        self._generator.error(error, invocation)
-        return invocation
     @contextmanager
     def llm(
         self, invocation: Optional[LLMInvocation] = None
