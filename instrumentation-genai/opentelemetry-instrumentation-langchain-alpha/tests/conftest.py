@@ -5,7 +5,6 @@ import os
 
 import pytest
 import yaml
-
 # from openai import AsyncOpenAI, OpenAI
 from langchain_openai import ChatOpenAI
 
@@ -88,7 +87,6 @@ def environment():
 @pytest.fixture
 def chatOpenAI_client():
     return ChatOpenAI()
-
 
 @pytest.fixture(scope="module")
 def vcr_config():

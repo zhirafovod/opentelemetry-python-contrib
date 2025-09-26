@@ -44,6 +44,8 @@ from opentelemetry.util.genai.types import (
 )
 from opentelemetry.util.genai.utils import get_content_capturing_mode
 
+from opentelemetry import trace
+
 
 def patch_env_vars(stability_mode, content_capturing):
     def decorator(test_case):

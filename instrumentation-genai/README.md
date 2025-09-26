@@ -1,4 +1,3 @@
-
 | Instrumentation | Supported Packages | Metrics support | Semconv status |
 | --------------- | ------------------ | --------------- | -------------- |
 | [opentelemetry-instrumentation-google-genai](./opentelemetry-instrumentation-google-genai) | google-genai >= 1.0.0 | No | development

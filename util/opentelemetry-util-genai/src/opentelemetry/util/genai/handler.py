@@ -60,27 +60,27 @@ Usage:
 
 import time
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
-
+from typing import Any, Optional, Iterator
 from opentelemetry import context as otel_context
 from opentelemetry import trace
-from opentelemetry.semconv._incubating.attributes import (
-    gen_ai_attributes as GenAI,
-)
-from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import (
     SpanKind,
     Tracer,
     get_tracer,
     set_span_in_context,
 )
+from opentelemetry.semconv.schemas import Schemas
+from opentelemetry.util.genai.types import Error, LLMInvocation, EmbeddingInvocation
+from opentelemetry.semconv._incubating.attributes import (
+    gen_ai_attributes as GenAI,
+)
 from opentelemetry.util.genai.span_utils import (
     _apply_error_attributes,
-    _apply_finish_attributes,
+    _apply_common_span_attributes,
 )
-from opentelemetry.util.genai.types import Error, LLMInvocation
-from opentelemetry.util.genai.version import __version__
 
+# TODO: Get the tool version for emitting spans, use GenAI Utils for now
+from .version import __version__
 
 class TelemetryHandler:
     """
@@ -98,12 +98,14 @@ class TelemetryHandler:
         )
         self._tracer: Tracer = tracer or trace.get_tracer(__name__)
 
-    def start_llm(
-        self,
-        invocation: LLMInvocation,
-    ) -> LLMInvocation:
+    @staticmethod
+    def _should_collect_content() -> bool:
+        return True  # Placeholder for future config
+
+    def start_llm(self,invocation: LLMInvocation) -> LLMInvocation:
         """Start an LLM invocation and create a pending span entry."""
         # Create a span and attach it as current; keep the token to detach later
+        invocation.start_time = time.time()
         span = self._tracer.start_span(
             name=f"{GenAI.GenAiOperationNameValues.CHAT.value} {invocation.request_model}",
             kind=SpanKind.CLIENT,
@@ -121,8 +123,7 @@ class TelemetryHandler:
             # TODO: Provide feedback that this invocation was not started
             return invocation
 
-        _apply_finish_attributes(invocation.span, invocation)
-        # Detach context and end span
+        _apply_common_span_attributes(invocation.span, invocation)
         otel_context.detach(invocation.context_token)
         invocation.span.end()
         return invocation
@@ -137,7 +138,43 @@ class TelemetryHandler:
             return invocation
 
         _apply_error_attributes(invocation.span, error)
-        # Detach context and end span
+        otel_context.detach(invocation.context_token)
+        invocation.span.end()
+        return invocation
+
+    def start_embedding(self, invocation: EmbeddingInvocation) -> EmbeddingInvocation:
+        """Start an embedding invocation."""
+        invocation.start_time = time.time()
+        span = self._tracer.start_span(
+            name=f"{GenAI.GenAiOperationNameValues.CHAT.value} {invocation.request_model}",
+            kind=SpanKind.CLIENT,
+        )
+        invocation.span = span
+        invocation.context_token = otel_context.attach(
+            set_span_in_context(span)
+        )
+        return invocation
+
+    def stop_embedding(self, invocation: EmbeddingInvocation) -> EmbeddingInvocation:
+        """Stop an embedding invocation with results."""
+        invocation.end_time = time.time()
+        if invocation.context_token is None or invocation.span is None:
+            # TODO: Provide feedback that this invocation was not started
+            return invocation
+
+        _apply_common_span_attributes(invocation.span, invocation)
+        otel_context.detach(invocation.context_token)
+        invocation.span.end()
+        return invocation
+
+    def fail_embedding(self, invocation: EmbeddingInvocation, error: Error) -> EmbeddingInvocation:
+        """Fail an embedding invocation with error."""
+        invocation.end_time = time.time()
+        if invocation.context_token is None or invocation.span is None:
+            # TODO: Provide feedback that this invocation was not started
+            return invocation
+
+        _apply_error_attributes(invocation.span, error)
         otel_context.detach(invocation.context_token)
         invocation.span.end()
         return invocation

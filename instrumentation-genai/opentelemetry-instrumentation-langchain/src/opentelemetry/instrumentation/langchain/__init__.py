@@ -51,6 +51,9 @@ from opentelemetry.instrumentation.utils import unwrap
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import get_tracer
 
+#embeddings imports
+from opentelemetry.instrumentation.langchain.embeddings_handler import embeddings_wrapper
+from opentelemetry.util.genai.handler import get_telemetry_handler
 
 class LangChainInstrumentor(BaseInstrumentor):
     """
@@ -58,6 +61,25 @@ class LangChainInstrumentor(BaseInstrumentor):
     This adds a custom callback handler to the LangChain callback manager
     to capture LLM telemetry.
     """
+    
+    # Class-level configuration for embedding patches
+    EMBEDDING_PATCHES = [
+        {
+            "module": "langchain_openai.embeddings",
+            "class_name": "OpenAIEmbeddings",
+            "methods": ["embed_query", "embed_documents"]
+        },
+        {
+            "module": "langchain_openai.embeddings",
+            "class_name": "AzureOpenAIEmbeddings",
+            "methods": ["embed_query", "embed_documents"]
+        },
+        {
+            "module": "langchain_huggingface.embeddings",
+            "class_name": "HuggingFaceEmbeddings",
+            "methods": ["embed_query"]
+        },
+    ]
 
     def __init__(
         self,
@@ -89,12 +111,49 @@ class LangChainInstrumentor(BaseInstrumentor):
             wrapper=_BaseCallbackManagerInitWrapper(otel_callback_handler),
         )
 
+        #embeddings
+        # Instantiate a singleton TelemetryClient bound to our tracer & meter
+        self._telemetry = get_telemetry_handler(**kwargs)
+
+        self.wrap_embeddings()
+
+    def wrap_embeddings(self):
+        # Apply patches using the configuration
+        for patch_config in self.EMBEDDING_PATCHES:
+            for method_name in patch_config["methods"]:
+                try:
+                    # Get the appropriate wrapper based on method name
+                    if method_name in ["embed_query","embed_documents"]:
+                        wrapper = embeddings_wrapper(self._telemetry)
+                    else:
+                        continue  # Skip unknown methods
+
+                    wrap_function_wrapper(
+                        module=patch_config["module"],
+                        name=f"{patch_config["class_name"]}.{method_name}",
+                        wrapper=wrapper,
+                    )
+                except ImportError or Exception:
+                    # Provider not available, skip silently
+                    # Log error but continue with other patches
+                    pass
+
     def _uninstrument(self, **kwargs: Any):
         """
         Cleanup instrumentation (unwrap).
         """
-        unwrap("langchain_core.callbacks.base.BaseCallbackManager", "__init__")
+        unwrap("langchain_core.callbacks.base", "BaseCallbackManager.__init__")
 
+        # Unwrap all embedding patches
+        for patch_config in self.EMBEDDING_PATCHES:
+            for method_name in patch_config["methods"]:
+                try:
+                    unwrap(
+                        patch_config["module"],
+                        f"{patch_config['class_name']}.{method_name}"
+                    )
+                except Exception:
+                    pass
 
 class _BaseCallbackManagerInitWrapper:
     """

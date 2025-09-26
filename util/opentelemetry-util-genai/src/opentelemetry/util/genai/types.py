@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import time
 from contextvars import Token
 from dataclasses import dataclass, field
@@ -27,7 +26,6 @@ from opentelemetry.util.types import AttributeValue
 
 ContextToken: TypeAlias = Token[Context]
 
-
 class ContentCapturingMode(Enum):
     # Do not capture content (default).
     NO_CONTENT = 0
@@ -38,7 +36,6 @@ class ContentCapturingMode(Enum):
     # Capture content in both spans and events.
     SPAN_AND_EVENT = 3
 
-
 @dataclass()
 class ToolCall:
     arguments: Any
@@ -46,40 +43,33 @@ class ToolCall:
     id: Optional[str]
     type: Literal["tool_call"] = "tool_call"
 
-
 @dataclass()
 class ToolCallResponse:
     response: Any
     id: Optional[str]
     type: Literal["tool_call_response"] = "tool_call_response"
 
-
 FinishReason = Literal[
     "content_filter", "error", "length", "stop", "tool_calls"
 ]
-
 
 @dataclass()
 class Text:
     content: str
     type: Literal["text"] = "text"
 
-
 MessagePart = Union[Text, ToolCall, ToolCallResponse, Any]
-
 
 @dataclass()
 class InputMessage:
     role: str
     parts: list[MessagePart]
 
-
 @dataclass()
 class OutputMessage:
     role: str
     parts: list[MessagePart]
     finish_reason: Union[str, FinishReason]
-
 
 def _new_input_messages() -> List[InputMessage]:
     return []
@@ -92,20 +82,25 @@ def _new_output_messages() -> List[OutputMessage]:
 def _new_str_any_dict() -> Dict[str, Any]:
     return {}
 
-
 @dataclass
-class LLMInvocation:
+class BaseInvocation:
     """
-    Represents a single LLM call invocation. When creating an LLMInvocation object,
-    only update the data attributes. The span and context_token attributes are
-    set by the TelemetryHandler.
+    Represents a base invocation for GenAI operations, containing required fields.
     """
-
-    request_model: str
+    operation_name: Optional[str] = None
+    error_type: Optional[str] = None
+    request_model: Optional[str] = None
     context_token: Optional[ContextToken] = None
     span: Optional[Span] = None
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
+    attributes: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class LLMInvocation(BaseInvocation):
+    """
+    Represents a single LLM call invocation.
+    """
     input_messages: List[InputMessage] = field(
         default_factory=_new_input_messages
     )
@@ -117,8 +112,13 @@ class LLMInvocation:
     response_id: Optional[str] = None
     input_tokens: Optional[AttributeValue] = None
     output_tokens: Optional[AttributeValue] = None
-    attributes: Dict[str, Any] = field(default_factory=_new_str_any_dict)
 
+@dataclass
+class EmbeddingInvocation(BaseInvocation):
+    """
+    Represents a single Embedding call invocation.
+    """
+    dimension_count: int = 0
 
 @dataclass
 class Error:
