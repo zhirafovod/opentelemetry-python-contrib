@@ -29,6 +29,7 @@ Usage
         SystemMessage(content="You are a helpful assistant!"),
         HumanMessage(content="What is the capital of France?"),
     ]
+
     result = llm.invoke(messages)
     LangChainInstrumentor().uninstrument()
 
@@ -66,7 +67,6 @@ class LangChainInstrumentor(BaseInstrumentor):
 
     def instrumentation_dependencies(self) -> Collection[str]:
         return _instruments
-
     def _instrument(self, **kwargs: Any):
         """
         Enable Langchain instrumentation.
