@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from opentelemetry.metrics import Histogram, Meter, get_meter
 from opentelemetry.semconv._incubating.attributes import (
@@ -19,8 +19,7 @@ from ..types import Error, LLMInvocation
 class MetricsEmitter:
     """Emits GenAI metrics (duration + token usage).
 
-    Role: metric
-    Ordering: runs after span.start (no-op) and before span.finish (records metrics).
+    Ignores objects that are not LLMInvocation (e.g., EmbeddingInvocation for now).
     """
 
     role = "metric"
@@ -35,33 +34,78 @@ class MetricsEmitter:
         self._token_histogram: Histogram = instruments.token_usage_histogram
 
     # Lifecycle API --------------------------------------------------------
-    def start(self, invocation: LLMInvocation) -> None:  # no-op
+    def start(self, obj: Any) -> None:  # no-op for metrics
         return None
 
-    def finish(self, invocation: LLMInvocation) -> None:
-        metric_attrs = _get_metric_attributes(
-            invocation.request_model,
-            invocation.response_model_name,
-            GenAI.GenAiOperationNameValues.CHAT.value,
-            invocation.provider,
-            invocation.attributes.get("framework"),
-        )
-        # Record tokens only on success (error indicated by missing end_time? span status? we assume caller sets error separately)
-        _record_token_metrics(
-            self._token_histogram,
-            invocation.input_tokens,
-            invocation.output_tokens,
-            metric_attrs,
-        )
-        _record_duration(self._duration_histogram, invocation, metric_attrs)
+    def finish(self, obj: Any) -> None:
+        # LLMInvocation metrics
+        if isinstance(obj, LLMInvocation):
+            invocation = obj
+            metric_attrs = _get_metric_attributes(
+                invocation.request_model,
+                invocation.response_model_name,
+                GenAI.GenAiOperationNameValues.CHAT.value,
+                invocation.provider,
+                invocation.attributes.get("framework"),
+            )
+            _record_token_metrics(
+                self._token_histogram,
+                invocation.input_tokens,
+                invocation.output_tokens,
+                metric_attrs,
+            )
+            _record_duration(
+                self._duration_histogram, invocation, metric_attrs
+            )
+            return
+        # ToolCall duration metric only
+        from ..types import ToolCall
 
-    def error(self, error: Error, invocation: LLMInvocation) -> None:
-        # On error record only duration (if any)
-        metric_attrs = _get_metric_attributes(
-            invocation.request_model,
-            invocation.response_model_name,
-            GenAI.GenAiOperationNameValues.CHAT.value,
-            invocation.provider,
-            invocation.attributes.get("framework"),
-        )
-        _record_duration(self._duration_histogram, invocation, metric_attrs)
+        if isinstance(obj, ToolCall):
+            invocation = obj
+            metric_attrs = _get_metric_attributes(
+                invocation.name,
+                None,
+                "tool_call",
+                invocation.provider,
+                None,
+            )
+            _record_duration(
+                self._duration_histogram, invocation, metric_attrs
+            )
+
+    def error(self, error: Error, obj: Any) -> None:
+        # On error, record duration for LLMInvocation and ToolCall
+        if isinstance(obj, LLMInvocation):
+            invocation = obj
+            metric_attrs = _get_metric_attributes(
+                invocation.request_model,
+                invocation.response_model_name,
+                GenAI.GenAiOperationNameValues.CHAT.value,
+                invocation.provider,
+                invocation.attributes.get("framework"),
+            )
+            _record_duration(
+                self._duration_histogram, invocation, metric_attrs
+            )
+            return
+        from ..types import ToolCall
+
+        if isinstance(obj, ToolCall):
+            invocation = obj
+            metric_attrs = _get_metric_attributes(
+                invocation.name,
+                None,
+                "tool_call",
+                invocation.provider,
+                None,
+            )
+            _record_duration(
+                self._duration_histogram, invocation, metric_attrs
+            )
+
+    def handles(self, obj: Any) -> bool:
+        """Return True if this emitter should handle the invocation object."""
+        from ..types import LLMInvocation, ToolCall
+
+        return isinstance(obj, (LLMInvocation, ToolCall))

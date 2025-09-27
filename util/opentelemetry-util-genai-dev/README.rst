@@ -121,6 +121,31 @@ Example Usage
    invocation.attributes["scenario"] = "basic-greeting"
    handler.stop_llm(invocation)
 
+ToolCall Usage Example
+----------------------
+
+.. code-block:: python
+
+   from opentelemetry.util.genai.handler import get_telemetry_handler
+   from opentelemetry.util.genai.types import ToolCall, Error
+
+   handler = get_telemetry_handler()
+   tool_call = ToolCall(
+       name="translate",
+       id="123",
+       arguments={"text": "Hola"},
+       provider="translator",
+   )
+   # Start the tool call (spans & metrics emitted)
+   handler.start(tool_call)
+   # ... perform external tool invocation ...
+   # Record result or custom attributes
+   tool_call.attributes["result"] = "Hello"
+   # Complete the tool call
+   handler.finish(tool_call)
+   # Or handle error
+   # handler.fail(tool_call, Error(message="failure", type=RuntimeError))
+
 Error Flow Example
 ------------------
 .. code-block:: python
@@ -160,15 +185,15 @@ Content capture requires *experimental* GenAI semconv mode + explicit env var.
 
 Flavor vs Artifact Matrix
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
-+---------------------+----------------------+-----------------------------+-------------------+---------------------------------------------+
-| Flavor              | Spans                | Metrics (duration/tokens)   | Events / Logs      | Where message content can appear            |
-+=====================+======================+=============================+===================+=============================================+
-| span                | Yes                  | No                          | No                | Span attrs if mode=SPAN_ONLY/SPAN_AND_EVENT |
-+---------------------+----------------------+-----------------------------+-------------------+---------------------------------------------+
-| span_metric         | Yes                  | Yes                         | No                | Span attrs if mode=SPAN_ONLY/SPAN_AND_EVENT |
-+---------------------+----------------------+-----------------------------+-------------------+---------------------------------------------+
++---------------------+----------------------+-----------------------------+-------------------+-----------------------------------------------+
+| Flavor              | Spans                | Metrics (duration/tokens)   | Events / Logs     | Where message content can appear              |
++=====================+======================+=============================+===================+===============================================+
+| span                | Yes                  | No                          | No                | Span attrs if mode=SPAN_ONLY/SPAN_AND_EVENT   |
++---------------------+----------------------+-----------------------------+-------------------+-----------------------------------------------+
+| span_metric         | Yes                  | Yes                         | No                | Span attrs if mode=SPAN_ONLY/SPAN_AND_EVENT   |
++---------------------+----------------------+-----------------------------+-------------------+-----------------------------------------------+
 | span_metric_event   | Yes (no msg content) | Yes                         | Yes (structured)  | Events only if mode=EVENT_ONLY/SPAN_AND_EVENT |
-+---------------------+----------------------+-----------------------------+-------------------+---------------------------------------------+
++---------------------+----------------------+-----------------------------+-------------------+-----------------------------------------------+
 
 Content Capture Interplay Rules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

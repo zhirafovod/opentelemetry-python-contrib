@@ -40,12 +40,33 @@ class ContentCapturingMode(Enum):
     SPAN_AND_EVENT = 3
 
 
+def _new_input_messages() -> list["InputMessage"]:  # quotes for forward ref
+    return []
+
+
+def _new_output_messages() -> list["OutputMessage"]:  # quotes for forward ref
+    return []
+
+
+def _new_str_any_dict() -> dict[str, Any]:
+    return {}
+
+
 @dataclass()
 class ToolCall:
+    """Represents a single tool call invocation (Phase 4)."""
+
     arguments: Any
     name: str
     id: Optional[str]
     type: Literal["tool_call"] = "tool_call"
+    # Optional fields for telemetry
+    provider: Optional[str] = None
+    attributes: Dict[str, Any] = field(default_factory=_new_str_any_dict)
+    start_time: float = field(default_factory=time.time)
+    end_time: Optional[float] = None
+    span: Optional[Span] = None
+    context_token: Optional[ContextToken] = None
 
 
 @dataclass()
@@ -80,18 +101,6 @@ class OutputMessage:
     role: str
     parts: list[MessagePart]
     finish_reason: Union[str, FinishReason]
-
-
-def _new_input_messages() -> list[InputMessage]:
-    return []
-
-
-def _new_output_messages() -> list[OutputMessage]:
-    return []
-
-
-def _new_str_any_dict() -> dict[str, Any]:
-    return {}
 
 
 @dataclass
@@ -155,6 +164,25 @@ class EvaluationResult:
     attributes: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class EmbeddingInvocation:
+    """Represents a single embedding model invocation (Phase 4 introduction).
+
+    Kept intentionally minimal; shares a subset of fields with LLMInvocation so
+    emitters can branch on isinstance without a separate protocol yet.
+    """
+
+    request_model: str
+    input_texts: list[str] = field(default_factory=list)
+    vector_dimensions: Optional[int] = None
+    provider: Optional[str] = None
+    attributes: Dict[str, Any] = field(default_factory=_new_str_any_dict)
+    start_time: float = field(default_factory=time.time)
+    end_time: Optional[float] = None
+    span: Optional[Span] = None
+    context_token: Optional[ContextToken] = None
+
+
 __all__ = [
     # existing exports intentionally implicit before; making explicit for new additions
     "ContentCapturingMode",
@@ -164,6 +192,7 @@ __all__ = [
     "InputMessage",
     "OutputMessage",
     "LLMInvocation",
+    "EmbeddingInvocation",
     "Error",
     "EvaluationResult",
     # backward compatibility normalization helpers

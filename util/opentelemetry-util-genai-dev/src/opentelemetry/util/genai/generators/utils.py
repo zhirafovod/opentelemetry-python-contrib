@@ -26,6 +26,12 @@ from opentelemetry.semconv._incubating.attributes import (
 )
 from opentelemetry.util.types import AttributeValue
 
+from ..attributes import (
+    GEN_AI_COMPLETION_PREFIX,
+    GEN_AI_FRAMEWORK,
+    GEN_AI_INPUT_MESSAGES,
+    GEN_AI_PROVIDER_NAME,
+)
 from ..types import InputMessage, LLMInvocation, OutputMessage, Text
 
 
@@ -59,13 +65,13 @@ def _message_to_log_record(
                 part["content"] = ""
 
     attributes: Dict[str, Any] = {
-        "gen_ai.framework": framework,
-        "gen_ai.provider.name": provider_name,
+        GEN_AI_FRAMEWORK: framework,
+        GEN_AI_PROVIDER_NAME: provider_name,
         "event.name": "gen_ai.client.inference.operation.details",
     }
 
     if capture_content:
-        attributes["gen_ai.input.messages"] = body
+        attributes[GEN_AI_INPUT_MESSAGES] = body
 
     return SDKLogRecord(
         body=body or None,
@@ -89,8 +95,8 @@ def _chat_generation_to_log_record(
     if not chat_generation:
         return None
     attributes = {
-        "gen_ai.framework": framework,
-        "gen_ai.provider.name": provider_name,
+        GEN_AI_FRAMEWORK: framework,
+        GEN_AI_PROVIDER_NAME: provider_name,
         "event.name": "gen_ai.choice",
     }
 
@@ -127,9 +133,9 @@ def _get_metric_attributes(
 ) -> Dict[str, AttributeValue]:
     attributes: Dict[str, AttributeValue] = {}
     if framework is not None:
-        attributes["gen_ai.framework"] = framework
+        attributes[GEN_AI_FRAMEWORK] = framework
     if system:
-        attributes["gen_ai.provider.name"] = system
+        attributes[GEN_AI_PROVIDER_NAME] = system
     if operation_name:
         attributes[GenAI.GEN_AI_OPERATION_NAME] = operation_name
     if request_model:
@@ -151,10 +157,10 @@ def _set_initial_span_attributes(
     if request_model:
         span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
     if framework is not None:
-        span.set_attribute("gen_ai.framework", framework)
+        span.set_attribute(GEN_AI_FRAMEWORK, framework)
     if system is not None:
         span.set_attribute(GenAI.GEN_AI_SYSTEM, system)
-        span.set_attribute("gen_ai.provider.name", system)
+        span.set_attribute(GEN_AI_PROVIDER_NAME, system)
 
 
 def _set_response_and_usage_attributes(
@@ -212,7 +218,7 @@ def _maybe_set_input_messages(
         asdict(message) for message in messages
     ]
     if message_parts:
-        span.set_attribute("gen_ai.input.messages", json.dumps(message_parts))
+        span.set_attribute(GEN_AI_INPUT_MESSAGES, json.dumps(message_parts))
 
 
 def _set_chat_generation_attrs(
@@ -224,9 +230,11 @@ def _set_chat_generation_attrs(
             if isinstance(part, Text):
                 content = part.content
                 break
-        span.set_attribute(f"gen_ai.completion.{index}.content", content or "")
         span.set_attribute(
-            f"gen_ai.completion.{index}.role", chat_generation.role
+            f"{GEN_AI_COMPLETION_PREFIX}.{index}.content", content or ""
+        )
+        span.set_attribute(
+            f"{GEN_AI_COMPLETION_PREFIX}.{index}.role", chat_generation.role
         )
 
 

@@ -76,11 +76,11 @@ class TestVersion(unittest.TestCase):
         assert get_content_capturing_mode() == ContentCapturingMode.NO_CONTENT
 
     @patch_env_vars(stability_mode="default", content_capturing="True")
-    def test_get_content_capturing_mode_raises_exception_when_semconv_stability_default(
+    def test_get_content_capturing_mode_defaults_to_no_content_when_semconv_stability_default(
         self,
     ):  # pylint: disable=no-self-use
-        with self.assertRaises(ValueError):
-            get_content_capturing_mode()
+        # Default to NO_CONTENT when not in experimental mode
+        assert get_content_capturing_mode() == ContentCapturingMode.NO_CONTENT
 
     @patch_env_vars(
         stability_mode="gen_ai_latest_experimental",

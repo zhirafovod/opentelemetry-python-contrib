@@ -3,20 +3,20 @@
 # single existing generator implementation (span/span+metric/span+metric+event).
 from __future__ import annotations
 
-from typing import Iterable, List
+from typing import Any, Iterable, List
 
 from .interfaces import GeneratorProtocol
-from .types import Error, LLMInvocation
+from .types import Error
 
 
 class CompositeGenerator(GeneratorProtocol):
     """Delegates lifecycle calls to an ordered list of generator instances.
 
-    Enhanced in Phase 2 to enforce ordering semantics:
+    Ordering semantics:
     - start: span emitters first, then others
     - finish: non-span emitters first, span emitters last
     - error: non-span emitters first, span emitters last
-    This ensures metrics/events are emitted while the span is still open.
+    Ensures metrics/events happen while span still open.
     """
 
     def __init__(self, generators: Iterable[GeneratorProtocol]):
@@ -55,31 +55,35 @@ class CompositeGenerator(GeneratorProtocol):
                 span_emitters.append(g)
             else:
                 other_emitters.append(g)
-        # Guarantee deterministic ordering: only one span emitter expected, but keep list
         return span_emitters, other_emitters
 
     # Lifecycle ------------------------------------------------------------
-    def start(self, invocation: LLMInvocation) -> None:  # type: ignore[override]
+    def start(self, obj: Any) -> None:  # type: ignore[override]
         span_emitters, other_emitters = self._partition()
         for g in span_emitters:
-            g.start(invocation)
+            if getattr(g, "handles", lambda o: True)(obj):
+                g.start(obj)
         for g in other_emitters:
-            g.start(invocation)
+            if getattr(g, "handles", lambda o: True)(obj):
+                g.start(obj)
 
-    def finish(self, invocation: LLMInvocation) -> None:  # type: ignore[override]
+    def finish(self, obj: Any) -> None:  # type: ignore[override]
         span_emitters, other_emitters = self._partition()
         for g in other_emitters:
-            g.finish(invocation)
+            if getattr(g, "handles", lambda o: True)(obj):
+                g.finish(obj)
         for g in span_emitters:
-            g.finish(invocation)
+            if getattr(g, "handles", lambda o: True)(obj):
+                g.finish(obj)
 
-    def error(self, error: Error, invocation: LLMInvocation) -> None:  # type: ignore[override]
+    def error(self, error: Error, obj: Any) -> None:  # type: ignore[override]
         span_emitters, other_emitters = self._partition()
         for g in other_emitters:
-            # Allow metrics (duration) capture before span ends
-            try:
-                g.error(error, invocation)
-            except Exception:  # pragma: no cover
-                pass
+            if getattr(g, "handles", lambda o: True)(obj):
+                try:
+                    g.error(error, obj)
+                except Exception:  # pragma: no cover
+                    pass
         for g in span_emitters:
-            g.error(error, invocation)
+            if getattr(g, "handles", lambda o: True)(obj):
+                g.error(error, obj)

@@ -84,11 +84,11 @@ OTEL_INSTRUMENTATION_GENAI_GENERATOR = "OTEL_INSTRUMENTATION_GENAI_GENERATOR"
 """
 .. envvar:: OTEL_INSTRUMENTATION_GENAI_GENERATOR
 
-Select telemetry generator strategy. Accepted values (case-insensitive):
+Select telemetry flavor (composed emitters). Accepted values (case-insensitive):
 
-* ``span`` (default) - spans only (SpanGenerator)
-* ``span_metric`` - spans + metrics (SpanMetricGenerator)
-* ``span_metric_event`` - spans + metrics + events (SpanMetricEventGenerator)
+* ``span`` (default) - spans only
+* ``span_metric`` - spans + metrics
+* ``span_metric_event`` - spans + metrics + content events
 
 Invalid or unset values fallback to ``span``.
 """

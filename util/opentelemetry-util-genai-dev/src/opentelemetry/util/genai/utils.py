@@ -38,14 +38,11 @@ def is_experimental_mode() -> bool:
 
 
 def get_content_capturing_mode() -> ContentCapturingMode:
-    """This function should not be called when GEN_AI stability mode is set to DEFAULT.
-
-    When the GEN_AI stability mode is DEFAULT this function will raise a ValueError -- see the code below."""
+    """Return content capturing mode, defaulting to NO_CONTENT if not in experimental mode or unset/invalid envvar."""
     envvar = os.environ.get(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT)
+    # Default to NO_CONTENT if not in experimental mode
     if not is_experimental_mode():
-        raise ValueError(
-            "This function should never be called when StabilityMode is not experimental."
-        )
+        return ContentCapturingMode.NO_CONTENT
     if not envvar:
         return ContentCapturingMode.NO_CONTENT
     try:
