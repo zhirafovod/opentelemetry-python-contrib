@@ -149,9 +149,9 @@ Phase 3.5 Status:
 legacy generator files: COMPLETE
 attributes.py:      COMPLETE
 config.py:          COMPLETE
-spanEmitter rename: PARTIAL
+spanEmitter rename: COMPLETE
 generic lifecycle:  COMPLETE
-root logic fix:     PARTIAL
+root logic fix:     COMPLETE
 tests (3.5 set):    PARTIAL
 handles() API:      COMPLETE
 

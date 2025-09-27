@@ -45,7 +45,7 @@ Core Concepts
 
 Current Generator Variants (see ``generators/`` README for deep detail):
 
-* ``SpanGenerator`` (default): spans only + optional input/output message attributes.
+* ``SpanEmitter`` (default): spans only + optional input/output message attributes.
 * ``SpanMetricGenerator``: spans + metrics (duration, tokens) + optional input/output message attributes
 * ``SpanMetricEventGenerator``: spans + metrics + structured log events.
 
@@ -91,7 +91,7 @@ TelemetryHandler
 ----------------
 Entry point helper (singleton via ``get_telemetry_handler``). Responsibilities:
 
-* Selects generator (currently ``SpanGenerator``) & configures capture behavior
+* Selects generator (currently ``SpanEmitter``) & configures capture behaviour
 * Applies semantic convention schema URL
 * Shields instrumentation code from direct span manipulation
 

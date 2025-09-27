@@ -12,12 +12,12 @@ content capture mode / configuration):
 ========================  =====  =======  ======================  =========================  ==================
 Generator                 Spans  Metrics  Structured Log Events   Message Content Capture     Intended Stability
 ========================  =====  =======  ======================  =========================  ==================
-SpanGenerator             ✅     ❌       ❌                       Optional (env+flag)        Default / earliest
+SpanEmitter               ✅     ❌       ❌                       Optional (env+flag)        Default / earliest
 SpanMetricGenerator       ✅     ✅       ❌                       Optional                  Experimental
 SpanMetricEventGenerator  ✅     ✅       ✅ (choices & inputs)     Optional                  Experimental
 ========================  =====  =======  ======================  =========================  ==================
 
-Note: Only ``SpanGenerator`` is presently wired by ``TelemetryHandler`` for general usage. Others are
+Note: Only ``SpanEmitter`` is presently wired by ``TelemetryHandler`` for general usage. Others are
 available for iterative design and may evolve.
 
 Common Concepts
@@ -34,7 +34,7 @@ Shared data model (``../src/opentelemetry/util/genai/types.py``):
 * ``InputMessage`` / ``OutputMessage`` – chat-style messages.
 * ``Text`` / ``ToolCall`` / ``ToolCallResponse`` – structured parts.
 
-SpanGenerator
+SpanEmitter
 -------------
 Lightweight implementation creating a single CLIENT span named::
 
@@ -172,4 +172,3 @@ Testing Notes
 -------------
 * Core tests exercise ``SpanGenerator`` (naming, attributes, parent/child context).
 * Add targeted tests before depending heavily on experimental variants in production.
-

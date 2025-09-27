@@ -4,7 +4,7 @@ from opentelemetry.util.genai.emission.emitters_content_events import (
     ContentEventsEmitter,
 )
 from opentelemetry.util.genai.emission_composite import CompositeGenerator
-from opentelemetry.util.genai.generators import SpanGenerator
+from opentelemetry.util.genai.generators import SpanEmitter
 from opentelemetry.util.genai.types import (
     InputMessage,
     LLMInvocation,
@@ -22,8 +22,8 @@ class DummyLogger:
 
 
 def _build_composite(logger: DummyLogger, capture_content: bool):
-    span = SpanGenerator(
-        capture_content=False
+    span = SpanEmitter(
+        tracer=None, capture_content=False
     )  # span kept lean for event mode
     content = ContentEventsEmitter(
         logger=logger, capture_content=capture_content

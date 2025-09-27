@@ -55,7 +55,7 @@ from opentelemetry import _events as _otel_events
 from opentelemetry import metrics as _metrics
 from opentelemetry import trace as _trace_mod
 from opentelemetry.semconv.schemas import Schemas
-from opentelemetry.trace import Link, get_tracer, use_span
+from opentelemetry.trace import Link, get_tracer
 
 # Side-effect import registers builtin evaluators
 from opentelemetry.util.genai import (
@@ -70,7 +70,7 @@ from opentelemetry.util.genai.evaluators.registry import (
     get_evaluator,
     register_evaluator,
 )
-from opentelemetry.util.genai.generators import SpanGenerator
+from opentelemetry.util.genai.generators import SpanEmitter
 from opentelemetry.util.genai.types import (
     ContentCapturingMode,
     EmbeddingInvocation,
@@ -138,7 +138,7 @@ class TelemetryHandler:
 
         # Compose emitters based on parsed settings
         if settings.generator_kind == "span_metric_event":
-            span_emitter = SpanGenerator(
+            span_emitter = SpanEmitter(
                 tracer=self._tracer,
                 capture_content=False,  # keep span lean
             )
@@ -149,14 +149,14 @@ class TelemetryHandler:
             )
             emitters = [span_emitter, metrics_emitter, content_emitter]
         elif settings.generator_kind == "span_metric":
-            span_emitter = SpanGenerator(
+            span_emitter = SpanEmitter(
                 tracer=self._tracer,
                 capture_content=capture_span,
             )
             metrics_emitter = MetricsEmitter(meter=meter)
             emitters = [span_emitter, metrics_emitter]
         else:
-            span_emitter = SpanGenerator(
+            span_emitter = SpanEmitter(
                 tracer=self._tracer,
                 capture_content=capture_span,
             )
@@ -209,19 +209,8 @@ class TelemetryHandler:
         """Start an LLM invocation and create a pending span entry."""
         # Ensure capture content settings are current
         self._refresh_capture_content()
-        # Start invocation span, inheriting parent context if present
-        prev_span = getattr(self, "_current_span", None)
-        if prev_span is not None:
-            cm_prev = use_span(prev_span, end_on_exit=False)
-            cm_prev.__enter__()
-            try:
-                self._generator.start(invocation)
-            finally:
-                cm_prev.__exit__(None, None, None)
-        else:
-            self._generator.start(invocation)
-        # Track current span for nested calls
-        self._current_span = invocation.span
+        # Start invocation span; tracer context propagation handles parent/child links
+        self._generator.start(invocation)
         return invocation
 
     def stop_llm(self, invocation: LLMInvocation) -> LLMInvocation:

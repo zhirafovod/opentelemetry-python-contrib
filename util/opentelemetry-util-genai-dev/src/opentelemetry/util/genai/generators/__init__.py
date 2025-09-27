@@ -1,3 +1,3 @@
-from .span_generator import SpanEmitter, SpanGenerator
+from .span_emitter import SpanEmitter
 
-__all__ = ["SpanGenerator", "SpanEmitter"]
+__all__ = ["SpanEmitter"]
