@@ -1,10 +1,8 @@
 import pytest
 
-from opentelemetry.util.genai.emission.emitters_content_events import (
-    ContentEventsEmitter,
-)
-from opentelemetry.util.genai.emission_composite import CompositeGenerator
-from opentelemetry.util.genai.generators import SpanEmitter
+from opentelemetry.util.genai.emitters.content_events import ContentEventsEmitter
+from opentelemetry.util.genai.emitters.composite import CompositeGenerator
+from opentelemetry.util.genai.emitters.span import SpanEmitter
 from opentelemetry.util.genai.types import (
     InputMessage,
     LLMInvocation,

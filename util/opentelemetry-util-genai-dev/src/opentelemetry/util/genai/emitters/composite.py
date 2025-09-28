@@ -1,22 +1,19 @@
-# Composite generator (Phase 1)
-# Thin wrapper that allows future multiple emitters while today delegating to a
-# single existing generator implementation (span/span+metric/span+metric+event).
+# CompositeGenerator relocated from emission_composite.py
 from __future__ import annotations
 
 from typing import Any, Iterable, List
 
-from .interfaces import GeneratorProtocol
-from .types import Error
+from ..interfaces import GeneratorProtocol
+from ..types import Error
 
 
 class CompositeGenerator(GeneratorProtocol):
-    """Delegates lifecycle calls to an ordered list of generator instances.
+    """Delegates lifecycle calls to an ordered list of emitter instances.
 
     Ordering semantics:
-    - start: span emitters first, then others
-    - finish: non-span emitters first, span emitters last
-    - error: non-span emitters first, span emitters last
-    Ensures metrics/events happen while span still open.
+      * start: span emitters first (so span context is available), then others
+      * finish/error: non-span emitters first, span emitters last (so metrics/events
+        observe active span, and span closes last)
     """
 
     def __init__(self, generators: Iterable[GeneratorProtocol]):
@@ -45,7 +42,6 @@ class CompositeGenerator(GeneratorProtocol):
                 pass
         raise AttributeError(item)
 
-    # Internal helpers -----------------------------------------------------
     def _partition(self):
         span_emitters = []
         other_emitters = []
@@ -57,7 +53,6 @@ class CompositeGenerator(GeneratorProtocol):
                 other_emitters.append(g)
         return span_emitters, other_emitters
 
-    # Lifecycle ------------------------------------------------------------
     def start(self, obj: Any) -> None:  # type: ignore[override]
         span_emitters, other_emitters = self._partition()
         for g in span_emitters:
@@ -87,3 +82,4 @@ class CompositeGenerator(GeneratorProtocol):
         for g in span_emitters:
             if getattr(g, "handles", lambda o: True)(obj):
                 g.error(error, obj)
+

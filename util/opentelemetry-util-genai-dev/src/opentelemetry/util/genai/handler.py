@@ -61,16 +61,17 @@ from opentelemetry.trace import Link, get_tracer
 from opentelemetry.util.genai import (
     evaluators as _genai_evaluators,  # noqa: F401
 )
-from opentelemetry.util.genai.emission.emitters_content_events import (
+# Updated imports: unified emitters package
+from opentelemetry.util.genai.emitters import (
     ContentEventsEmitter,
+    MetricsEmitter,
+    CompositeGenerator,
+    SpanEmitter,
 )
-from opentelemetry.util.genai.emission.emitters_metrics import MetricsEmitter
-from opentelemetry.util.genai.emission_composite import CompositeGenerator
 from opentelemetry.util.genai.evaluators.registry import (
     get_evaluator,
     register_evaluator,
 )
-from opentelemetry.util.genai.generators import SpanEmitter
 from opentelemetry.util.genai.types import (
     ContentCapturingMode,
     EmbeddingInvocation,

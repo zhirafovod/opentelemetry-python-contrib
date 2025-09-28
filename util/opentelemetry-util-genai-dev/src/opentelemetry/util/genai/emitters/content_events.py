@@ -4,11 +4,8 @@ from typing import Any, Optional
 
 from opentelemetry._logs import Logger, get_logger
 
-from ..generators.utils import (
-    _chat_generation_to_log_record,
-    _message_to_log_record,
-)
 from ..types import Error, LLMInvocation
+from .utils import _chat_generation_to_log_record, _message_to_log_record
 
 
 class ContentEventsEmitter:
@@ -27,15 +24,10 @@ class ContentEventsEmitter:
     role = "content_event"
     name = "semconv_content_events"
 
-    def __init__(
-        self,
-        logger: Optional[Logger] = None,
-        capture_content: bool = False,
-    ):
+    def __init__(self, logger: Optional[Logger] = None, capture_content: bool = False):
         self._logger: Logger = logger or get_logger(__name__)
         self._capture_content = capture_content
 
-    # Lifecycle -------------------------------------------------------------
     def start(self, obj: Any) -> None:
         if not isinstance(obj, LLMInvocation) or not self._capture_content:
             return
@@ -61,7 +53,6 @@ class ContentEventsEmitter:
         invocation = obj
         if invocation.span is None or not invocation.output_messages:
             return
-        # Use chat-generation log records for output messages
         for index, msg in enumerate(invocation.output_messages):
             try:
                 record = _chat_generation_to_log_record(
@@ -80,8 +71,8 @@ class ContentEventsEmitter:
                 pass
 
     def error(self, error: Error, obj: Any) -> None:
-        # No content events on error
         return None
 
     def handles(self, obj: Any) -> bool:
         return isinstance(obj, LLMInvocation)
+
