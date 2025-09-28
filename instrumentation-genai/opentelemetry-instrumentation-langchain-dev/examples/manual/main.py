@@ -19,7 +19,7 @@ from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
     OTLPSpanExporter,
 )
-from opentelemetry.instrumentation.langchain import LangChainInstrumentor
+from opentelemetry.instrumentation.langchain import LangchainInstrumentor
 from opentelemetry.sdk._events import EventLoggerProvider
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
@@ -265,7 +265,7 @@ def agent_demo(llm: ChatOpenAI):
 
 def main():
     # Set up instrumentation
-    LangChainInstrumentor().instrument()
+    LangchainInstrumentor().instrument()
 
     # Set up Cisco CircuIT credentials from environment
     cisco_client_id = os.getenv("CISCO_CLIENT_ID")
@@ -299,7 +299,7 @@ def main():
     agent_demo(llm)
 
     # Un-instrument after use
-    LangChainInstrumentor().uninstrument()
+    LangchainInstrumentor().uninstrument()
 
 
 if __name__ == "__main__":
