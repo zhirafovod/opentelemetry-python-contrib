@@ -4,8 +4,10 @@ import os
 from datetime import datetime, timedelta
 
 import requests
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+# Add BaseMessage for typed state
+from langchain_core.messages import BaseMessage
 
 from opentelemetry import _events, _logs, metrics, trace
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
@@ -110,104 +112,6 @@ class TokenManager:
                 f.write(b"\0" * length)
             os.remove(self.cache_file)
 
-
-def agent_demo(llm: ChatOpenAI):
-    """Demonstrate a LangGraph + LangChain agent with:
-    - A tool (get_capital)
-    - A subagent specialized for capital questions
-    - A simple classifier node routing to subagent or general LLM response
-
-    Tracing & metrics:
-      * Each LLM call is instrumented via LangChainInstrumentor.
-      * Tool invocation will create its own span.
-    """
-    try:
-        from langchain_core.tools import tool
-        from langchain_core.messages import AIMessage
-        from langgraph.graph import StateGraph, END
-    except ImportError:  # pragma: no cover - optional dependency
-        print("LangGraph or necessary LangChain core tooling not installed; skipping agent demo.")
-        return
-
-    # ---- Tool Definition ----
-    capitals_map = {
-        "france": "Paris",
-        "germany": "Berlin",
-        "italy": "Rome",
-        "spain": "Madrid",
-        "japan": "Tokyo",
-        "canada": "Ottawa",
-        "australia": "Canberra",
-        "brazil": "Brasília",
-        "india": "New Delhi",
-        "united states": "Washington, D.C.",
-        "united kingdom": "London",
-    }
-
-    @tool
-    def get_capital(country: str) -> str:
-        """Return the capital city for a given country (case-insensitive)."""
-        return capitals_map.get(country.strip().lower(), "Unknown")
-
-    # ---- Subagent (Capital Specialist) ----
-    # Simple function representing a subagent: it uses the tool explicitly and formats an answer.
-    def capital_subagent(state):
-        question: str = state["input"]
-        # naive extraction: last word 'France?' -> 'France'
-        country = question.rstrip("?!. ").split(" ")[-1]
-        cap = get_capital.run(country)  # tool invocation spans should appear
-        answer = f"The capital of {country.capitalize()} is {cap}."
-        return {"messages": [AIMessage(content=answer)], "output": answer}
-
-    # ---- General Node (Fallback) ----
-    def general_node(state):
-        question: str = state["input"]
-        response = llm.invoke([
-            SystemMessage(content="You are a helpful, concise assistant."),
-            HumanMessage(content=question),
-        ])
-        return {"messages": [response], "output": getattr(response, "content", str(response))}
-
-    # ---- Classifier Node ----
-    def classifier(state):
-        q: str = state["input"].lower()
-        if "capital" in q or "city" in q:
-            return {"route": "capital"}
-        return {"route": "general"}
-
-    # LangGraph state: we'll use a minimal dict-like state.
-    graph = StateGraph(dict)
-    graph.add_node("classify", classifier)
-    graph.add_node("capital_agent", capital_subagent)
-    graph.add_node("general_agent", general_node)
-
-    # Edges based on classifier route
-    def route_decider(state):
-        return state.get("route", "general")
-
-    graph.add_conditional_edges("classify", route_decider, {"capital": "capital_agent", "general": "general_agent"})
-    graph.add_edge("capital_agent", END)
-    graph.add_edge("general_agent", END)
-
-    graph.set_entry_point("classify")
-    app = graph.compile()
-
-    demo_questions = [
-        "What is the capital of France?",
-        "Explain why the sky is blue in one sentence.",
-        "What is the capital city of Brazil?",
-    ]
-
-    print("\n--- LangGraph Agent Demo ---")
-    for q in demo_questions:
-        print(f"\nUser Question: {q}")
-        result = app.invoke({"input": q})
-        # result should contain output & messages set by nodes
-        print("Agent Output:", result.get("output"))
-
-    print("--- End Agent Demo ---\n")
-
-
 def llm_invocation_demo(llm: ChatOpenAI):
     import random
 
@@ -248,6 +152,115 @@ def llm_invocation_demo(llm: ChatOpenAI):
 
     result = llm.invoke(messages)
     print(f"LLM output: {getattr(result, 'content', result)}")
+
+def agent_demo(llm: ChatOpenAI):
+    """Demonstrate a LangGraph + LangChain agent with:
+    - A tool (get_capital)
+    - A subagent specialized for capital questions
+    - A simple classifier node routing to subagent or general LLM response
+
+    Tracing & metrics:
+      * Each LLM call is instrumented via LangChainInstrumentor.
+      * Tool invocation will create its own span.
+    """
+    try:
+        from langchain_core.tools import tool
+        from langchain_core.messages import AIMessage
+        from langgraph.graph import StateGraph, END
+        from typing import TypedDict, Annotated
+        from langgraph.graph.message import add_messages
+    except ImportError:  # pragma: no cover - optional dependency
+        print("LangGraph or necessary LangChain core tooling not installed; skipping agent demo.")
+        return
+
+    # Define structured state with additive messages so multiple nodes can append safely.
+    class AgentState(TypedDict, total=False):
+        input: str
+        # messages uses additive channel combining lists across steps
+        messages: Annotated[list[BaseMessage], add_messages]
+        route: str
+        output: str
+
+    # ---- Tool Definition ----
+    capitals_map = {
+        "france": "Paris",
+        "germany": "Berlin",
+        "italy": "Rome",
+        "spain": "Madrid",
+        "japan": "Tokyo",
+        "canada": "Ottawa",
+        "australia": "Canberra",
+        "brazil": "Brasília",
+        "india": "New Delhi",
+        "united states": "Washington, D.C.",
+        "united kingdom": "London",
+    }
+
+    @tool
+    def get_capital(country: str) -> str:  # noqa: D401
+        """Return the capital city for the given country name.
+
+        The lookup is case-insensitive and trims punctuation/whitespace.
+        If the country is unknown, returns the string "Unknown".
+        """
+        return capitals_map.get(country.strip().lower(), "Unknown")
+
+    # ---- Subagent (Capital Specialist) ----
+    def capital_subagent(state: AgentState) -> AgentState:
+        question: str = state["input"]
+        country = question.rstrip("?!. ").split(" ")[-1]
+        cap = get_capital.run(country)
+        answer = f"The capital of {country.capitalize()} is {cap}."
+        return {"messages": [AIMessage(content=answer)], "output": answer}
+
+    # ---- General Node (Fallback) ----
+    def general_node(state: AgentState) -> AgentState:
+        question: str = state["input"]
+        response = llm.invoke([
+            SystemMessage(content="You are a helpful, concise assistant."),
+            HumanMessage(content=question),
+        ])
+        # Ensure we wrap response as AIMessage if needed
+        ai_msg = response if isinstance(response, AIMessage) else AIMessage(content=getattr(response, "content", str(response)))
+        return {"messages": [ai_msg], "output": getattr(response, "content", str(response))}
+
+    # ---- Classifier Node ----
+    def classifier(state: AgentState) -> AgentState:
+        q: str = state["input"].lower()
+        return {"route": "capital" if ("capital" in q or "city" in q) else "general"}
+
+    graph = StateGraph(AgentState)
+    graph.add_node("classify", classifier)
+    graph.add_node("capital_agent", capital_subagent)
+    graph.add_node("general_agent", general_node)
+
+    def route_decider(state: AgentState):  # returns which edge to follow
+        return state.get("route", "general")
+
+    graph.add_conditional_edges(
+        "classify",
+        route_decider,
+        {"capital": "capital_agent", "general": "general_agent"},
+    )
+    graph.add_edge("capital_agent", END)
+    graph.add_edge("general_agent", END)
+    graph.set_entry_point("classify")
+    app = graph.compile()
+
+    demo_questions = [
+        "What is the capital of France?",
+        "Explain why the sky is blue in one sentence.",
+        "What is the capital city of Brazil?",
+    ]
+
+    print("\n--- LangGraph Agent Demo ---")
+    for q in demo_questions:
+        print(f"\nUser Question: {q}")
+        # Initialize state with additive messages list.
+        result_state = app.invoke({"input": q, "messages": []})
+        print("Agent Output:", result_state.get("output"))
+    print("--- End Agent Demo ---\n")
+
 
 
 def main():
