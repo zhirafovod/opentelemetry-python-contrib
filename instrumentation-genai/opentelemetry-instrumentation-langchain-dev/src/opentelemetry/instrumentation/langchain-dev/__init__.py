@@ -100,10 +100,10 @@ class LangChainInstrumentor(BaseInstrumentor):
 
     def _instrument(self, **kwargs):
         # Ensure metrics + events generator by default
-        from opentelemetry.util.genai.environment_variables import OTEL_INSTRUMENTATION_GENAI_GENERATOR
+        from opentelemetry.util.genai.environment_variables import OTEL_INSTRUMENTATION_GENAI_EMITTERS
 
-        if not os.environ.get(OTEL_INSTRUMENTATION_GENAI_GENERATOR):
-            os.environ[OTEL_INSTRUMENTATION_GENAI_GENERATOR] = "span_metric_event"
+        if not os.environ.get(OTEL_INSTRUMENTATION_GENAI_EMITTERS):
+            os.environ[OTEL_INSTRUMENTATION_GENAI_EMITTERS] = "span_metric_event"
         tracer_provider = kwargs.get("tracer_provider")
         meter_provider = kwargs.get("meter_provider")
         # Create dedicated handler bound to provided tracer and meter providers (ensures spans and metrics go to test exporters)

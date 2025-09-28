@@ -2,10 +2,10 @@ import os
 from dataclasses import dataclass
 
 from .environment_variables import (
+    # OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_EMITTERS,
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE,
-    OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE,
     OTEL_INSTRUMENTATION_GENAI_EVALUATORS,
-    OTEL_INSTRUMENTATION_GENAI_GENERATOR,
 )
 from .types import ContentCapturingMode
 from .utils import get_content_capturing_mode
@@ -18,11 +18,10 @@ class Settings:
     """
 
     generator_kind: str
-    capture_content_span: bool
-    capture_content_events: bool
     evaluation_enabled: bool
     evaluation_evaluators: list[str]
-    evaluation_span_mode: str
+    capture_content_span: bool
+    capture_content_events: bool
 
 
 def parse_env() -> Settings:
@@ -31,16 +30,36 @@ def parse_env() -> Settings:
     """
     # Generator flavor: span, span_metric, span_metric_event
     gen_choice = (
-        os.environ.get(OTEL_INSTRUMENTATION_GENAI_GENERATOR, "span")
+        os.environ.get(OTEL_INSTRUMENTATION_GENAI_EMITTERS, "span")
         .strip()
         .lower()
     )
-    # Content capturing mode (span vs event vs both)
+
+    # capture_content = os.environ.get(
+    #     os.environ.get(
+    #         OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, "false"
+    #     )
+    #     .strip()
+    #     .lower()
+    # )
+
+    # # Content capturing mode (span vs event vs both)
     try:
+        # capture_content = os.environ.get(
+        #     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+        # )
         mode = get_content_capturing_mode()
     except Exception:
         # If experimental mode not enabled or parsing fails, default to NO_CONTENT
         mode = ContentCapturingMode.NO_CONTENT
+    # capture_content_events = False
+    # capture_content_span = False
+    # if capture_content == "true":
+    #     if gen_choice == "span_metric_event":
+    #         capture_content_events = True
+    #     else:
+    #         capture_content_span = True
+
     if gen_choice == "span_metric_event":
         capture_content_events = mode in (
             ContentCapturingMode.EVENT_ONLY,
@@ -72,13 +91,13 @@ def parse_env() -> Settings:
             ).split(",")
             if n.strip()
         ],
-        evaluation_span_mode=(
-            lambda v: v if v in ("off", "aggregated", "per_metric") else "off"
-        )(
-            os.environ.get(
-                OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE, "off"
-            )
-            .strip()
-            .lower()
-        ),
+        # evaluation_span_mode=(
+        #     lambda v: v if v in ("off", "aggregated", "per_metric") else "off"
+        # )(
+        #     os.environ.get(
+        #         OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE, "off"
+        #     )
+        #     .strip()
+        #     .lower()
+        # ),
     )

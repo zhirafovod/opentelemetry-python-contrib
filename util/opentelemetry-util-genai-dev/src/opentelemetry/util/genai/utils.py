@@ -22,6 +22,7 @@ from opentelemetry.instrumentation._semconv import (
 )
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE,
 )
 from opentelemetry.util.genai.types import ContentCapturingMode
 
@@ -39,18 +40,21 @@ def is_experimental_mode() -> bool:
 
 def get_content_capturing_mode() -> ContentCapturingMode:
     """Return content capturing mode, defaulting to NO_CONTENT if not in experimental mode or unset/invalid envvar."""
-    envvar = os.environ.get(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT)
+    capture_message_content = os.environ.get(
+        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+    )
+    capture_message_content_mode = os.environ.get(
+        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE
+    )
     # Default to NO_CONTENT if not in experimental mode
-    if not is_experimental_mode():
-        return ContentCapturingMode.NO_CONTENT
-    if not envvar:
+    if not capture_message_content:
         return ContentCapturingMode.NO_CONTENT
     try:
-        return ContentCapturingMode[envvar.upper()]
+        return ContentCapturingMode[capture_message_content_mode.upper()]
     except KeyError:
         logger.warning(
             "%s is not a valid option for `%s` environment variable. Must be one of %s. Defaulting to `NO_CONTENT`.",
-            envvar,
+            capture_message_content_mode,
             OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
             ", ".join(e.name for e in ContentCapturingMode),
         )

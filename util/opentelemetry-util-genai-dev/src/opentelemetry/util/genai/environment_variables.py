@@ -15,6 +15,20 @@
 OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT = (
     "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
 )
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+
+true / false (default: false)
+"""
+
+OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE = (
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE"
+)
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE
+One of ``SPAN_ONLY``, ``EVENT_ONLY``, ``SPAN_AND_EVENT`` (default: ``SPAN_ONLY``).
+
+"""
 
 OTEL_INSTRUMENTATION_GENAI_UPLOAD_HOOK = (
     "OTEL_INSTRUMENTATION_GENAI_UPLOAD_HOOK"
@@ -67,22 +81,11 @@ Comma-separated list of evaluator names to run (e.g. ``deepeval,sentiment``). If
 and explicit names are not passed to ``evaluate_llm``, no evaluators are run.
 """
 
-OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE = (
-    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE"
-)
+OTEL_INSTRUMENTATION_GENAI_EMITTERS = "OTEL_INSTRUMENTATION_GENAI_EMITTERS"
 """
-.. envvar:: OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_EMITTERS
 
-Controls creation of evaluation spans. Accepted values:
-
-* ``off`` (default): No evaluation spans are created.
-* ``aggregated``: A single span summarizing all evaluator results (implemented).
-* ``per_metric``: One span per evaluation metric (implemented).
-"""
-
-OTEL_INSTRUMENTATION_GENAI_GENERATOR = "OTEL_INSTRUMENTATION_GENAI_GENERATOR"
-"""
-.. envvar:: OTEL_INSTRUMENTATION_GENAI_GENERATOR
+Comma-separated list of generators names to run (e.g. ``span,traceloop``).
 
 Select telemetry flavor (composed emitters). Accepted values (case-insensitive):
 
@@ -90,7 +93,7 @@ Select telemetry flavor (composed emitters). Accepted values (case-insensitive):
 * ``span_metric`` - spans + metrics
 * ``span_metric_event`` - spans + metrics + content events
 
-Invalid or unset values fallback to ``span``.
+Invalid or unset values fallback to ``span_metric``.
 """
 
 __all__ = [
@@ -101,7 +104,6 @@ __all__ = [
     # evaluation
     "OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE",
     "OTEL_INSTRUMENTATION_GENAI_EVALUATORS",
-    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE",
     # generator selection
-    "OTEL_INSTRUMENTATION_GENAI_GENERATOR",
+    "OTEL_INSTRUMENTATION_GENAI_EMITTERS",
 ]
