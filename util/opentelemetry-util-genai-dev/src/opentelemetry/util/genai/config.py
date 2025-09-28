@@ -5,6 +5,7 @@ from .environment_variables import (
     # OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
     OTEL_INSTRUMENTATION_GENAI_EMITTERS,
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE,
+    OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE,
     OTEL_INSTRUMENTATION_GENAI_EVALUATORS,
 )
 from .types import ContentCapturingMode
@@ -22,45 +23,53 @@ class Settings:
     evaluation_evaluators: list[str]
     capture_content_span: bool
     capture_content_events: bool
+    # New fields for multi-token emitter selection
+    extra_emitters: list[str]
+    only_traceloop_compat: bool
+    raw_tokens: list[str]
+    evaluation_span_mode: str
 
 
 def parse_env() -> Settings:
     """
     Parse relevant environment variables into a Settings object.
+
+    Supports comma-separated OTEL_INSTRUMENTATION_GENAI_EMITTERS allowing extra emitters
+    (e.g. "span,traceloop_compat"). Baseline values control the core span/metric/event set.
     """
-    # Generator flavor: span, span_metric, span_metric_event
-    gen_choice = (
-        os.environ.get(OTEL_INSTRUMENTATION_GENAI_EMITTERS, "span")
-        .strip()
-        .lower()
-    )
+    raw_val = os.environ.get(OTEL_INSTRUMENTATION_GENAI_EMITTERS, "span")
+    tokens = [t.strip().lower() for t in raw_val.split(",") if t.strip()]
+    if not tokens:
+        tokens = ["span"]
+    baseline_candidates = {"span", "span_metric", "span_metric_event"}
+    baseline = next((t for t in tokens if t in baseline_candidates), None)
+    extra_emitters: list[str] = []
+    if baseline is None:
+        # No baseline provided. If traceloop_compat only, treat specially.
+        if tokens == ["traceloop_compat"]:
+            baseline = "span"  # placeholder baseline but we'll suppress later
+            extra_emitters = ["traceloop_compat"]
+            only_traceloop = True
+        else:
+            # Fallback to span and keep the others as extras
+            baseline = "span"
+            extra_emitters = [
+                t for t in tokens if t not in baseline_candidates
+            ]
+            only_traceloop = False
+    else:
+        extra_emitters = [t for t in tokens if t != baseline]
+        only_traceloop = tokens == [
+            "traceloop_compat"
+        ]  # True only if sole token
 
-    # capture_content = os.environ.get(
-    #     os.environ.get(
-    #         OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, "false"
-    #     )
-    #     .strip()
-    #     .lower()
-    # )
-
-    # # Content capturing mode (span vs event vs both)
+    # Content capturing mode (span vs event vs both)
     try:
-        # capture_content = os.environ.get(
-        #     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
-        # )
         mode = get_content_capturing_mode()
     except Exception:
-        # If experimental mode not enabled or parsing fails, default to NO_CONTENT
         mode = ContentCapturingMode.NO_CONTENT
-    # capture_content_events = False
-    # capture_content_span = False
-    # if capture_content == "true":
-    #     if gen_choice == "span_metric_event":
-    #         capture_content_events = True
-    #     else:
-    #         capture_content_span = True
 
-    if gen_choice == "span_metric_event":
+    if baseline == "span_metric_event":
         capture_content_events = mode in (
             ContentCapturingMode.EVENT_ONLY,
             ContentCapturingMode.SPAN_AND_EVENT,
@@ -73,7 +82,7 @@ def parse_env() -> Settings:
             ContentCapturingMode.SPAN_AND_EVENT,
         )
     return Settings(
-        generator_kind=gen_choice,
+        generator_kind=baseline,
         capture_content_span=capture_content_span,
         capture_content_events=capture_content_events,
         evaluation_enabled=(
@@ -91,13 +100,16 @@ def parse_env() -> Settings:
             ).split(",")
             if n.strip()
         ],
-        # evaluation_span_mode=(
-        #     lambda v: v if v in ("off", "aggregated", "per_metric") else "off"
-        # )(
-        #     os.environ.get(
-        #         OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE, "off"
-        #     )
-        #     .strip()
-        #     .lower()
-        # ),
+        extra_emitters=extra_emitters,
+        only_traceloop_compat=only_traceloop,
+        raw_tokens=tokens,
+        evaluation_span_mode=(
+            lambda v: v if v in ("off", "aggregated", "per_metric") else "off"
+        )(
+            os.environ.get(
+                OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE, "off"
+            )
+            .strip()
+            .lower()
+        ),
     )

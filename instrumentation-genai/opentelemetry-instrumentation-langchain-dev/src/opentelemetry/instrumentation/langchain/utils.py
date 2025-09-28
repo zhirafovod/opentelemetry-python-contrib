@@ -95,3 +95,4 @@ def get_property_value(obj, property_name):
         return obj.get(property_name, None)
 
     return getattr(obj, property_name, None)
+

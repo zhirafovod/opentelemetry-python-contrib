@@ -1,5 +1,5 @@
 import json
-import time
+import os
 from typing import Any, Dict, List, Optional, Type, Union
 from uuid import UUID
 
@@ -36,11 +36,6 @@ from opentelemetry.instrumentation.langchain.event_models import (
 from opentelemetry.instrumentation.langchain.span_utils import (
     SpanHolder,
     _set_span_attribute,
-    extract_model_name_from_response_metadata,
-    _extract_model_name_from_association_metadata,
-    set_chat_request,
-    set_chat_response,
-    set_chat_response_usage,
     set_llm_request,
     set_request_params,
 )
@@ -55,9 +50,6 @@ from opentelemetry.instrumentation.langchain.utils import (
 )
 from opentelemetry.instrumentation.utils import _SUPPRESS_INSTRUMENTATION_KEY
 from opentelemetry.metrics import Histogram
-from opentelemetry.semconv._incubating.attributes.gen_ai_attributes import (
-    GEN_AI_RESPONSE_ID,
-)
 from .semconv_ai import (
     SUPPRESS_LANGUAGE_MODEL_INSTRUMENTATION_KEY,
     LLMRequestTypeValues,
@@ -75,7 +67,6 @@ from opentelemetry.util.genai.handler import (
 
 # util-genai deps
 from opentelemetry.util.genai.types import (
-    Error as UtilError,
     InputMessage as UtilInputMessage,
     LLMInvocation as UtilLLMInvocation,
     OutputMessage as UtilOutputMessage,
@@ -83,6 +74,11 @@ from opentelemetry.util.genai.types import (
 )
 from threading import Lock
 from .utils import get_property_value
+
+
+_TRACELOOP_COMPAT_ENABLED = "traceloop_compat" in (
+    os.getenv("OTEL_INSTRUMENTATION_GENAI_EMITTERS", "").lower()
+)
 
 
 def _extract_class_name_from_serialized(serialized: Optional[dict[str, Any]]) -> str:
@@ -200,8 +196,10 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         for child_id in self.spans[run_id].children:
             if child_id in self.spans:
                 child_span = self.spans[child_id].span
-                if child_span.end_time is None:  # avoid warning on ended spans
+                try:
                     child_span.end()
+                except Exception:
+                    pass
         span.end()
         token = self.spans[run_id].token
         if token:
@@ -488,25 +486,19 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 pass
 
     # util-genai dev
-    def _add_tool_definition_attrs(self, invocation_params: dict, attrs: dict):
+    def _extract_request_functions(self, invocation_params: dict) -> list[dict[str, Any]]:
         tools = invocation_params.get("tools") if invocation_params else None
         if not tools:
-            return
-        for idx, tool in enumerate(tools):
+            return []
+        result: list[dict[str, Any]] = []
+        for tool in tools:
             fn = tool.get("function") if isinstance(tool, dict) else None
             if not fn:
                 continue
-            name = fn.get("name")
-            desc = fn.get("description")
-            params = fn.get("parameters")
-            if name:
-                attrs[f"gen_ai.request.function.{idx}.name"] = name
-            if desc:
-                attrs[f"gen_ai.request.function.{idx}.description"] = desc
-            if params is not None:
-                attrs[f"gen_ai.request.function.{idx}.parameters"] = str(
-                    params
-                )
+            entry = {k: v for k, v in fn.items() if k in ("name", "description", "parameters")}
+            if entry:
+                result.append(entry)
+        return result
 
     def _build_input_messages(
         self, messages: List[List[BaseMessage]]
@@ -549,8 +541,13 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             or "unknown-model"
         )
         provider_name = (metadata or {}).get("ls_provider")
-        attrs: dict[str, Any] = {"framework": "langchain"}
-        # copy selected params
+        # attributes dict now reserved for non-semconv extensions only
+        attrs: dict[str, Any] = {}
+        if _TRACELOOP_COMPAT_ENABLED:
+            callback_name = self._get_name_from_callback(serialized, kwargs=kwargs)
+            attrs["traceloop.callback_name"] = callback_name
+            attrs.setdefault("traceloop.span.kind", "llm")
+        # copy selected params (non-semconv)
         for key in (
             "top_p",
             "frequency_penalty",
@@ -565,12 +562,14 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 attrs["request_max_tokens"] = metadata.get("ls_max_tokens")
             if metadata.get("ls_temperature") is not None:
                 attrs["request_temperature"] = metadata.get("ls_temperature")
-        self._add_tool_definition_attrs(invocation_params, attrs)
+        request_functions = self._extract_request_functions(invocation_params)
         input_messages = self._build_input_messages(messages)
         inv = UtilLLMInvocation(
             request_model=request_model,
             provider=provider_name,
+            framework="langchain",
             input_messages=input_messages,
+            request_functions=request_functions,
             attributes=attrs,
         )
         # no need for messages/chat_generations fields; generator uses input_messages and output_messages
@@ -658,7 +657,6 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                     finish_reason=finish_reason,
                 )
             ]
-        # no additional assignments needed; generator uses output_messages
         llm_output = getattr(response, "llm_output", None) or {}
         response_model = llm_output.get("model_name") or llm_output.get(
             "model"
@@ -670,52 +668,12 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         if usage:
             inv.input_tokens = usage.get("prompt_tokens")
             inv.output_tokens = usage.get("completion_tokens")
+        # Stop LLM (emitters finish here, so invocation fields must be set first)
         self._telemetry_handler.stop_llm(inv)
         try:
             self._telemetry_handler.evaluate_llm(inv)
         except Exception:  # pragma: no cover
             pass
-        # if Config.is_instrumentation_suppressed():
-        #     return
-        # with self._lock:
-        #     inv = self._invocations.pop(run_id, None)
-        # if not inv:
-        #     return
-        # generations = getattr(response, "generations", [])
-        # content_text = None
-        # finish_reason = "stop"
-        # if generations:
-        #     first_list = generations[0]
-        #     if first_list:
-        #         first = first_list[0]
-        #         content_text = get_property_value(first.message, "content")
-        #         if getattr(first, "generation_info", None):
-        #             finish_reason = first.generation_info.get(
-        #                 "finish_reason", finish_reason
-        #             )
-        # if content_text is not None:
-        #     inv.output_messages = [
-        #         UtilOutputMessage(
-        #             role="assistant",
-        #             parts=[UtilText(content=str(content_text))],
-        #             finish_reason=finish_reason,
-        #         )
-        #     ]
-        # # no additional assignments needed; generator uses output_messages
-        # llm_output = getattr(response, "llm_output", None) or {}
-        # response_model = llm_output.get("model_name") or llm_output.get("model")
-        # response_id = llm_output.get("id")
-        # usage = llm_output.get("usage") or llm_output.get("token_usage") or {}
-        # inv.response_model_name = response_model
-        # inv.response_id = response_id
-        # if usage:
-        #     inv.input_tokens = usage.get("prompt_tokens")
-        #     inv.output_tokens = usage.get("completion_tokens")
-        # self._telemetry_handler.stop_llm(inv)
-        # try:
-        #     self._telemetry_handler.evaluate_llm(inv)
-        # except Exception:  # pragma: no cover
-        #     pass
 
     @dont_throw
     def on_tool_start(

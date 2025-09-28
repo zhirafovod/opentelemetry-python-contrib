@@ -85,16 +85,39 @@ OTEL_INSTRUMENTATION_GENAI_EMITTERS = "OTEL_INSTRUMENTATION_GENAI_EMITTERS"
 """
 .. envvar:: OTEL_INSTRUMENTATION_GENAI_EMITTERS
 
-Comma-separated list of generators names to run (e.g. ``span,traceloop``).
+Comma-separated list of generators names to run (e.g. ``span,traceloop_compat``).
 
-Select telemetry flavor (composed emitters). Accepted values (case-insensitive):
+Select telemetry flavor (composed emitters). Accepted baseline values (case-insensitive):
 
 * ``span`` (default) - spans only
 * ``span_metric`` - spans + metrics
 * ``span_metric_event`` - spans + metrics + content events
 
-Invalid or unset values fallback to ``span_metric``.
+Additional extender emitters:
+* ``traceloop_compat`` - adds a Traceloop-compatible LLM span. If specified *alone*, only the compat span is emitted. If combined (e.g. ``span,traceloop_compat``) both semconv and compat spans are produced.
+
+Invalid or unset values fallback to ``span``.
 """
+
+OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE = (
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE"
+)
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE
+
+Controls evaluation span creation strategy. Accepted values:
+* ``off`` (default) - no evaluation spans
+* ``aggregated`` - single span summarizing all evaluation metrics
+* ``per_metric`` - one span per evaluation metric
+"""
+
+# Backward/defensive: ensure evaluation span mode constant exists even if edits race
+try:  # pragma: no cover - defensive
+    OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE
+except NameError:  # pragma: no cover
+    OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE = (
+        "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE"
+    )
 
 __all__ = [
     # existing
@@ -104,6 +127,7 @@ __all__ = [
     # evaluation
     "OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE",
     "OTEL_INSTRUMENTATION_GENAI_EVALUATORS",
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE",
     # generator selection
     "OTEL_INSTRUMENTATION_GENAI_EMITTERS",
 ]

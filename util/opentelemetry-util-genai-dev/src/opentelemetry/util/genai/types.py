@@ -22,11 +22,10 @@ from uuid import UUID, uuid4
 
 from typing_extensions import TypeAlias
 
-from opentelemetry.context import Context
 from opentelemetry.trace import Span
 from opentelemetry.util.types import AttributeValue
 
-ContextToken: TypeAlias = Token[Context]
+ContextToken = Token  # simple alias; avoid TypeAlias warning tools
 
 
 class ContentCapturingMode(Enum):
@@ -132,10 +131,15 @@ class LLMInvocation:
         default_factory=_new_output_messages
     )
     provider: Optional[str] = None
+    # Semantic-convention framework attribute (gen_ai.framework)
+    framework: Optional[str] = None
     response_model_name: Optional[str] = None
     response_id: Optional[str] = None
     input_tokens: Optional[AttributeValue] = None
     output_tokens: Optional[AttributeValue] = None
+    # Structured function/tool definitions for semantic convention emission
+    request_functions: list[dict[str, Any]] = field(default_factory=list)
+    # All non-semantic-convention or extended attributes (traceloop.*, request params, tool defs, etc.)
     attributes: Dict[str, Any] = field(default_factory=_new_str_any_dict)
     # Ahead of upstream
     run_id: UUID = field(default_factory=uuid4)

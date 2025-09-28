@@ -61,11 +61,12 @@ from opentelemetry.trace import Link, get_tracer
 from opentelemetry.util.genai import (
     evaluators as _genai_evaluators,  # noqa: F401
 )
+
 # Updated imports: unified emitters package
 from opentelemetry.util.genai.emitters import (
+    CompositeGenerator,
     ContentEventsEmitter,
     MetricsEmitter,
-    CompositeGenerator,
     SpanEmitter,
 )
 from opentelemetry.util.genai.evaluators.registry import (
@@ -138,30 +139,54 @@ class TelemetryHandler:
         capture_events = settings.capture_content_events
 
         # Compose emitters based on parsed settings
-        if settings.generator_kind == "span_metric_event":
-            span_emitter = SpanEmitter(
-                tracer=self._tracer,
-                capture_content=False,  # keep span lean
+        if settings.only_traceloop_compat:
+            # Only traceloop compat requested
+            from opentelemetry.util.genai.emitters import (
+                TraceloopCompatEmitter,
             )
-            metrics_emitter = MetricsEmitter(meter=meter)
-            content_emitter = ContentEventsEmitter(
-                logger=self._event_logger,
-                capture_content=capture_events,
+
+            traceloop_emitter = TraceloopCompatEmitter(
+                tracer=self._tracer, capture_content=capture_span
             )
-            emitters = [span_emitter, metrics_emitter, content_emitter]
-        elif settings.generator_kind == "span_metric":
-            span_emitter = SpanEmitter(
-                tracer=self._tracer,
-                capture_content=capture_span,
-            )
-            metrics_emitter = MetricsEmitter(meter=meter)
-            emitters = [span_emitter, metrics_emitter]
+            emitters = [traceloop_emitter]
         else:
-            span_emitter = SpanEmitter(
-                tracer=self._tracer,
-                capture_content=capture_span,
-            )
-            emitters = [span_emitter]
+            if settings.generator_kind == "span_metric_event":
+                span_emitter = SpanEmitter(
+                    tracer=self._tracer,
+                    capture_content=False,  # keep span lean
+                )
+                metrics_emitter = MetricsEmitter(meter=meter)
+                content_emitter = ContentEventsEmitter(
+                    logger=self._event_logger,
+                    capture_content=capture_events,
+                )
+                emitters = [span_emitter, metrics_emitter, content_emitter]
+            elif settings.generator_kind == "span_metric":
+                span_emitter = SpanEmitter(
+                    tracer=self._tracer,
+                    capture_content=capture_span,
+                )
+                metrics_emitter = MetricsEmitter(meter=meter)
+                emitters = [span_emitter, metrics_emitter]
+            else:
+                span_emitter = SpanEmitter(
+                    tracer=self._tracer,
+                    capture_content=capture_span,
+                )
+                emitters = [span_emitter]
+            # Append extra emitters if requested
+            if "traceloop_compat" in settings.extra_emitters:
+                try:
+                    from opentelemetry.util.genai.emitters import (
+                        TraceloopCompatEmitter,
+                    )
+
+                    traceloop_emitter = TraceloopCompatEmitter(
+                        tracer=self._tracer, capture_content=capture_span
+                    )
+                    emitters.append(traceloop_emitter)
+                except Exception:  # pragma: no cover
+                    pass
         # Phase 1: wrap in composite (single element) to prepare for multi-emitter
         self._generator = CompositeGenerator(emitters)
 
@@ -170,34 +195,31 @@ class TelemetryHandler:
     ):  # re-evaluate env each start in case singleton created before patching
         try:
             mode = get_content_capturing_mode()
-            if self._generator_kind == "span_metric_event":
-                # For event flavor: NEVER put messages on span, only control event emission
-                new_value_events = mode in (
-                    ContentCapturingMode.EVENT_ONLY,
-                    ContentCapturingMode.SPAN_AND_EVENT,
-                )
-                emitters = getattr(self._generator, "_generators", [])  # type: ignore[attr-defined]
-                for em in emitters:
-                    if getattr(
-                        em, "role", None
-                    ) == "content_event" and hasattr(em, "_capture_content"):
-                        try:
-                            em._capture_content = new_value_events  # type: ignore[attr-defined]
-                        except Exception:
-                            pass
-                return  # do not touch span emitter capture flag
-            else:
-                new_value = mode in (
-                    ContentCapturingMode.SPAN_ONLY,
-                    ContentCapturingMode.SPAN_AND_EVENT,
-                )
-                # Generators use _capture_content attribute; ignore if absent
-                if hasattr(self._generator, "_capture_content"):
+            emitters = getattr(self._generator, "_generators", [])  # type: ignore[attr-defined]
+            # Determine new values for span-like emitters
+            new_value_span = mode in (
+                ContentCapturingMode.SPAN_ONLY,
+                ContentCapturingMode.SPAN_AND_EVENT,
+            )
+            # For span_metric_event flavor we always keep span lean (never capture on span)
+            if getattr(self, "_generator_kind", None) == "span_metric_event":
+                new_value_span = False
+            new_value_events = mode in (
+                ContentCapturingMode.EVENT_ONLY,
+                ContentCapturingMode.SPAN_AND_EVENT,
+            )
+            for em in emitters:
+                role = getattr(em, "role", None)
+                if role == "content_event" and hasattr(em, "_capture_content"):
                     try:
-                        if hasattr(self._generator, "set_capture_content"):
-                            self._generator.set_capture_content(new_value)  # type: ignore[call-arg]
-                        else:
-                            self._generator._capture_content = new_value  # type: ignore[attr-defined]
+                        em._capture_content = new_value_events  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                elif role in ("span", "traceloop_compat") and hasattr(
+                    em, "set_capture_content"
+                ):
+                    try:
+                        em.set_capture_content(new_value_span)  # type: ignore[attr-defined]
                     except Exception:
                         pass
         except Exception:

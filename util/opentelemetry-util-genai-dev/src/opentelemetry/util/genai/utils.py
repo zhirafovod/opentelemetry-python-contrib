@@ -31,31 +31,55 @@ logger = logging.getLogger(__name__)
 
 def is_experimental_mode() -> bool:
     return (
-        _OpenTelemetrySemanticConventionStability._get_opentelemetry_stability_opt_in_mode(
+        _OpenTelemetrySemanticConventionStability._get_opentelemetry_stability_opt_in_mode(  # noqa: SLF001
             _OpenTelemetryStabilitySignalType.GEN_AI,
         )
         is _StabilityMode.GEN_AI_LATEST_EXPERIMENTAL
     )
 
 
-def get_content_capturing_mode() -> ContentCapturingMode:
-    """Return content capturing mode, defaulting to NO_CONTENT if not in experimental mode or unset/invalid envvar."""
+def get_content_capturing_mode() -> (
+    ContentCapturingMode
+):  # single authoritative implementation
     capture_message_content = os.environ.get(
         OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
     )
     capture_message_content_mode = os.environ.get(
         OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE
     )
-    # Default to NO_CONTENT if not in experimental mode
     if not capture_message_content:
         return ContentCapturingMode.NO_CONTENT
-    try:
-        return ContentCapturingMode[capture_message_content_mode.upper()]
-    except KeyError:
-        logger.warning(
-            "%s is not a valid option for `%s` environment variable. Must be one of %s. Defaulting to `NO_CONTENT`.",
-            capture_message_content_mode,
-            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
-            ", ".join(e.name for e in ContentCapturingMode),
-        )
+    if not is_experimental_mode():
         return ContentCapturingMode.NO_CONTENT
+
+    primary = (capture_message_content or "").strip()
+    secondary = (capture_message_content_mode or "").strip()
+
+    def _convert(tok: str) -> ContentCapturingMode | None:
+        if not tok:
+            return None
+        u = tok.upper()
+        if u in ContentCapturingMode.__members__:
+            return ContentCapturingMode[u]
+        if u in ("TRUE", "1", "YES"):
+            return ContentCapturingMode.SPAN_ONLY
+        return None
+
+    # Direct mode token or boolean alias
+    prim_mode = _convert(primary)
+    if prim_mode is not None:
+        return prim_mode
+
+    # Boolean primary with secondary override
+    if primary.lower() in ("true", "1", "yes") and secondary:
+        sec_mode = _convert(secondary)
+        if sec_mode is not None:
+            return sec_mode
+
+    logger.warning(
+        "%s is not a valid option for `%s` environment variable. Must be one of %s. Defaulting to `NO_CONTENT`.",
+        primary,
+        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+        ", ".join(e.name for e in ContentCapturingMode),
+    )
+    return ContentCapturingMode.NO_CONTENT
