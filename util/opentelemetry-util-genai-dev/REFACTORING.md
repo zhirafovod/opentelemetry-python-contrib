@@ -67,7 +67,7 @@ Unchanged from prior snapshot plus:
 Actionable tasks & audited status:
 1. attributes.py constants → PARTIAL
 2. config.py + remove direct env usage → PARTIAL (evaluation flags outstanding)
-3. Rename `SpanGenerator` → `SpanEmitter` → PARTIAL (alias only)
+3. Rename `SpanGenerator` → `SpanEmitter` → COMPLETE (legacy module removed)
 4. Root span logic cleanup → PARTIAL (still manual tracking)
 5. Generic handler lifecycle → COMPLETE
 6. Optional `handles(obj)` in emitters → PARTIAL (implemented in metrics & content events; span emitter lacks explicit method) 
@@ -126,13 +126,14 @@ Phase 4 DoD (NOT FULLY MET): Mixed sequence test, explicit docs, attribute asser
 ---
 ## 11. Guidance for Contributors / Automation (Adjusted Checklist)
 ```
-[ ] Centralize remaining gen_ai.* attribute literals
-[ ] Extend attributes.py (include evaluation, framework, completion parts, etc.)
+[x] Centralize remaining gen_ai.* attribute literals
+[x] Extend attributes.py (include evaluation, framework, completion parts, etc.)
 [ ] Extend Settings & parse_env for evaluation flags (enable, span mode, evaluator list)
 [ ] Remove direct os.environ usage from handler (evaluation paths)
 [ ] Add handles() method to span emitter
 [ ] Root span logic refactor (context-based) & remove _current_span
 [ ] Rename span_generator.py → span_emitter.py (or document decision)
+[ ] Remove legacy `generators.py` file; rely on the `generators/` package (SpanEmitter) only
 [ ] Mixed sequence test (LLM → ToolCall → LLM → Embedding)
 [ ] Thread-safety smoke test (parallel invocations)
 [ ] ToolCall span attribute assertion test
@@ -148,10 +149,10 @@ Rules (unchanged): keep diffs small, commit after each milestone, maintain typin
 Phase 3.5 Status:
 legacy generator files: COMPLETE
 attributes.py:      COMPLETE
-config.py:          COMPLETE
+config.py:          PARTIAL
 spanEmitter rename: COMPLETE
 generic lifecycle:  COMPLETE
-root logic fix:     COMPLETE
+root logic fix:     PARTIAL
 tests (3.5 set):    PARTIAL
 handles() API:      COMPLETE
 
