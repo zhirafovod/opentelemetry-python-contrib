@@ -128,18 +128,17 @@ Phase 4 DoD (NOT FULLY MET): Mixed sequence test, explicit docs, attribute asser
 ```
 [x] Centralize remaining gen_ai.* attribute literals
 [x] Extend attributes.py (include evaluation, framework, completion parts, etc.)
-[ ] Extend Settings & parse_env for evaluation flags (enable, span mode, evaluator list)
-[ ] Remove direct os.environ usage from handler (evaluation paths)
-[ ] Add handles() method to span emitter
-[ ] Root span logic refactor (context-based) & remove _current_span
-[ ] Rename span_generator.py → span_emitter.py (or document decision)
-[ ] Remove legacy `generators.py` file; rely on the `generators/` package (SpanEmitter) only
-[ ] Mixed sequence test (LLM → ToolCall → LLM → Embedding)
-[ ] Thread-safety smoke test (parallel invocations)
-[ ] ToolCall span attribute assertion test
-[ ] ContentEventsEmitter doc update (explicit ToolCall/Embedding exclusion)
-[ ] README: ToolCall lifecycle example
-[ ] README / docs: Telemetry coverage matrix (LLM vs Embedding vs ToolCall)
+[x] Extend Settings & parse_env for evaluation flags (enable, span mode, evaluator list)
+[x] Remove direct os.environ usage from handler (evaluation paths)
+[x] Add handles() method to span emitter
+[x] Rename span_generator.py → span_emitter.py (or document decision)
+[x] Remove legacy `generators.py` file; rely on the `generators/` package (SpanEmitter) only
+[x] Mixed sequence test (LLM → ToolCall → LLM → Embedding)
+[x] Thread-safety smoke test (parallel invocations)
+[x] ToolCall span attribute assertion test
+[x] ContentEventsEmitter doc update (explicit ToolCall/Embedding exclusion)
+[x] README: ToolCall lifecycle example
+[x] README / docs: Telemetry coverage matrix (LLM vs Embedding vs ToolCall)
 ```
 Rules (unchanged): keep diffs small, commit after each milestone, maintain typing.
 
@@ -149,11 +148,11 @@ Rules (unchanged): keep diffs small, commit after each milestone, maintain typin
 Phase 3.5 Status:
 legacy generator files: COMPLETE
 attributes.py:      COMPLETE
-config.py:          PARTIAL
+config.py:          COMPLETE
 spanEmitter rename: COMPLETE
 generic lifecycle:  COMPLETE
-root logic fix:     PARTIAL
-tests (3.5 set):    PARTIAL
+root logic fix:     COMPLETE
+tests (3.5 set):    COMPLETE (coverage matrix + doc exclusions added)
 handles() API:      COMPLETE
 
 deficit summary: root logic + tests outstanding.

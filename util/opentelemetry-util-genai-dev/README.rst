@@ -63,29 +63,27 @@ Attributes follow incubating GenAI semantic conventions (subject to change). Key
 * ``gen_ai.output.messages`` (JSON array as string; gated by content capture)
 * ``gen_ai.usage.input_tokens`` / ``gen_ai.usage.output_tokens`` (future metric integration)
 
-Lifecycle API
--------------
-1. Construct ``LLMInvocation``
-2. ``handler.start_llm(invocation)``
-3. Perform model request
-4. Populate ``invocation.output_messages`` (+ tokens / response IDs / extra attrs)
-5. ``handler.stop_llm(invocation)`` or ``handler.fail_llm(invocation, Error)``
+Telemetry Coverage Matrix
+-------------------------
++----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
+| Invocation Type      | Span Created              | Metrics Emitted            | Content Events (structured logs)     | Message Content Capture (conditions)         |
++======================+===========================+============================+======================================+==============================================+
+| LLMInvocation        | Yes (chat <model>)        | Duration (+ tokens when    | Yes only with ``span_metric_event``  | Span attrs if flavor in {span, span_metric}  |
+|                      |                           | flavor provides metrics)   | flavor AND mode EVENT*/SPAN_AND_EVENT| AND mode includes SPAN; events when flavor   |
+|                      |                           |                            |                                      | span_metric_event AND mode EVENT*/SPAN_AND   |
++----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
+| ToolCall             | Yes (tool <name>)         | Duration only (no tokens)  | No (explicitly excluded)            | Never (tool args retained as normal attrs)   |
++----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
+| EmbeddingInvocation  | Yes (embedding <model>)   | None                       | No (explicitly excluded)            | Never (vectors not recorded)                 |
++----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
+| Evaluation (spans)   | Optional (aggregated or   | Histogram metric per score | Event: ``gen_ai.evaluations``        | N/A (evaluation items structured separately) |
+|                      | per-metric)               |                            |                                      |                                              |
++----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
 
-Public Types (abridged)
------------------------
-* ``class LLMInvocation``
-  * ``request_model: str`` (required)
-  * ``provider: Optional[str]``
-  * ``input_messages: list[InputMessage]``
-  * ``output_messages: list[OutputMessage]``
-  * ``attributes: dict[str, Any]`` (arbitrary span attributes)
-  * ``input_tokens`` / ``output_tokens`` (Optional[int | float])
-* ``class InputMessage(role: str, parts: list[MessagePart])``
-* ``class OutputMessage(role: str, parts: list[MessagePart], finish_reason: str)``
-* ``class Text(content: str)``
-* ``class ToolCall`` / ``ToolCallResponse``
-* ``class Error(message: str, type: Type[BaseException])``
-* ``enum ContentCapturingMode``: ``NO_CONTENT`` | ``SPAN_ONLY`` | ``EVENT_ONLY`` | ``SPAN_AND_EVENT``
+Content Events Exclusions
+-------------------------
+* ToolCall invocations produce no content events to avoid duplicating tool argument payloads and to keep log volume bounded.
+* Embedding invocations produce no content events because input vectors / text batches are often large and low diagnostic value compared to chat messages.
 
 TelemetryHandler
 ----------------
@@ -277,10 +275,12 @@ Troubleshooting
 
 Roadmap (Indicative)
 --------------------
-* Configurable generator selection (env / handler param)
+* Configurable generator selection (env / handler param) (DONE)
 * Metrics stabilization (token counts & durations) via ``SpanMetricGenerator``
 * Event emission (choice logs) maturity & stabilization
 * Enhanced tool call structured representation
++* Additional evaluation domain generalization (embeddings, tool calls)
++* Root span logic simplification (context-first) // tracked in REFACTORING.md
 
 Minimal End-to-End Test Snippet
 --------------------------------

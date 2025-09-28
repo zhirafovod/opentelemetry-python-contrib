@@ -14,7 +14,14 @@ from ..types import Error, LLMInvocation
 class ContentEventsEmitter:
     """Emits input/output content as events (log records) instead of span attributes.
 
-    Ignores objects that are not LLMInvocation (embeddings produce no content events yet).
+    Supported: LLMInvocation only.
+
+    Exclusions:
+      * EmbeddingInvocation – embeddings are vector lookups; content events intentionally omitted to reduce noise & cost.
+      * ToolCall – tool calls typically reference external functions/APIs; their arguments are already span attributes and
+        are not duplicated as content events (future structured tool audit events may be added separately).
+
+    This explicit exclusion avoids surprising cardinality growth and keeps event volume proportional to user/chat messages.
     """
 
     role = "content_event"
