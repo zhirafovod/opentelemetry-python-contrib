@@ -83,21 +83,27 @@ Telemetry Components
 The telemetry layer *interprets* data types into OpenTelemetry signals.
 
 * **Emitters** (``emitters/*.py``): Independent units implementing ``start(obj)``, ``finish(obj)``, ``error(error,obj)`` and optional ``handles(obj)``.
+
   - ``SpanEmitter``: Creates / finalizes spans. Applies semantic attributes, optional message serialization (depending on flavor + capture mode). Robust to missing output.
   - ``MetricsEmitter``: Records latency for all supported objects and token usage for ``LLMInvocation`` only. Ignores embeddings for token metrics; records duration for ToolCall.
   - ``ContentEventsEmitter``: Emits structured log events for input & output chat messages (LLM only) when event capture enabled.
 * **CompositeGenerator** (``emitters/composite.py``): Ordered fan‑out orchestrator. Guarantees span start happens before metrics/events, and span end after they finish.
 * **TelemetryHandler** (``handler.py``): Facade used by instrumentation. Responsibilities:
+
   - Parse and cache env configuration (flavor, content capture, evaluation flags).
   - Construct appropriate emitter set once (flavor governs composition).
   - Provide strongly named lifecycle helpers (``start_llm``, ``stop_tool_call``) plus generic ``start/finish/fail`` dispatch.
   - Post‑completion evaluation triggering (``evaluate_llm``) including metric & event emission for evaluation results.
+
 * **Evaluators** (``evaluators/*``): Implement domain-specific quality / scoring logic. Registry pattern allows lazy dynamic loading. Evaluator returns one or more ``EvaluationResult`` items.
+
   - Built-ins (length, sentiment) loaded on demand.
   - External packages (e.g., ``deepeval``) can integrate by registering a factory.
+
 * **Upload Hooks** (``upload_hook.py`` + optional entry-points): Provide optional pluggable persistence of prompt / response artifacts via a simple interface (see FsspecUploadHook example).
 
 Lifecycle Overview:
+
 1. Instrumentation builds an invocation data object.
 2. Handler ``start_*`` delegates to CompositeGenerator → span emitter starts span.
 3. Provider executes; instrumentation populates outputs (messages, tokens, response id/model, custom attributes).
@@ -105,9 +111,11 @@ Lifecycle Overview:
 5. Optional: ``evaluate_llm`` executes evaluators → metrics (scores), single evaluations event, and optionally evaluation spans.
 
 Content Capture Enforcement:
+
 * Flavor + ContentCapturingMode together dictate whether messages appear on spans, events, both, or not at all (see matrices below). Emitters do *not* read env directly; handler refreshes capture mode and updates emitters before starting new LLM spans.
 
 Extension Points Summary:
+
 * Add a new emitter: implement the three lifecycle methods and (optionally) ``handles()``; inject into a custom handler instance before use.
 * Add a new evaluator: subclass / follow Evaluator protocol, register via ``register_evaluator(name, factory)``.
 * Add an upload hook: publish an entry point ``opentelemetry_genai_upload_hook`` returning an object with ``upload(...)``.
