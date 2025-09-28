@@ -41,14 +41,76 @@ A telemetry "flavor" (selected via env var) is just a predefined combination of 
 
 Core Concepts
 -------------
-* **LLMInvocation** – mutable lifecycle container for a chat/completion style model call.
-* **EmbeddingInvocation** – embedding vector generation request (no token metrics or content events by design).
-* **ToolCall** – invocation of an external tool/function (duration metric only; arguments remain span attributes; no content events).
-* **Messages** – Chat style input/output messages with structured parts (``Text``, ``ToolCall``, ``ToolCallResponse``).
-* **TelemetryHandler** – façade orchestrating start / finish / fail and evaluation; internally owns the composite emitters.
-* **Emitters** – small components implementing ``start(obj)``, ``finish(obj)``, ``error(err, obj)`` (and optional ``handles(obj)``) to produce specific signals.
-* **Evaluators** – post‑completion scoring backends producing structured ``EvaluationResult`` entries (LLM only at present).
-* **ContentCapturingMode** – controls whether message bodies are recorded (span attributes, events, both, or not at all) with flavor‑specific rules.
+
+GenAI Data Types
+~~~~~~~~~~~~~~~~
+The GenAI domain model is intentionally thin (pure data containers). All are defined in ``opentelemetry.util.genai.types``.
+
++----------------------+---------------------------------------------------------------------------------------------+
+| Type                 | Purpose / Key Fields                                                                        |
++======================+=============================================================================================+
+| LLMInvocation        | Represents a chat / completion style model call. Holds request / response models,           |
+|                      | input/output messages, token counts, provider, custom attributes, span context fields.      |
++----------------------+---------------------------------------------------------------------------------------------+
+| EmbeddingInvocation  | Represents an embedding generation call (input_texts, optional vector dimensions).          |
+|                      | Excluded from metrics (tokens) & content events by design.                                  |
++----------------------+---------------------------------------------------------------------------------------------+
+| ToolCall             | External tool/function invocation (arguments, name, optional provider). Duration only.      |
++----------------------+---------------------------------------------------------------------------------------------+
+| InputMessage         | Chat input message: ``role`` + list of structured parts (e.g. Text, ToolCall references).   |
++----------------------+---------------------------------------------------------------------------------------------+
+| OutputMessage        | Chat output message: ``role`` + parts + finish_reason.                                      |
++----------------------+---------------------------------------------------------------------------------------------+
+| Text (part)          | Simple textual content part used inside messages.                                           |
++----------------------+---------------------------------------------------------------------------------------------+
+| ToolCallResponse     | Structured part capturing response to a prior tool call (placeholder for future logic).     |
++----------------------+---------------------------------------------------------------------------------------------+
+| EvaluationResult     | Result of a single evaluator metric: metric_name, score, label, explanation, attributes.    |
++----------------------+---------------------------------------------------------------------------------------------+
+| Error                | Normalized error container (message + exception type).                                      |
++----------------------+---------------------------------------------------------------------------------------------+
+| ContentCapturingMode | Enum controlling if/where message bodies are captured: NO_CONTENT / SPAN_ONLY /             |
+|                      | EVENT_ONLY / SPAN_AND_EVENT.                                                                |
++----------------------+---------------------------------------------------------------------------------------------+
+
+Design Notes:
+* Data classes never perform emission logic; emitters inspect them via ``isinstance``.
+* ``LLMInvocation.messages`` & ``chat_generations`` are convenience mirrors maintained for backward compatibility.
+* Timestamps (``start_time`` / ``end_time``) are filled by the handler; instrumentation authors set input data only.
+
+Telemetry Components
+~~~~~~~~~~~~~~~~~~~~
+The telemetry layer *interprets* data types into OpenTelemetry signals.
+
+* **Emitters** (``emitters/*.py``): Independent units implementing ``start(obj)``, ``finish(obj)``, ``error(error,obj)`` and optional ``handles(obj)``.
+  - ``SpanEmitter``: Creates / finalizes spans. Applies semantic attributes, optional message serialization (depending on flavor + capture mode). Robust to missing output.
+  - ``MetricsEmitter``: Records latency for all supported objects and token usage for ``LLMInvocation`` only. Ignores embeddings for token metrics; records duration for ToolCall.
+  - ``ContentEventsEmitter``: Emits structured log events for input & output chat messages (LLM only) when event capture enabled.
+* **CompositeGenerator** (``emitters/composite.py``): Ordered fan‑out orchestrator. Guarantees span start happens before metrics/events, and span end after they finish.
+* **TelemetryHandler** (``handler.py``): Facade used by instrumentation. Responsibilities:
+  - Parse and cache env configuration (flavor, content capture, evaluation flags).
+  - Construct appropriate emitter set once (flavor governs composition).
+  - Provide strongly named lifecycle helpers (``start_llm``, ``stop_tool_call``) plus generic ``start/finish/fail`` dispatch.
+  - Post‑completion evaluation triggering (``evaluate_llm``) including metric & event emission for evaluation results.
+* **Evaluators** (``evaluators/*``): Implement domain-specific quality / scoring logic. Registry pattern allows lazy dynamic loading. Evaluator returns one or more ``EvaluationResult`` items.
+  - Built-ins (length, sentiment) loaded on demand.
+  - External packages (e.g., ``deepeval``) can integrate by registering a factory.
+* **Upload Hooks** (``upload_hook.py`` + optional entry-points): Provide optional pluggable persistence of prompt / response artifacts via a simple interface (see FsspecUploadHook example).
+
+Lifecycle Overview:
+1. Instrumentation builds an invocation data object.
+2. Handler ``start_*`` delegates to CompositeGenerator → span emitter starts span.
+3. Provider executes; instrumentation populates outputs (messages, tokens, response id/model, custom attributes).
+4. Handler ``stop_*`` delegates finish → metrics/event emitters record while span still active → span emitter closes span.
+5. Optional: ``evaluate_llm`` executes evaluators → metrics (scores), single evaluations event, and optionally evaluation spans.
+
+Content Capture Enforcement:
+* Flavor + ContentCapturingMode together dictate whether messages appear on spans, events, both, or not at all (see matrices below). Emitters do *not* read env directly; handler refreshes capture mode and updates emitters before starting new LLM spans.
+
+Extension Points Summary:
+* Add a new emitter: implement the three lifecycle methods and (optionally) ``handles()``; inject into a custom handler instance before use.
+* Add a new evaluator: subclass / follow Evaluator protocol, register via ``register_evaluator(name, factory)``.
+* Add an upload hook: publish an entry point ``opentelemetry_genai_upload_hook`` returning an object with ``upload(...)``.
 
 Emitter Flavors (Environment Selection)
 ---------------------------------------
@@ -61,7 +123,7 @@ Set ``OTEL_INSTRUMENTATION_GENAI_GENERATOR`` (case‑insensitive): ``span`` (def
 +--------------------+-------------------------------+-------------------+---------------------------+-----------------------------------------------+
 | span_metric        | SpanEmitter, MetricsEmitter   | Yes               | Duration + tokens (LLM)   | Message content → span attrs (if mode allows) |
 +--------------------+-------------------------------+-------------------+---------------------------+-----------------------------------------------+
-| span_metric_event  | SpanEmitter, MetricsEmitter,  | Yes (no messages   | Duration + tokens (LLM)   | Message content → events only (if mode allows)|
+| span_metric_event  | SpanEmitter, MetricsEmitter,  | Yes (no messages  | Duration + tokens (LLM)   | Message content → events only (if mode allows)|
 |                    | ContentEventsEmitter          | on span)          |                           |                                               |
 +--------------------+-------------------------------+-------------------+---------------------------+-----------------------------------------------+
 
