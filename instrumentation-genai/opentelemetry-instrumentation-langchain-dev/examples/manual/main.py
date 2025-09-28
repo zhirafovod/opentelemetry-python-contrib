@@ -293,10 +293,10 @@ def main():
     )
 
     # LLM invocation demo (simple)
-    # llm_invocation_demo(llm)
+    llm_invocation_demo(llm)
 
     # Run agent demo (tool + subagent). Safe if LangGraph unavailable.
-    agent_demo(llm)
+    # agent_demo(llm)
 
     # Un-instrument after use
     LangchainInstrumentor().uninstrument()

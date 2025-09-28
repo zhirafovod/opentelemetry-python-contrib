@@ -227,18 +227,20 @@ class _OpenAITracingWrapper:
         kwargs,
     ) -> None:
         run_manager = kwargs.get("run_manager")
-        if run_manager:
-            run_id = run_manager.run_id
-            span_holder = self._callback_manager.spans[run_id]
 
-            extra_headers = kwargs.get("extra_headers", {})
-
-            # Inject tracing context into the extra headers
-            ctx = set_span_in_context(span_holder.span)
-            TraceContextTextMapPropagator().inject(extra_headers, context=ctx)
-
-            # Update kwargs to include the modified headers
-            kwargs["extra_headers"] = extra_headers
+        ### FIXME: this was disabled to allow migration to util-genai and needs to be fixed
+        # if run_manager:
+        #     run_id = run_manager.run_id
+        #     span_holder = self._callback_manager.spans[run_id]
+        #
+        #     extra_headers = kwargs.get("extra_headers", {})
+        #
+        #     # Inject tracing context into the extra headers
+        #     ctx = set_span_in_context(span_holder.span)
+        #     TraceContextTextMapPropagator().inject(extra_headers, context=ctx)
+        #
+        #     # Update kwargs to include the modified headers
+        #     kwargs["extra_headers"] = extra_headers
 
         # In legacy chains like LLMChain, suppressing model instrumentations
         # within create_llm_span doesn't work, so this should helps as a fallback

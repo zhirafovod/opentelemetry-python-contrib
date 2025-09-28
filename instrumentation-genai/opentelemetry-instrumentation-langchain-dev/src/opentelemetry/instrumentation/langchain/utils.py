@@ -89,3 +89,9 @@ def should_emit_events() -> bool:
 
 def is_package_available(package_name):
     return importlib.util.find_spec(package_name) is not None
+
+def get_property_value(obj, property_name):
+    if isinstance(obj, dict):
+        return obj.get(property_name, None)
+
+    return getattr(obj, property_name, None)

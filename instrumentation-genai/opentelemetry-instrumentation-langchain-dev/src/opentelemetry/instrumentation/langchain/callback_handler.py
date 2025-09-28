@@ -82,7 +82,7 @@ from opentelemetry.util.genai.types import (
     Text as UtilText,
 )
 from threading import Lock
-
+from .utils import get_property_value
 
 
 def _extract_class_name_from_serialized(serialized: Optional[dict[str, Any]]) -> str:
@@ -487,6 +487,45 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 # If context reset fails, it's not critical for functionality
                 pass
 
+    # util-genai dev
+    def _add_tool_definition_attrs(self, invocation_params: dict, attrs: dict):
+        tools = invocation_params.get("tools") if invocation_params else None
+        if not tools:
+            return
+        for idx, tool in enumerate(tools):
+            fn = tool.get("function") if isinstance(tool, dict) else None
+            if not fn:
+                continue
+            name = fn.get("name")
+            desc = fn.get("description")
+            params = fn.get("parameters")
+            if name:
+                attrs[f"gen_ai.request.function.{idx}.name"] = name
+            if desc:
+                attrs[f"gen_ai.request.function.{idx}.description"] = desc
+            if params is not None:
+                attrs[f"gen_ai.request.function.{idx}.parameters"] = str(
+                    params
+                )
+
+    def _build_input_messages(
+        self, messages: List[List[BaseMessage]]
+    ) -> list[UtilInputMessage]:
+        result: list[UtilInputMessage] = []
+        for sub in messages:
+            for m in sub:
+                role = (
+                    getattr(m, "type", None)
+                    or m.__class__.__name__.replace("Message", "").lower()
+                )
+                content = get_property_value(m, "content")
+                result.append(
+                    UtilInputMessage(
+                        role=role, parts=[UtilText(content=str(content))]
+                    )
+                )
+        return result
+
     @dont_throw
     def on_chat_model_start(
         self,
@@ -503,20 +542,55 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         if context_api.get_value(_SUPPRESS_INSTRUMENTATION_KEY):
             return
 
-        name = self._get_name_from_callback(serialized, kwargs=kwargs)
-        span = self._create_llm_span(
-            run_id,
-            parent_run_id,
-            name,
-            LLMRequestTypeValues.CHAT,
-            metadata=metadata,
-            serialized=serialized,
+        invocation_params = kwargs.get("invocation_params") or {}
+        request_model = (
+            invocation_params.get("model_name")
+            or serialized.get("name")
+            or "unknown-model"
         )
-        set_request_params(span, kwargs, self.spans[run_id])
-        if should_emit_events():
-            self._emit_chat_input_events(messages)
-        else:
-            set_chat_request(span, serialized, messages, kwargs, self.spans[run_id])
+        provider_name = (metadata or {}).get("ls_provider")
+        attrs: dict[str, Any] = {"framework": "langchain"}
+        # copy selected params
+        for key in (
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "stop",
+            "seed",
+        ):
+            if key in invocation_params and invocation_params[key] is not None:
+                attrs[f"request_{key}"] = invocation_params[key]
+        if metadata:
+            if metadata.get("ls_max_tokens") is not None:
+                attrs["request_max_tokens"] = metadata.get("ls_max_tokens")
+            if metadata.get("ls_temperature") is not None:
+                attrs["request_temperature"] = metadata.get("ls_temperature")
+        self._add_tool_definition_attrs(invocation_params, attrs)
+        input_messages = self._build_input_messages(messages)
+        inv = UtilLLMInvocation(
+            request_model=request_model,
+            provider=provider_name,
+            input_messages=input_messages,
+            attributes=attrs,
+        )
+        # no need for messages/chat_generations fields; generator uses input_messages and output_messages
+        self._telemetry_handler.start_llm(inv)
+        with self._lock:
+            self._invocations[run_id] = inv
+        # name = self._get_name_from_callback(serialized, kwargs=kwargs)
+        # span = self._create_llm_span(
+        #     run_id,
+        #     parent_run_id,
+        #     name,
+        #     LLMRequestTypeValues.CHAT,
+        #     metadata=metadata,
+        #     serialized=serialized,
+        # )
+        # set_request_params(span, kwargs, self.spans[run_id])
+        # if should_emit_events():
+        #     self._emit_chat_input_events(messages)
+        # else:
+        #     set_chat_request(span, serialized, messages, kwargs, self.spans[run_id])
 
     @dont_throw
     def on_llm_start(
@@ -560,104 +634,88 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
     ):
         if context_api.get_value(_SUPPRESS_INSTRUMENTATION_KEY):
             return
-
-        span = self._get_span(run_id)
-
-        model_name = None
-        if response.llm_output is not None:
-            model_name = response.llm_output.get(
-                "model_name"
-            ) or response.llm_output.get("model_id")
-            if model_name is not None:
-                _set_span_attribute(
-                    span, SpanAttributes.LLM_RESPONSE_MODEL, model_name or "unknown"
-                )
-
-                if self.spans[run_id].request_model is None:
-                    _set_span_attribute(
-                        span, SpanAttributes.LLM_REQUEST_MODEL, model_name
+        with self._lock:
+            inv = self._invocations.pop(run_id, None)
+        if not inv:
+            return
+        generations = getattr(response, "generations", [])
+        content_text = None
+        finish_reason = "stop"
+        if generations:
+            first_list = generations[0]
+            if first_list:
+                first = first_list[0]
+                content_text = get_property_value(first.message, "content")
+                if getattr(first, "generation_info", None):
+                    finish_reason = first.generation_info.get(
+                        "finish_reason", finish_reason
                     )
-            id = response.llm_output.get("id")
-            if id is not None and id != "":
-                _set_span_attribute(span, GEN_AI_RESPONSE_ID, id)
-        if model_name is None:
-            model_name = extract_model_name_from_response_metadata(response)
-        if model_name is None and hasattr(context_api, "get_value"):
-            association_properties = (
-                context_api.get_value("association_properties") or {}
-            )
-            model_name = _extract_model_name_from_association_metadata(
-                association_properties
-            )
-        token_usage = (response.llm_output or {}).get("token_usage") or (
-            response.llm_output or {}
-        ).get("usage")
-        if token_usage is not None:
-            prompt_tokens = (
-                token_usage.get("prompt_tokens")
-                or token_usage.get("input_token_count")
-                or token_usage.get("input_tokens")
-            )
-            completion_tokens = (
-                token_usage.get("completion_tokens")
-                or token_usage.get("generated_token_count")
-                or token_usage.get("output_tokens")
-            )
-            total_tokens = token_usage.get("total_tokens") or (
-                prompt_tokens + completion_tokens
-            )
-
-            _set_span_attribute(
-                span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, prompt_tokens
-            )
-            _set_span_attribute(
-                span, SpanAttributes.LLM_USAGE_COMPLETION_TOKENS, completion_tokens
-            )
-            _set_span_attribute(
-                span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, total_tokens
-            )
-
-            # Record token usage metrics
-            vendor = span.attributes.get(SpanAttributes.LLM_SYSTEM, "Langchain")
-            if prompt_tokens > 0:
-                self.token_histogram.record(
-                    prompt_tokens,
-                    attributes={
-                        SpanAttributes.LLM_SYSTEM: vendor,
-                        SpanAttributes.LLM_TOKEN_TYPE: "input",
-                        SpanAttributes.LLM_RESPONSE_MODEL: model_name or "unknown",
-                    },
+        if content_text is not None:
+            inv.output_messages = [
+                UtilOutputMessage(
+                    role="assistant",
+                    parts=[UtilText(content=str(content_text))],
+                    finish_reason=finish_reason,
                 )
-
-            if completion_tokens > 0:
-                self.token_histogram.record(
-                    completion_tokens,
-                    attributes={
-                        SpanAttributes.LLM_SYSTEM: vendor,
-                        SpanAttributes.LLM_TOKEN_TYPE: "output",
-                        SpanAttributes.LLM_RESPONSE_MODEL: model_name or "unknown",
-                    },
-                )
-        set_chat_response_usage(
-            span, response, self.token_histogram, token_usage is None, model_name
+            ]
+        # no additional assignments needed; generator uses output_messages
+        llm_output = getattr(response, "llm_output", None) or {}
+        response_model = llm_output.get("model_name") or llm_output.get(
+            "model"
         )
-        if should_emit_events():
-            self._emit_llm_end_events(response)
-        else:
-            set_chat_response(span, response)
-
-        # Record duration before ending span
-        duration = time.time() - self.spans[run_id].start_time
-        vendor = span.attributes.get(SpanAttributes.LLM_SYSTEM, "Langchain")
-        self.duration_histogram.record(
-            duration,
-            attributes={
-                SpanAttributes.LLM_SYSTEM: vendor,
-                SpanAttributes.LLM_RESPONSE_MODEL: model_name or "unknown",
-            },
-        )
-
-        self._end_span(span, run_id)
+        response_id = llm_output.get("id")
+        usage = llm_output.get("usage") or llm_output.get("token_usage") or {}
+        inv.response_model_name = response_model
+        inv.response_id = response_id
+        if usage:
+            inv.input_tokens = usage.get("prompt_tokens")
+            inv.output_tokens = usage.get("completion_tokens")
+        self._telemetry_handler.stop_llm(inv)
+        try:
+            self._telemetry_handler.evaluate_llm(inv)
+        except Exception:  # pragma: no cover
+            pass
+        # if Config.is_instrumentation_suppressed():
+        #     return
+        # with self._lock:
+        #     inv = self._invocations.pop(run_id, None)
+        # if not inv:
+        #     return
+        # generations = getattr(response, "generations", [])
+        # content_text = None
+        # finish_reason = "stop"
+        # if generations:
+        #     first_list = generations[0]
+        #     if first_list:
+        #         first = first_list[0]
+        #         content_text = get_property_value(first.message, "content")
+        #         if getattr(first, "generation_info", None):
+        #             finish_reason = first.generation_info.get(
+        #                 "finish_reason", finish_reason
+        #             )
+        # if content_text is not None:
+        #     inv.output_messages = [
+        #         UtilOutputMessage(
+        #             role="assistant",
+        #             parts=[UtilText(content=str(content_text))],
+        #             finish_reason=finish_reason,
+        #         )
+        #     ]
+        # # no additional assignments needed; generator uses output_messages
+        # llm_output = getattr(response, "llm_output", None) or {}
+        # response_model = llm_output.get("model_name") or llm_output.get("model")
+        # response_id = llm_output.get("id")
+        # usage = llm_output.get("usage") or llm_output.get("token_usage") or {}
+        # inv.response_model_name = response_model
+        # inv.response_id = response_id
+        # if usage:
+        #     inv.input_tokens = usage.get("prompt_tokens")
+        #     inv.output_tokens = usage.get("completion_tokens")
+        # self._telemetry_handler.stop_llm(inv)
+        # try:
+        #     self._telemetry_handler.evaluate_llm(inv)
+        # except Exception:  # pragma: no cover
+        #     pass
 
     @dont_throw
     def on_tool_start(
