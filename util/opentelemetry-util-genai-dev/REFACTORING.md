@@ -1,206 +1,107 @@
 # GenAI Telemetry Refactoring Snapshot (Phase 3.5 → 4)
 
-Date: 2025-09-27 (Status audit refresh)  
+Date: 2025-09-27 (Post README refresh update)  
 Status: Active development branch (pre-public stability).  
-IMPORTANT: This code is still in active development; we are free to change or remove classes without a formal deprecation cycle. Backward compatibility shims are NOT required at this stage.
+IMPORTANT: API is still experimental; breaking changes permitted without deprecation cycle.
 
 ---
-## 1. Purpose of This Document
-This file freezes the current architectural snapshot of the GenAI telemetry utilities and provides a precise, implementation‑ready plan for the next refactoring stage ("Phase 3.5 cleanup"), immediately followed by Phase 4 (new domain types: Embeddings & Tool Calls). It replaces ad hoc notes and guides future contributors (including GitHub Copilot automation) on exact next steps.
-
-(Updated 2025-09-27 audit: Progress blocks earlier marked COMPLETE have been re‑evaluated; several items remain partially done. See Sections 4, 11, and 12.)
+## 1. Purpose
+Snapshot of current architecture and the **remaining** focused refactor items after completing the documentation alignment (README + coverage matrix) and structural simplifications.
 
 ---
-## 2. Current Architectural Snapshot (Post-Audit)
+## 2. Current Architectural Snapshot (Updated)
 | Area | State |
 |------|-------|
-| Domain Objects | `LLMInvocation`, `EmbeddingInvocation`, `ToolCall`, `EvaluationResult`, `Error`, message dataclasses (`InputMessage`, `OutputMessage`, parts incl. `ToolCallResponse`) |
-| Emission Model | Composite via `CompositeGenerator` delegating to emitters: `SpanGenerator` (alias for forward-looking `SpanEmitter`), `MetricsEmitter`, `ContentEventsEmitter` |
-| Span Logic | Consolidated into single span emitter class (`span_generator.py`) with ToolCall span name + operation name support |
-| Metrics | Duration + token usage for LLM; duration only for ToolCall (implemented); embeddings produce no metrics (by design) |
-| Content Events | LLM input/output messages only (events ignore Embeddings & ToolCalls). Docstring mentions only LLM; explicit ToolCall exclusion not yet documented inline |
-| Handler | `TelemetryHandler` exposes both type‑specific wrappers and generic `start/finish/fail` multiplexer |
-| Protocol | Informal (emitters implement `start/finish/error`); optional `handles()` present in metrics & content events emitters |
-| Evaluations | Implemented for LLM only (events, metrics, optional evaluation spans); not generalized to embeddings/tool calls |
-| Environment Parsing | Core generator flavor & content capture in `config.py`; evaluation env flags still read directly in handler (not centralized) |
-| Attribute Constants | Partial: only a small subset (`provider`, input/output messages) moved to `attributes.py`; many `gen_ai.*` literals remain elsewhere |
-| Legacy Classes | Old inheritance removed; alias `SpanEmitter`→`SpanGenerator` coexist (rename not fully flipped) |
-| Tests | Cover LLM, Embedding lifecycles; ToolCall lifecycle + generic routing; missing mixed sequence & thread-safety smoke tests |
+| Domain Objects | `LLMInvocation`, `EmbeddingInvocation`, `ToolCall`, `EvaluationResult`, `Error`, message dataclasses & parts |
+| Emission Model | Composition: `CompositeGenerator` + emitters (`SpanEmitter`, `MetricsEmitter`, `ContentEventsEmitter`) |
+| Span Logic | Single `SpanEmitter` (file: `generators/span_emitter.py`) using context manager (`start_as_current_span`) |
+| Metrics | LLM: duration + token histograms; ToolCall: duration; Embedding: none (by design) |
+| Content Events | LLM only; explicit exclusion for ToolCall & Embedding documented in emitter + README |
+| Handler | `TelemetryHandler` with type‑specific helpers and generic `start/finish/fail` multiplexer |
+| Protocol | Informal emitter contract: `start/finish/error` (+ optional `handles`) |
+| Evaluations | LLM only (histogram + consolidated event + optional spans) |
+| Environment Parsing | All generator + evaluation flags parsed centrally in `config.parse_env()` -> `Settings` |
+| Attribute Constants | PARTIAL centralization (core + evaluation subset); some literals still inline (mainly evaluation aggregation & auxiliary keys) |
+| Legacy Alias | `SpanGenerator = SpanEmitter` exported for transitional naming; removal planned pre-stability |
+| Tests | Coverage includes mixed sequence, thread-safety, tool call span attributes, evaluation paths |
 
 ---
-## 3. Work Completed in Recent Refactor
-Unchanged from prior snapshot plus:
-- Added `ToolCall` dataclass & lifecycle methods in handler.
-- Span emitter updated to set operation name + span naming for ToolCall.
-- Metrics emitter records duration for ToolCall (no token metrics as intended).
-- Basic ToolCall tests (lifecycle + generic handler path).
+## 3. Recent Work Completed
+- README completely rewritten to emitter / flavor model.
+- Coverage matrix + tool call & embedding examples added.
+- Mixed sequence + thread-safety tests present and green.
+- ContentEventsEmitter docstring explicitly states exclusions.
+- Evaluation env flags fully centralized in `Settings` (no direct ad hoc `os.environ` reads in handler evaluation logic).
+- Root span logic already context-based (no `_current_span` state to remove).
 
 ---
-## 4. Incomplete / Outstanding Gaps (Updated Audit)
-| Gap | Current Status | Impact |
-|-----|----------------|--------|
-| Centralized attribute constants (all `gen_ai.*`) | PARTIAL (only 3 constants centralized) | Hard to adapt to semconv churn; grep still shows many literals |
-| Unified immutable config (all env lookups) | PARTIAL (evaluation env vars still read ad hoc) | Harder to test & reason about evaluation feature flags |
-| SpanEmitter rename consistency | PARTIAL (file/class still `SpanGenerator`; alias present) | Terminology confusion for newcomers |
-| Generic handler API | COMPLETE | Enables uniform extension |
-| Metrics/events embeddings doc clarity | PARTIAL (README note present; need explicit doc section) | Possible contributor ambiguity |
-| Root span logic simplification | PARTIAL (manual `_current_span` tracking; no explicit context-based root detection flag) | Potential nested span edge cases under concurrency |
-| ToolCall domain object | COMPLETE | Unblocks Phase 4 |
-| Evaluation pipeline generalization | NOT STARTED (still LLM-only) | Limits future reuse |
-| Attribute literals version guarding | NOT STARTED | Churn risk on spec evolution |
-| ContentEventsEmitter explicit ToolCall exclusion doc | NOT STARTED (implicit only) | Could cause confusion |
-| Mixed sequence test (LLM → ToolCall → LLM → Embedding) | NOT DONE | Missing integration coverage |
-| Thread-safety smoke (parallel embeddings/tool calls) | NOT DONE | Concurrency regressions may slip |
-| README ToolCall usage snippet | PARTIAL (mentions ToolCall part type; lacks full lifecycle example) | Discoverability gap |
+## 4. Remaining Gaps (Post-Refresh)
+| Gap | Status | Impact |
+|-----|--------|--------|
+| Full attribute constant centralization | PARTIAL | Harder to adapt to semconv churn; grep still yields inline `gen_ai.evaluation.*` & aggregation keys |
+| Evaluation attribute aggregation constants (count/min/max/avg/names) | NOT DONE | Minor duplication & inconsistency risk |
+| Alias deprecation plan (`SpanGenerator`) | NOT FINALIZED | Potential confusion for new contributors |
+| Evaluation generalization (Embeddings / ToolCall) | NOT STARTED | Limits reuse of evaluator infra |
+| Documentation of evaluation span parenting choice (link vs parent) | PARTIAL | Ambiguity for downstream span topology expectations |
+| Attribute version / feature flag strategy (guard experimental) | NOT STARTED | Harder to communicate semconv evolution |
+| Optional helper utilities (e.g. `get_genai_semconv_version()`) | NOT STARTED | Observability tooling convenience gap |
+| Redaction / truncation policy guidance | NOT STARTED | Risk of large payload spans/events |
 
 ---
-## 5. Design Principles Moving Forward
-(unchanged)
+## 5. Design Principles (Stable)
 1. Composition over inheritance.
-2. Minimize surface area: one handler, generic lifecycle.
-3. Centralize config + attribute names.
-4. Extend domain types first, then add telemetry incrementally.
-5. No deprecation overhead pre-release.
+2. Single handler façade; emitters are pluggable.
+3. Centralize config & attribute naming.
+4. Minimize surface area until divergence is proven.
+5. Fast iteration over early stability guarantees.
 
 ---
-## 6. Phase 3.5 Cleanup (Original Plan & Audit Status)
-Actionable tasks & audited status:
-1. attributes.py constants → PARTIAL
-2. config.py + remove direct env usage → PARTIAL (evaluation flags outstanding)
-3. Rename `SpanGenerator` → `SpanEmitter` → COMPLETE (legacy module removed)
-4. Root span logic cleanup → PARTIAL (still manual tracking)
-5. Generic handler lifecycle → COMPLETE
-6. Optional `handles(obj)` in emitters → PARTIAL (implemented in metrics & content events; span emitter lacks explicit method) 
-7. Expanded tests (mixed, embedding error, thread) → PARTIAL (embedding error path covered implicitly? mixed/thread missing)
-8. Docs update for embeddings limited telemetry → PARTIAL (needs explicit section)
+## 6. Definition of Done (Refined)
+Refactor phase considered DONE when:
+- All `gen_ai.*` attribute keys (excluding tests) sourced from `attributes.py` (including evaluation aggregation keys).
+- Alias `SpanGenerator` either removed or explicitly documented as temporary with removal milestone.
+- Evaluation span parenting behavior documented (decision recorded in ADR or README snippet).
+- README + emitter docs remain consistent with code (spot check passes).
+- Optional: small helper for semconv version exported.
 
-Updated Phase 3.5 DoD (NOT MET yet):
-- All `gen_ai.*` literals (except tests) centralized.
-- All env parsing (including evaluation) via config.
-- Rename consistently applied (or documented deferral).
-- Added mixed + thread-safety tests.
-- Docs clarify telemetry coverage per type.
+(General feature expansion—evaluation generalization, redaction utilities—tracked separately; not blocking refactor completion.)
 
 ---
-## 7. Phase 4 (Tool Calls) – Plan & Audit Status
-| Task | Status | Notes |
-|------|--------|-------|
-| 1. ToolCall dataclass | COMPLETE | Implemented in `types.py` |
-| 2. Span emitter integration (op name + span name) | COMPLETE | Operation name literal `tool_call` used |
-| 3. Handler wrappers | COMPLETE | `start/stop/fail_tool_call` present |
-| 4. Metrics duration only | COMPLETE | Implemented in `emitters_metrics.py` |
-| 5. ContentEventsEmitter ignore ToolCall w/ explicit doc | PARTIAL | Ignored implicitly; needs doc comment & README note |
-| 6. Tests (span attrs, mixed sequence, generic start) | PARTIAL | Lifecycle + generic covered; span attribute assertions & mixed sequence absent |
-| 7. Docs / README usage snippet | PARTIAL | Lacks end-to-end snippet |
-
-Phase 4 DoD (NOT FULLY MET): Mixed sequence test, explicit docs, attribute assertions outstanding.
+## 7. Updated Implementation Queue (Ordered)
+1. Attribute constant pass: add remaining evaluation aggregation & supporting constants; replace literals in handler.
+2. Introduce optional constants for operation value fallbacks (e.g. `tool_call`, `embedding`) for uniformity.
+3. Decide & document evaluation span parenting (currently link-based) – record rationale (link avoids accidental parent latency skew). Update README or mini ADR.
+4. Alias strategy: either remove `SpanGenerator` export or add deprecation note in code comment + REFACTORING with removal condition (e.g. before first beta tag).
+5. (Optional) Provide `get_genai_semconv_version()` returning pinned schema URL / semconv version for debug logs.
+6. Draft attribute versioning / churn note (simple mapping / diff guidance in README or dedicated ATTRIBUTES.rst).
+7. (Stretch) Add redaction guidance section (point to future hook or env toggle) to mitigate large message bodies.
+8. (Stretch) Evaluate feasibility of evaluator generalization for embeddings, then tool calls (may need new result semantic categories).
 
 ---
-## 8. Future (Beyond Phase 4) – Not in Scope Yet
-(unchanged)
+## 8. Risk & Mitigation (Focused)
+| Risk | Mitigation |
+|------|-----------|
+| Attribute drift vs semconv | Complete constant centralization; single mapping file. |
+| Contributor confusion over alias | Clarify & schedule removal. |
+| Unexpected large event payloads | Add redaction guidance & future hook placeholder. |
+| Misinterpreted evaluation span hierarchy | Document link-based approach & reasoning. |
 
 ---
-## 9. Risk & Mitigation (Immediate Phases)
-| Risk | Updated Mitigation |
-|------|--------------------|
-| Attribute churn | Finish centralization sprint (expand `attributes.py`) |
-| Env sprawl | Move evaluation/env lookups into `config.py` |
-| Span parent confusion | Replace `_current_span` with context-based detection or explicit parent injection |
-| Type explosion | Continue generic lifecycle & `handles()` filtering |
-| Accidental regressions | Add mixed-sequence + concurrency tests |
-
----
-## 10. Implementation Queue (Revised Ordered Backlog)
-1. Complete attribute constant extraction (eliminate remaining literals outside `attributes.py` & tests).
-2. Centralize evaluation env var parsing into `config.py` (extend `Settings`).
-3. Decide on final naming: either fully migrate to `SpanEmitter` (rename file + class) or update docs to treat `SpanGenerator` as canonical (choose one; remove alias if possible).
-4. Add `handles()` to span emitter (always True for now).
-5. Root span logic: remove `_current_span`; rely on current context or an optional `force_root` flag from settings.
-6. Add mixed sequence test: LLM → ToolCall → LLM → Embedding (assert parent linkage, operation names, metrics limited as expected).
-7. Add thread-safety smoke test (parallel ToolCall + Embedding invocations) ensuring no shared state collisions.
-8. ContentEventsEmitter docstring update + README clarification (tool calls & embeddings produce no content events yet).
-9. README: Add ToolCall lifecycle example snippet.
-10. Optional: span attribute assertion test for ToolCall (operation name, model/request mapping, provider attr presence).
-11. (Stretch) Evaluate feasibility of central evaluation pipeline generalization (defer if large).
-
----
-## 11. Guidance for Contributors / Automation (Adjusted Checklist)
+## 9. Progress Tracker (Rolling)
 ```
-[x] Centralize remaining gen_ai.* attribute literals
-[x] Extend attributes.py (include evaluation, framework, completion parts, etc.)
-[x] Extend Settings & parse_env for evaluation flags (enable, span mode, evaluator list)
-[x] Remove direct os.environ usage from handler (evaluation paths)
-[x] Add handles() method to span emitter
-[x] Rename span_generator.py → span_emitter.py (or document decision)
-[x] Remove legacy `generators.py` file; rely on the `generators/` package (SpanEmitter) only
-[x] Mixed sequence test (LLM → ToolCall → LLM → Embedding)
-[x] Thread-safety smoke test (parallel invocations)
-[x] ToolCall span attribute assertion test
-[x] ContentEventsEmitter doc update (explicit ToolCall/Embedding exclusion)
-[x] README: ToolCall lifecycle example
-[x] README / docs: Telemetry coverage matrix (LLM vs Embedding vs ToolCall)
-```
-Rules (unchanged): keep diffs small, commit after each milestone, maintain typing.
-
----
-## 12. Progress Tracking Block (Reset After Audit)
-```
-Phase 3.5 Status:
-legacy generator files: COMPLETE
-attributes.py:      COMPLETE
-config.py:          COMPLETE
-spanEmitter rename: COMPLETE
-generic lifecycle:  COMPLETE
-root logic fix:     COMPLETE
-tests (3.5 set):    COMPLETE (coverage matrix + doc exclusions added)
-handles() API:      COMPLETE
-
-deficit summary: root logic + tests outstanding.
-
-Phase 4 Status:
-ToolCall dataclass: COMPLETE
-span integration:   COMPLETE
-handler wrappers:   COMPLETE
-metrics support:    COMPLETE
-ToolCall tests:     PARTIAL
-docs update:        PARTIAL
+Centralize remaining literals:    PENDING
+Evaluation agg constants:         PENDING
+Alias decision documented:        PENDING
+Evaluation span parenting doc:    PENDING
+Semconv version helper:           PENDING (optional)
+Attribute versioning note:        PENDING
+Redaction guidance:               PENDING (stretch)
+Evaluator generalization:         PENDING (stretch)
 ```
 
 ---
-## 13. Definition of Done (Revised)
-The refactor is DONE when:
-- No direct `gen_ai.` literals exist outside `attributes.py` & tests.
-- All env var parsing consolidated in `config.py` (`Settings`).
-- Span emitter naming consistent & documented (no ambiguous alias necessity).
-- Generic lifecycle used in examples; wrappers remain thin and delegate.
-- Mixed sequence & thread-safety tests present and green.
-- LLM, Embedding, ToolCall spans produce expected attributes without errors.
-- Metrics: LLM (duration + tokens) / ToolCall (duration) / Embedding (none) clearly documented.
-- ContentEvents: LLM-only documented; explicit exclusions stated.
-- README includes ToolCall lifecycle example + telemetry coverage matrix.
+## 10. Notes
+Core structural refactor tasks (composite architecture, docs alignment, test coverage for new domain types, context-based spans) are complete. Remaining work is *consolidation* (constants + documentation clarity) and *future-facing hardening* (evaluator scope, attribution/version helpers).
 
 ---
-## 14. Appendix: attributes.py Expansion Plan (Next Step)
-Target additions (illustrative):
-```
-GEN_AI_OPERATION_NAME = "gen_ai.operation.name"
-GEN_AI_REQUEST_MODEL = "gen_ai.request.model"
-GEN_AI_RESPONSE_MODEL = "gen_ai.response.model"
-GEN_AI_PROVIDER_NAME = "gen_ai.provider.name"  # existing
-GEN_AI_INPUT_MESSAGES = "gen_ai.input.messages"  # existing
-GEN_AI_OUTPUT_MESSAGES = "gen_ai.output.messages"  # existing
-GEN_AI_FRAMEWORK = "gen_ai.framework"
-GEN_AI_COMPLETION_PREFIX = "gen_ai.completion"  # for indexed outputs
-GEN_AI_EVALUATION_NAME = "gen_ai.evaluation.name"
-GEN_AI_EVALUATION_SCORE_VALUE = "gen_ai.evaluation.score.value"
-GEN_AI_EVALUATION_SCORE_LABEL = "gen_ai.evaluation.score.label"
-GEN_AI_EVALUATION_EXPLANATION = "gen_ai.evaluation.explanation"
-```
-(Refine once full literal audit complete.)
-
----
-## 15. Notes
-This document now reflects an audited, realistic state rather than optimistic completion. Update after each milestone; once Phase 4 DoD is truly met, either archive this snapshot or promote decisions into a formal ADR.
-
----
-End of REFACTORING snapshot.
+End of updated refactoring snapshot.
