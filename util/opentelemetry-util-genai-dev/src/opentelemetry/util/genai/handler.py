@@ -49,29 +49,21 @@ Usage:
 """
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from opentelemetry import _events as _otel_events
 from opentelemetry import metrics as _metrics
 from opentelemetry import trace as _trace_mod
 from opentelemetry.semconv.schemas import Schemas
-from opentelemetry.trace import Link, get_tracer
+from opentelemetry.trace import get_tracer
 
-# Side-effect import registers builtin evaluators
-from opentelemetry.util.genai import (
-    evaluators as _genai_evaluators,  # noqa: F401
-)
-
+# (Removed side-effect builtins import to preserve dynamic evaluator ordering)
 # Updated imports: unified emitters package
 from opentelemetry.util.genai.emitters import (
     CompositeGenerator,
     ContentEventsEmitter,
     MetricsEmitter,
     SpanEmitter,
-)
-from opentelemetry.util.genai.evaluators.registry import (
-    get_evaluator,
-    register_evaluator,
 )
 from opentelemetry.util.genai.types import (
     ContentCapturingMode,
@@ -84,22 +76,15 @@ from opentelemetry.util.genai.types import (
 from opentelemetry.util.genai.utils import get_content_capturing_mode
 from opentelemetry.util.genai.version import __version__
 
-from .attributes import (
-    GEN_AI_EVALUATION_NAME,
-    GEN_AI_EVALUATION_SCORE_LABEL,
-    GEN_AI_EVALUATION_SCORE_VALUE,
-    GEN_AI_OPERATION_NAME,
-    GEN_AI_PROVIDER_NAME,
-    GEN_AI_REQUEST_MODEL,
-    GEN_AI_RESPONSE_ID,
-)
 from .config import parse_env
+from .evaluators.manager import EvaluationManager
 
 
 class TelemetryHandler:
     """
     High-level handler managing GenAI invocation lifecycles and emitting
-    them as spans, metrics, and events.
+    them as spans, metrics, and events. Evaluation execution & emission is
+    delegated to EvaluationManager for extensibility (mirrors emitter design).
     """
 
     def __init__(self, **kwargs: Any):
@@ -157,7 +142,6 @@ class TelemetryHandler:
                 )
                 metrics_emitter = MetricsEmitter(meter=meter)
                 content_emitter = ContentEventsEmitter(
-                    logger=self._event_logger,
                     capture_content=capture_events,
                 )
                 emitters = [span_emitter, metrics_emitter, content_emitter]
@@ -188,7 +172,15 @@ class TelemetryHandler:
                 except Exception:  # pragma: no cover
                     pass
         # Phase 1: wrap in composite (single element) to prepare for multi-emitter
-        self._generator = CompositeGenerator(emitters)
+        self._generator = CompositeGenerator(emitters)  # type: ignore[arg-type]
+
+        # Instantiate evaluation manager (extensible evaluation pipeline)
+        self._evaluation_manager = EvaluationManager(
+            settings=settings,
+            tracer=self._tracer,
+            event_logger=self._event_logger,
+            histogram=self._evaluation_histogram,
+        )
 
     def _refresh_capture_content(
         self,
@@ -313,295 +305,13 @@ class TelemetryHandler:
         invocation: LLMInvocation,
         evaluators: Optional[list[str]] = None,
     ) -> list[EvaluationResult]:
-        """Run registered evaluators against a completed LLMInvocation.
+        """Proxy to EvaluationManager for running evaluators.
 
-        Executes evaluator backends, records scores to a unified histogram
-        (gen_ai.evaluation.score), emits a gen_ai.evaluations event, and optionally
-        creates evaluation spans controlled by OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE
-        (off | aggregated | per_metric).
-
-        Evaluation enablement is controlled by the environment variable
-        OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE. If not enabled, this
-        returns an empty list.
-
-        Args:
-            invocation: The LLMInvocation that has been finished (stop_llm or fail_llm).
-            evaluators: Optional explicit list of evaluator names. If None, falls back
-                to OTEL_INSTRUMENTATION_GENAI_EVALUATORS (comma-separated). If still
-                empty, returns [] immediately.
-
-        Returns:
-            A list of EvaluationResult objects (possibly empty).
+        Retained public signature for backward compatibility. The underlying
+        implementation has been refactored into EvaluationManager to allow
+        pluggable emission similar to emitters.
         """
-        # evaluation gating based on settings
-        if (
-            not getattr(self, "_settings", None)
-            or not self._settings.evaluation_enabled
-        ):
-            return []
-
-        if evaluators is None:
-            evaluators = list(self._settings.evaluation_evaluators)
-        if not evaluators:
-            return []
-
-        results: list[EvaluationResult] = []
-        # Ensure invocation end_time is set (user might have forgotten to call stop_llm)
-        if invocation.end_time is None:
-            invocation.end_time = time.time()
-
-        for name in evaluators:
-            evaluator = None
-            try:
-                evaluator = get_evaluator(name)
-            except Exception:
-                import importlib
-
-                evaluator = None
-                lower = name.lower()
-                # Built-in evaluators
-                if lower in {"length", "sentiment"}:
-                    try:  # pragma: no cover
-                        mod = importlib.import_module(
-                            "opentelemetry.util.genai.evaluators.builtins"
-                        )
-                        if hasattr(mod, "LengthEvaluator"):
-                            register_evaluator(
-                                "length", lambda: mod.LengthEvaluator()
-                            )
-                        if hasattr(mod, "SentimentEvaluator"):
-                            register_evaluator(
-                                "sentiment", lambda: mod.SentimentEvaluator()
-                            )
-                        evaluator = get_evaluator(name)
-                    except Exception:
-                        evaluator = None
-                # External DeepEval integration
-                if lower == "deepeval" and evaluator is None:
-                    try:
-                        # Load external deepeval integration from utils-genai-evals-deepeval package
-                        ext_mod = importlib.import_module(
-                            "opentelemetry.util.genai.evals.deepeval"
-                        )
-                        if hasattr(ext_mod, "DeepEvalEvaluator"):
-                            # factory captures handler's event_logger and tracer
-                            register_evaluator(
-                                "deepeval",
-                                lambda: ext_mod.DeepEvalEvaluator(
-                                    self._event_logger, self._tracer
-                                ),
-                            )
-                            evaluator = get_evaluator(name)
-                    except ImportError:
-                        evaluator = None
-                if evaluator is None:
-                    results.append(
-                        EvaluationResult(
-                            metric_name=name,
-                            error=Error(
-                                message=f"Unknown evaluator: {name}",
-                                type=LookupError,
-                            ),
-                        )
-                    )
-                    continue
-            try:
-                eval_out = evaluator.evaluate(invocation)
-                if isinstance(eval_out, EvaluationResult):
-                    payload = [eval_out]
-                elif isinstance(eval_out, list):
-                    payload = eval_out
-                else:
-                    payload = [
-                        EvaluationResult(
-                            metric_name=name,
-                            error=Error(
-                                message="Evaluator returned unsupported type",
-                                type=TypeError,
-                            ),
-                        )
-                    ]
-                for item in payload:
-                    if isinstance(item, EvaluationResult):
-                        results.append(item)
-                    else:
-                        results.append(
-                            EvaluationResult(
-                                metric_name=name,
-                                error=Error(
-                                    message="Evaluator returned non-EvaluationResult item",
-                                    type=TypeError,
-                                ),
-                            )
-                        )
-            except Exception as exc:  # evaluator runtime error
-                results.append(
-                    EvaluationResult(
-                        metric_name=name,
-                        error=Error(message=str(exc), type=type(exc)),
-                    )
-                )
-        # Emit metrics & event
-        if results:
-            evaluation_items: list[Dict[str, Any]] = []
-            for res in results:
-                attrs: Dict[str, Any] = {
-                    GEN_AI_OPERATION_NAME: "evaluation",
-                    GEN_AI_EVALUATION_NAME: res.metric_name,
-                    GEN_AI_REQUEST_MODEL: invocation.request_model,
-                }
-                if invocation.provider:
-                    attrs[GEN_AI_PROVIDER_NAME] = invocation.provider
-                if res.label is not None:
-                    attrs[GEN_AI_EVALUATION_SCORE_LABEL] = res.label
-                if res.error is not None:
-                    attrs["error.type"] = res.error.type.__qualname__
-                # Record metric if score present and numeric
-                if isinstance(res.score, (int, float)):
-                    self._evaluation_histogram.record(
-                        res.score,
-                        attributes={
-                            k: v for k, v in attrs.items() if v is not None
-                        },
-                    )
-                # Build event body item
-                item = {
-                    "gen_ai.evaluation.name": res.metric_name,
-                }
-                if isinstance(res.score, (int, float)):
-                    item["gen_ai.evaluation.score.value"] = (
-                        res.score
-                    )  # value is numeric; acceptable
-                if res.label is not None:
-                    item["gen_ai.evaluation.score.label"] = res.label
-                if res.explanation:
-                    item["gen_ai.evaluation.explanation"] = res.explanation
-                if res.error is not None:
-                    item["error.type"] = res.error.type.__qualname__
-                    item["error.message"] = res.error.message
-                # include custom attributes from evaluator result
-                for k, v in res.attributes.items():
-                    item[k] = v
-                evaluation_items.append(item)
-            if evaluation_items:
-                event_attrs = {
-                    GEN_AI_OPERATION_NAME: "evaluation",
-                    GEN_AI_REQUEST_MODEL: invocation.request_model,
-                }
-                if invocation.provider:
-                    event_attrs[GEN_AI_PROVIDER_NAME] = invocation.provider
-                if invocation.response_id:
-                    event_attrs[GEN_AI_RESPONSE_ID] = invocation.response_id
-                event_body = {"evaluations": evaluation_items}
-                try:
-                    self._event_logger.emit(
-                        _otel_events.Event(
-                            name="gen_ai.evaluations",
-                            attributes=event_attrs,
-                            body=event_body,
-                            # Link to invocation span if available
-                            span_id=invocation.span.get_span_context().span_id
-                            if invocation.span
-                            else None,
-                            trace_id=invocation.span.get_span_context().trace_id
-                            if invocation.span
-                            else None,
-                        )
-                    )
-                except Exception:  # pragma: no cover - defensive
-                    pass
-
-                # Create evaluation spans based on span mode
-                span_mode = self._settings.evaluation_span_mode
-                parent_link = None
-                if invocation.span:
-                    parent_link = Link(
-                        invocation.span.get_span_context(),
-                        attributes={"gen_ai.operation.name": "chat"},
-                    )
-                if span_mode == "aggregated":
-                    with self._tracer.start_as_current_span(
-                        "evaluation",
-                        links=[parent_link] if parent_link else None,
-                    ) as span:
-                        span.set_attribute(
-                            "gen_ai.operation.name", "evaluation"
-                        )
-                        span.set_attribute(
-                            "gen_ai.request.model", invocation.request_model
-                        )
-                        if invocation.provider:
-                            span.set_attribute(
-                                "gen_ai.provider.name", invocation.provider
-                            )
-                        span.set_attribute(
-                            "gen_ai.evaluation.count", len(evaluation_items)
-                        )
-                        # Aggregate score stats (only numeric)
-                        numeric_scores = [
-                            it.get("gen_ai.evaluation.score.value")
-                            for it in evaluation_items
-                            if isinstance(
-                                it.get("gen_ai.evaluation.score.value"),
-                                (int, float),
-                            )
-                        ]
-                        if numeric_scores:
-                            span.set_attribute(
-                                "gen_ai.evaluation.score.min",
-                                min(numeric_scores),
-                            )
-                            span.set_attribute(
-                                "gen_ai.evaluation.score.max",
-                                max(numeric_scores),
-                            )
-                            span.set_attribute(
-                                "gen_ai.evaluation.score.avg",
-                                sum(numeric_scores) / len(numeric_scores),
-                            )
-                        # Optionally store names list
-                        span.set_attribute(
-                            "gen_ai.evaluation.names",
-                            [
-                                it["gen_ai.evaluation.name"]
-                                for it in evaluation_items
-                            ],
-                        )
-                elif span_mode == "per_metric":
-                    for item in evaluation_items:
-                        name = item.get("gen_ai.evaluation.name", "unknown")
-                        span_name = f"evaluation.{name}"
-                        with self._tracer.start_as_current_span(
-                            span_name,
-                            links=[parent_link] if parent_link else None,
-                        ) as span:
-                            span.set_attribute(
-                                GEN_AI_OPERATION_NAME, "evaluation"
-                            )
-                            span.set_attribute(GEN_AI_EVALUATION_NAME, name)
-                            span.set_attribute(
-                                GEN_AI_REQUEST_MODEL,
-                                invocation.request_model,
-                            )
-                            if invocation.provider:
-                                span.set_attribute(
-                                    GEN_AI_PROVIDER_NAME, invocation.provider
-                                )
-                            if GEN_AI_EVALUATION_SCORE_VALUE in item:
-                                span.set_attribute(
-                                    GEN_AI_EVALUATION_SCORE_VALUE,
-                                    item[GEN_AI_EVALUATION_SCORE_VALUE],
-                                )
-                            if GEN_AI_EVALUATION_SCORE_LABEL in item:
-                                span.set_attribute(
-                                    GEN_AI_EVALUATION_SCORE_LABEL,
-                                    item[GEN_AI_EVALUATION_SCORE_LABEL],
-                                )
-                            if "error.type" in item:
-                                span.set_attribute(
-                                    "error.type", item["error.type"]
-                                )
-        return results
+        return self._evaluation_manager.evaluate(invocation, evaluators)  # type: ignore[arg-type]
 
     # Generic lifecycle API ------------------------------------------------
     def start(self, obj: Any) -> Any:

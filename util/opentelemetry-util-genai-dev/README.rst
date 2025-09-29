@@ -39,6 +39,15 @@ Emitters (current set):
 
 A telemetry "flavor" (selected via env var) is just a predefined combination of these emitters plus rules for where message content may appear.
 
+Evaluation Emission (New)
+-------------------------
+Evaluation execution has been refactored into an extensible pipeline:
+
+* ``EvaluationManager`` orchestrates evaluator resolution, execution, and telemetry emission.
+* Pluggable evaluation emitters (metrics, events, spans) mirror the main generator design, enabling future customization (e.g. persistence, tracing-only, enrichment layers).
+
+The public API ``TelemetryHandler.evaluate_llm`` is unchanged; internally it delegates to ``EvaluationManager``.
+
 Core Concepts
 -------------
 
@@ -135,7 +144,7 @@ Extension Points Summary
 
 Emitter Flavors (Environment Selection)
 ---------------------------------------
-Set ``OTEL_INSTRUMENTATION_GENAI_GENERATOR`` (case‑insensitive): ``span`` (default) | ``span_metric`` | ``span_metric_event``.
+Set ``OTEL_INSTRUMENTATION_GENAI_EMITTERS`` (case‑insensitive): ``span`` (default) | ``span_metric`` | ``span_metric_event``.
 
 +--------------------+-------------------------------+-------------------+---------------------------+-----------------------------------------------+
 | Flavor             | Included Emitters             | Spans             | Metrics                   | Content Events & Message Content Placement    |
@@ -260,17 +269,13 @@ Required for experimental GenAI semantic conventions (and content capture):
 
 GenAI utilities configuration:
 
-* ``OTEL_INSTRUMENTATION_GENAI_GENERATOR`` – telemetry flavor (``span`` | ``span_metric`` | ``span_metric_event``).
+* ``OTEL_INSTRUMENTATION_GENAI_EMITTERS`` – telemetry flavor & extras (``span`` | ``span_metric`` | ``span_metric_event`` plus optional ``traceloop_compat``). (Replaces older docs referencing ``OTEL_INSTRUMENTATION_GENAI_GENERATOR``.)
 * ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`` – content capture mode (``NO_CONTENT`` | ``SPAN_ONLY`` | ``EVENT_ONLY`` | ``SPAN_AND_EVENT``).
 * ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE`` – enable evaluations (true/false).
 * ``OTEL_INSTRUMENTATION_GENAI_EVALUATORS`` – comma list of evaluator names (e.g. ``deepeval,length``).
 * ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE`` – ``off`` | ``aggregated`` | ``per_metric``.
 * ``OTEL_INSTRUMENTATION_GENAI_UPLOAD_HOOK`` – optional fully qualified function path for custom upload hook.
 * ``OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH`` – base fsspec path for prompt/response storage.
-
-Attribute Constants
--------------------
-Commonly used attribute keys are centralized in ``opentelemetry.util.genai.attributes`` to reduce churn risk as semconv evolves. Prefer importing constants instead of embedding string literals in instrumentation.
 
 Extensibility
 -------------
@@ -298,7 +303,15 @@ Integrate by creating a custom handler instance assembling emitters into a new `
 
 Adding an Evaluator
 ~~~~~~~~~~~~~~~~~~~
-Implement the ``Evaluator`` interface (see ``evaluators/base.py``), register via ``register_evaluator(name, factory)`` or rely on dynamic loading (external packages). Evaluations currently target ``LLMInvocation`` objects only.
+Implement the ``Evaluator`` interface (see ``evaluators/base.py``), register via ``register_evaluator(name, factory)``.
+
+Dynamic Loading Notes:
+* ``deepeval``: If an external integration package exposes ``opentelemetry.util.genai.evals.deepeval.DeepEvalEvaluator`` it will override the lightweight builtin placeholder automatically.
+* Builtin evaluators (``length``, ``sentiment``) are registered lazily; they will be imported only if referenced.
+
+Custom Evaluation Emission
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+You can replace or supplement evaluation emission by constructing your own ``EvaluationManager`` (mirroring how emitters are composed) and attaching it to a custom handler instance before use.
 
 Troubleshooting
 ---------------
