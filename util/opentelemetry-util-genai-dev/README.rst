@@ -1,363 +1,277 @@
 OpenTelemetry GenAI Utilities (opentelemetry-util-genai)
 ========================================================
 
+A lightweight, extensible toolkit for **observing Generative AI workloads** with OpenTelemetry.
+It standardizes the lifecycle of LLM, embedding, and tool invocations; captures structured
+content (when allowed); and supports pluggable, asynchronous **evaluation frameworks**.
+
 .. contents:: Table of Contents
-   :depth: 4
+   :depth: 3
    :local:
    :backlinks: entry
 
-Overview
---------
-This package provides foundational data types, helper logic, and lifecycle utilities for emitting OpenTelemetry signals around Generative AI (GenAI) model invocations.
+Vision
+------
+Provide **zero/low–friction** primitives so instrumentation authors, platform teams, and
+application developers can:
 
-Key audiences:
+* Emit semantically consistent telemetry (spans, metrics, events/logs) for GenAI operations.
+* Select the *shape* of telemetry via a single environment variable ("flavor").
+* Defer expensive *evaluation* logic off the hot path (asynchronous sampling + background worker).
+* Interoperate with existing ecosystems (e.g. Traceloop compatibility) without vendor lock‑in.
+* Extend safely: add emitters, evaluators, upload hooks with minimal code.
 
-* Instrumentation authors (framework / model / provider wrappers)
-* Advanced users building custom GenAI telemetry capture pipelines
-* Early adopters validating incubating GenAI semantic conventions (semconv)
-
-Architecture (High Level)
--------------------------
-Telemetry emission is composition‑based: a ``CompositeGenerator`` coordinates a list of small "emitters" each responsible for one signal category.
+High‑Level Architecture
+-----------------------
+Instrumentation (your code or an auto‑instrumentor) builds domain objects and delegates
+lifecycle to a ``TelemetryHandler``. Emission is composed from small **emitters** managed by
+a ``CompositeGenerator``. Evaluation is orchestrated separately by an ``EvaluationManager``.
 
 ::
 
-   Instrumented Code / Wrapper
-       → Build domain object (LLMInvocation / EmbeddingInvocation / ToolCall)
-       → handler.start_* / handler.start(...)  (composite fan‑out: span, metrics, events)
-       → Provider/API call
-       → Populate outputs (messages, token counts, response metadata)
-       → handler.stop_* / handler.finish(...)
-       → Exporter pipelines ship spans / metrics / logs
-       → (Optionally) handler.evaluate_llm(invocation)
+   ┌──────────────┐    start_* / stop_*     ┌──────────────────┐
+   │ Your Code /  │  ─────────────────────▶ │ TelemetryHandler │
+   │ Instrumentor │ ◀────────────────────── │   (facade)       │
+   └──────────────┘     spans / metrics /   └─────────┬────────┘
+                               events                 │
+                                                     ▼
+                                         ┌────────────────────────┐
+                                         │  CompositeGenerator    │
+                                         │ (ordered emitters)     │
+                                         └────────────────────────┘
+                                                     │
+                                          ┌──────────┴──────────┐
+                                          │ Span / Metrics /    │
+                                          │ Content / Traceloop │
+                                          └──────────┬──────────┘
+                                                     │
+                                          ┌──────────┴──────────┐
+                                          │ EvaluationManager   │
+                                          │  (async sampling)   │
+                                          └────────────��────────┘
 
-Emitters (current set):
+Core Domain Types (``opentelemetry.util.genai.types``)
+-----------------------------------------------------
++----------------------+--------------------------------------------------------------+
+| Type                 | Purpose / Notes                                             |
++======================+==============================================================+
+| ``LLMInvocation``    | A single chat / completion style call. Input/output messages,|
+|                      | tokens, provider, model, attributes, span ref.               |
++----------------------+--------------------------------------------------------------+
+| ``EmbeddingInvocation`` | Embedding model call (vectors intentionally *not* emitted).|
++----------------------+--------------------------------------------------------------+
+| ``ToolCall``         | Structured function/tool invocation (duration focused).     |
++----------------------+--------------------------------------------------------------+
+| ``EvaluationResult`` | Output of a single evaluator metric (score, label, attrs).   |
++----------------------+--------------------------------------------------------------+
+| ``Error``            | Normalized error container (message + exception type).       |
++----------------------+--------------------------------------------------------------+
+| ``ContentCapturingMode`` | Enum: NO_CONTENT / SPAN_ONLY / EVENT_ONLY / SPAN_AND_EVENT. |
++----------------------+--------------------------------------------------------------+
 
-* ``SpanEmitter`` – tracing spans & core attributes.
-* ``MetricsEmitter`` – latency + (LLM) token histograms.
-* ``ContentEventsEmitter`` – structured log events containing message content.
-
-A telemetry "flavor" (selected via env var) is just a predefined combination of these emitters plus rules for where message content may appear.
-
-Evaluation Emission (New)
--------------------------
-Evaluation execution has been refactored into an extensible pipeline:
-
-* ``EvaluationManager`` orchestrates evaluator resolution, execution, and telemetry emission.
-* Pluggable evaluation emitters (metrics, events, spans) mirror the main generator design, enabling future customization (e.g. persistence, tracing-only, enrichment layers).
-
-The public API ``TelemetryHandler.evaluate_llm`` is unchanged; internally it delegates to ``EvaluationManager``.
-
-Core Concepts
--------------
-
-GenAI Data Types
-~~~~~~~~~~~~~~~~
-The GenAI domain model is intentionally thin (pure data containers). All are defined in ``opentelemetry.util.genai.types``.
-
-+----------------------+---------------------------------------------------------------------------------------------+
-| Type                 | Purpose / Key Fields                                                                        |
-+======================+=============================================================================================+
-| LLMInvocation        | Represents a chat / completion style model call. Holds request / response models,           |
-|                      | input/output messages, token counts, provider, custom attributes, span context fields.      |
-+----------------------+---------------------------------------------------------------------------------------------+
-| EmbeddingInvocation  | Represents an embedding generation call (input_texts, optional vector dimensions).          |
-|                      | Excluded from metrics (tokens) & content events by design.                                  |
-+----------------------+---------------------------------------------------------------------------------------------+
-| ToolCall             | External tool/function invocation (arguments, name, optional provider). Duration only.      |
-+----------------------+---------------------------------------------------------------------------------------------+
-| InputMessage         | Chat input message: ``role`` + list of structured parts (e.g. Text, ToolCall references).   |
-+----------------------+---------------------------------------------------------------------------------------------+
-| OutputMessage        | Chat output message: ``role`` + parts + finish_reason.                                      |
-+----------------------+---------------------------------------------------------------------------------------------+
-| Text (part)          | Simple textual content part used inside messages.                                           |
-+----------------------+---------------------------------------------------------------------------------------------+
-| ToolCallResponse     | Structured part capturing response to a prior tool call (placeholder for future logic).     |
-+----------------------+---------------------------------------------------------------------------------------------+
-| EvaluationResult     | Result of a single evaluator metric: metric_name, score, label, explanation, attributes.    |
-+----------------------+---------------------------------------------------------------------------------------------+
-| Error                | Normalized error container (message + exception type).                                      |
-+----------------------+---------------------------------------------------------------------------------------------+
-| ContentCapturingMode | Enum controlling if/where message bodies are captured: NO_CONTENT / SPAN_ONLY /             |
-|                      | EVENT_ONLY / SPAN_AND_EVENT.                                                                |
-+----------------------+---------------------------------------------------------------------------------------------+
-
-Design Notes:
-* Data classes never perform emission logic; emitters inspect them via ``isinstance``.
-* ``LLMInvocation.messages`` & ``chat_generations`` are convenience mirrors maintained for backward compatibility.
-* Timestamps (``start_time`` / ``end_time``) are filled by the handler; instrumentation authors set input data only.
-
-Util GenAI Components
-~~~~~~~~~~~~~~~~~~~~~
-The telemetry layer *interprets* data types into OpenTelemetry signals.
+Design Pillars
+--------------
+1. **Separation of concerns** – Data classes hold data only; emitters interpret them.
+2. **Composability** – Telemetry flavor = ordered set of emitters.
+3. **Graceful opt‑in** – Heavy / optional dependencies imported lazily.
+4. **Async evaluation** – Sampling & queueing is fast; analysis occurs off the critical path.
+5. **Interoperability** – Traceloop compatibility emitter can run alone or alongside semconv emitters.
+6. **Easily overridable** – Custom emitters/evaluators/queues can be introduced with minimal boilerplate.
 
 Telemetry Handler
-^^^^^^^^^^^^^^^^^
-``TelemetryHandler`` (``handler.py``) is the façade used by instrumentation.
+-----------------
+``TelemetryHandler`` is the facade most users touch. Responsibilities:
 
-Responsibilities:
-- Parse and cache env configuration (flavor, content capture, evaluation flags).
-- Construct the appropriate emitter set once (flavor governs composition).
-- Provide strongly named lifecycle helpers (``start_llm``, ``stop_tool_call``) plus generic ``start/finish/fail`` dispatch.
-- Post‑completion evaluation triggering (``evaluate_llm``) including metric & event emission for evaluation results.
+* Parse environment once (flavor, content capture, evaluation enablement, intervals).
+* Build the appropriate emitter pipeline (span / metrics / content events / traceloop).
+* Provide typed lifecycle helpers (``start_llm``, ``stop_embedding`` …) plus generic ``start/finish/fail``.
+* On ``stop_llm``: schedule asynchronous evaluations (sampling decision stored in invocation attributes).
+* Optional immediate evaluation via ``evaluate_llm(invocation)`` (legacy / ad‑hoc path).
 
 Emitters
-^^^^^^^^
-Independent units (``emitters/*.py``) implementing ``start(obj)``, ``finish(obj)``, ``error(error,obj)`` and optional ``handles(obj)``.
+--------
+| Emitter               | Role |
+|-----------------------|------|
+| ``SpanEmitter``       | Creates & finalizes spans with semconv attributes. Optionally adds message content. |
+| ``MetricsEmitter``    | Duration (all), token metrics (LLM only).                                             |
+| ``ContentEventsEmitter`` | Structured events/log records for messages (LLM only) to keep spans lean.       |
+| ``TraceloopCompatEmitter`` | Produces a Traceloop‑compatible span format for ecosystem bridging.          |
 
-- ``SpanEmitter``: Creates / finalizes spans. Applies semantic attributes, optional message serialization (depending on flavor + capture mode). Robust to missing output.
-- ``MetricsEmitter``: Records latency for all supported objects and token usage for ``LLMInvocation`` only. Ignores embeddings for token metrics; records duration for ToolCall.
-- ``ContentEventsEmitter``: Emits structured log events for input & output chat messages (LLM only) when event capture enabled.
+**Ordering**: Start phase – span emitters first (span context available early). Finish phase – span emitters last (other emitters observe live span).
 
-Composite Generator
-^^^^^^^^^^^^^^^^^^^
-``CompositeGenerator`` (``emitters/composite.py``) is an ordered fan‑out orchestrator. It guarantees span start happens before metrics/events, and span end after they finish (metrics & events finish first, span last), ensuring emitters can still read live span context.
+Telemetry Flavors (``OTEL_INSTRUMENTATION_GENAI_EMITTERS``)
+----------------------------------------------------------
+Baseline (choose one):
 
-Evaluators
-^^^^^^^^^^
-Evaluator implementations (``evaluators/*``) provide domain-specific quality / scoring logic. A registry pattern allows lazy dynamic loading. An evaluator returns one or more ``EvaluationResult`` items.
+* ``span`` – spans only.
+* ``span_metric`` – spans + metrics.
+* ``span_metric_event`` – spans (lean) + metrics + content events (messages leave the span).
 
-- Built-ins (length, sentiment) loaded on demand.
-- External packages (e.g., ``deepeval``) can integrate by registering a factory.
+Extras (append):
+
+* ``traceloop_compat`` – add Traceloop‑formatted span(s). If this is the **only** token provided, only the compat span is emitted.
+
+Examples:
+
+* ``span_metric_event,traceloop_compat`` – full semconv set + compatibility.
+* ``traceloop_compat`` – compatibility only (no semconv spans/metrics/events).
+
+Content Capture Matrix
+----------------------
+Environment variable ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`` selects mode:
+
++------------------+-------------------------------+---------------------------------------------+
+| Mode             | Span Flavors (span / metric)  | ``span_metric_event`` Flavor                |
++==================+===============================+=============================================+
+| NO_CONTENT       | No messages on spans          | No events (no content)                     |
++------------------+-------------------------------+---------------------------------------------+
+| SPAN_ONLY        | Messages on spans             | (treated like NO_CONTENT – keep spans lean) |
++------------------+-------------------------------+---------------------------------------------+
+| EVENT_ONLY       | No messages on spans          | Messages as events                          |
++------------------+-------------------------------+---------------------------------------------+
+| SPAN_AND_EVENT   | Messages on spans             | Messages as events (span kept lean)         |
++------------------+-------------------------------+---------------------------------------------+
+
+Evaluation (Asynchronous Model)
+-------------------------------
+**Goal**: Avoid blocking request latency while still emitting quality / compliance / guardrail metrics.
+
+Flow:
+1. ``stop_llm`` is called.
+2. Each configured evaluator *samples* the invocation (rate limit + custom logic via ``should_sample``).
+3. Sampled invocations are enqueued (very fast). Sampling decisions are recorded under
+   ``invocation.attributes['gen_ai.evaluation.sampled']``.
+4. A background thread (interval = ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL``) drains queues and calls
+   ``evaluate_invocation`` per item.
+5. Results → histogram metric (``gen_ai.evaluation.score``) + aggregated event (``gen_ai.evaluations``) + optional spans.
+
+Synchronous (legacy / ad hoc): ``TelemetryHandler.evaluate_llm(invocation)`` executes evaluators immediately.
+
+Manual Flush (e.g., short‑lived scripts / tests):
+
+.. code-block:: python
+
+   handler.process_evaluations()  # one drain cycle
+
+Sampling & Rate Limiting
+~~~~~~~~~~~~~~~~~~~~~~~~
+* Per‑evaluator sliding window rate limiting: set ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE``.
+* Zero / unset → unlimited.
+* Implement ``Evaluator.should_sample(invocation)`` for custom (probability / attribute / content–based) policies.
+
+Evaluator Interface (Current)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. code-block:: python
+
+   from opentelemetry.util.genai.evaluators.base import Evaluator
+   from opentelemetry.util.genai.types import LLMInvocation, EvaluationResult
+
+   class MyEvaluator(Evaluator):
+       def should_sample(self, invocation: LLMInvocation) -> bool:
+           return True  # or custom logic
+
+       def evaluate_invocation(self, invocation: LLMInvocation):
+           # heavy work here
+           return EvaluationResult(metric_name="custom", score=0.87, label="ok")
+
+Register via ``register_evaluator("custom", lambda: MyEvaluator())``.
+
+Traceloop Compatibility
+-----------------------
+If you already rely on Traceloop semantics or tooling:
+
+* Add ``traceloop_compat`` to ``OTEL_INSTRUMENTATION_GENAI_EMITTERS``.
+* Or run *only* the compat emitter by setting the variable to ``traceloop_compat``.
+* Compat spans can coexist with semconv spans – helpful for transition or side‑by‑side validation.
 
 Upload Hooks
-^^^^^^^^^^^^
-Upload hooks (``upload_hook.py`` + optional entry-points) provide pluggable persistence of prompt / response artifacts (e.g., fsspec cloud/object storage) via a simple ``upload(...)`` interface (see ``FsspecUploadHook`` implementation).
+------------
+Optional persistence of prompt/response artifacts (e.g. fsspec to local disk or object storage):
 
-Content Capture Enforcement
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-Flavor + ``ContentCapturingMode`` together dictate whether messages appear on spans, events, both, or not at all (see matrices below). Emitters do *not* read env directly; the handler refreshes capture mode and updates emitters before starting new LLM spans.
+* Configure ``OTEL_INSTRUMENTATION_GENAI_UPLOAD_HOOK`` with an import path to a factory returning an object with an ``upload(...)`` method.
+* ``OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH`` provides the storage root (e.g. ``/tmp/prompts`` or ``s3://bucket/path``).
 
-Lifecycle Overview
-^^^^^^^^^^^^^^^^^^^
-1. Instrumentation builds an invocation data object.
-2. Handler ``start_*`` delegates to ``CompositeGenerator`` → span emitter starts span.
-3. Provider executes; instrumentation populates outputs (messages, tokens, response id/model, custom attributes).
-4. Handler ``stop_*`` delegates finish → metrics/event emitters record while span still active → span emitter closes span.
-5. Optional: ``evaluate_llm`` executes evaluators → metrics (scores), single evaluations event, and optionally evaluation spans.
-
-Extension Points Summary
-^^^^^^^^^^^^^^^^^^^^^^^^
-- Add a new emitter: implement the three lifecycle methods and (optionally) ``handles()``; inject into a custom handler instance before use.
-- Add a new evaluator: subclass / follow Evaluator protocol, register via ``register_evaluator(name, factory)``.
-- Add an upload hook: publish an entry point ``opentelemetry_genai_upload_hook`` returning an object with ``upload(...)``.
-
-Emitter Flavors (Environment Selection)
----------------------------------------
-Set ``OTEL_INSTRUMENTATION_GENAI_EMITTERS`` (case‑insensitive): ``span`` (default) | ``span_metric`` | ``span_metric_event``.
-
-+--------------------+-------------------------------+-------------------+---------------------------+-----------------------------------------------+
-| Flavor             | Included Emitters             | Spans             | Metrics                   | Content Events & Message Content Placement    |
-+====================+===============================+===================+===========================+===============================================+
-| span               | SpanEmitter                   | Yes               | No                        | Message content → span attrs (if mode allows) |
-+--------------------+-------------------------------+-------------------+---------------------------+-----------------------------------------------+
-| span_metric        | SpanEmitter, MetricsEmitter   | Yes               | Duration + tokens (LLM)   | Message content → span attrs (if mode allows) |
-+--------------------+-------------------------------+-------------------+---------------------------+-----------------------------------------------+
-| span_metric_event  | SpanEmitter, MetricsEmitter,  | Yes (no messages  | Duration + tokens (LLM)   | Message content → events only (if mode allows)|
-|                    | ContentEventsEmitter          | on span)          |                           |                                               |
-+--------------------+-------------------------------+-------------------+---------------------------+-----------------------------------------------+
-
-Message Content Capture Modes
------------------------------
-Requires enabling experimental semconv (see Environment Variables). Set ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`` to one of:
-
-* ``NO_CONTENT`` (default)
-* ``SPAN_ONLY``
-* ``EVENT_ONLY``
-* ``SPAN_AND_EVENT``
-
-Interplay Rules:
-
-* Flavor ``span`` / ``span_metric``: Only SPAN_ONLY / SPAN_AND_EVENT cause messages to be serialized onto span attributes. EVENT_ONLY acts like NO_CONTENT for these flavors.
-* Flavor ``span_metric_event``: Messages are never added to spans. EVENT_ONLY / SPAN_AND_EVENT allow events; SPAN_ONLY is treated like NO_CONTENT to avoid duplication.
-
-Telemetry Coverage Matrix (Invocation Types)
---------------------------------------------
-+----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
-| Invocation Type      | Span                      | Metrics                    | Content Events (messages)            | Message Content Placement                    |
-+======================+===========================+============================+======================================+==============================================+
-| LLMInvocation        | Yes (chat {model})        | Duration (+ tokens LLM)    | Only flavor=span_metric_event &      | Span (span/span_metric) or events            |
-|                      |                           |                            | capture mode allows events           | (span_metric_event) per rules above          |
-+----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
-| ToolCall             | Yes (tool {name})         | Duration only              | No (explicitly excluded)             | Never (arguments already attributes)         |
-+----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
-| EmbeddingInvocation  | Yes (embedding {model})   | None                       | No (explicitly excluded)             | Never (vectors not recorded)                 |
-+----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
-| Evaluation (LLM only)| Optional spans (aggregated| Histogram (score)          | Single event ``gen_ai.evaluations``  | N/A (evaluation items separate structure)    |
-|                      | or per-metric)            |                            |                                      |                                              |
-+----------------------+---------------------------+----------------------------+--------------------------------------+----------------------------------------------+
-
-Content Events Exclusions
--------------------------
-* ToolCall invocations: excluded to avoid duplicating argument payloads and unbounded log growth.
-* Embedding invocations: excluded to prevent large vector/text payload emission of limited diagnostic value.
-
-Evaluation
-----------
-Evaluation runs occur post ``stop_llm`` (or after error) when enabled. Each evaluator produces one or more ``EvaluationResult`` items; results are:
-
-1. Recorded into a histogram metric ``gen_ai.evaluation.score`` (for numeric scores in [0,1] when meaningful).
-2. Emitted as a single structured event ``gen_ai.evaluations`` containing a list of evaluation objects.
-3. Optionally represented as spans (``aggregated`` or ``per_metric``) depending on span mode.
-
-Environment variables controlling evaluation are listed below. Currently evaluations apply only to ``LLMInvocation``.
-
-Quick Usage Examples
---------------------
-LLM Invocation
-~~~~~~~~~~~~~~
-.. code-block:: python
-
-   from opentelemetry.util.genai.handler import get_telemetry_handler
-   from opentelemetry.util.genai.types import (
-       LLMInvocation, InputMessage, OutputMessage, Text
-   )
-
-   handler = get_telemetry_handler()
-   inv = LLMInvocation(
-       request_model="gpt-4o-mini",
-       provider="openai",
-       input_messages=[InputMessage(role="user", parts=[Text(content="Hello!")])],
-       attributes={"framework": "fastapi"},
-   )
-   handler.start_llm(inv)
-   # ... call provider ...
-   inv.output_messages = [OutputMessage(role="assistant", parts=[Text(content="Hi there!")], finish_reason="stop")]
-   inv.input_tokens = 12
-   inv.output_tokens = 20
-   handler.stop_llm(inv)
-
-ToolCall Invocation
-~~~~~~~~~~~~~~~~~~~
-.. code-block:: python
-
-   from opentelemetry.util.genai.types import ToolCall
-
-   tool = ToolCall(name="translate", id="t1", arguments={"text": "Hola"}, provider="demo")
-   handler.start_tool_call(tool)
-   # ... execute tool ...
-   tool.attributes["result"] = "Hello"
-   handler.stop_tool_call(tool)
-
-Embedding Invocation
-~~~~~~~~~~~~~~~~~~~~
-.. code-block:: python
-
-   from opentelemetry.util.genai.types import EmbeddingInvocation
-
-   emb = EmbeddingInvocation(request_model="text-emb-v1", provider="demo", input_texts=["banana", "apple"])
-   handler.start_embedding(emb)
-   # ... embedding generation ...
-   handler.stop_embedding(emb)
-
-Evaluation Example
-~~~~~~~~~~~~~~~~~~
-.. code-block:: python
-
-   from opentelemetry.util.genai.handler import get_telemetry_handler
-   handler = get_telemetry_handler()
-   # after LLM invocation completed
-   results = handler.evaluate_llm(inv)
-   for r in results:
-       print(r.metric_name, r.score, r.label)
-
-Environment Variables
----------------------
-Required for experimental GenAI semantic conventions (and content capture):
-
-* ``OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental``
-
-GenAI utilities configuration:
-
-* ``OTEL_INSTRUMENTATION_GENAI_EMITTERS`` – telemetry flavor & extras (``span`` | ``span_metric`` | ``span_metric_event`` plus optional ``traceloop_compat``). (Replaces older docs referencing ``OTEL_INSTRUMENTATION_GENAI_GENERATOR``.)
-* ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`` – content capture mode (``NO_CONTENT`` | ``SPAN_ONLY`` | ``EVENT_ONLY`` | ``SPAN_AND_EVENT``).
-* ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE`` – enable evaluations (true/false).
-* ``OTEL_INSTRUMENTATION_GENAI_EVALUATORS`` – comma list of evaluator names (e.g. ``deepeval,length``).
-* ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE`` – ``off`` | ``aggregated`` | ``per_metric``.
-* ``OTEL_INSTRUMENTATION_GENAI_UPLOAD_HOOK`` – optional fully qualified function path for custom upload hook.
-* ``OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH`` – base fsspec path for prompt/response storage.
-
-Extensibility
--------------
-Adding a New Emitter
-~~~~~~~~~~~~~~~~~~~~
-Emitters implement the trio ``start(obj)``, ``finish(obj)``, ``error(err, obj)`` (and optionally ``handles(obj)`` to filter objects). Example skeleton:
+Quick Start
+-----------
+Minimal synchronous example (no async flush – good for services):
 
 .. code-block:: python
-
-   from opentelemetry.util.genai.types import LLMInvocation, Error
-
-   class CustomEmitter:
-       role = "custom"
-       def start(self, obj):
-           if isinstance(obj, LLMInvocation):
-               ...
-       def finish(self, obj):
-           ...
-       def error(self, err: Error, obj):
-           ...
-       def handles(self, obj):  # optional
-           return isinstance(obj, LLMInvocation)
-
-Integrate by creating a custom handler instance assembling emitters into a new ``CompositeGenerator``.
-
-Adding an Evaluator
-~~~~~~~~~~~~~~~~~~~
-Implement the ``Evaluator`` interface (see ``evaluators/base.py``), register via ``register_evaluator(name, factory)``.
-
-Dynamic Loading Notes:
-* ``deepeval``: If an external integration package exposes ``opentelemetry.util.genai.evals.deepeval.DeepEvalEvaluator`` it will override the lightweight builtin placeholder automatically.
-* Builtin evaluators (``length``, ``sentiment``) are registered lazily; they will be imported only if referenced.
-
-Custom Evaluation Emission
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-You can replace or supplement evaluation emission by constructing your own ``EvaluationManager`` (mirroring how emitters are composed) and attaching it to a custom handler instance before use.
-
-Troubleshooting
----------------
-* Missing message content: confirm experimental opt‑in + capture mode, and flavor rules (see matrix).
-* No spans exported: ensure a global TracerProvider is configured prior to handler creation.
-* Evaluations return empty: either disabled (env) or no evaluator names resolved.
-
-Stability Disclaimer
---------------------
-GenAI semantic conventions are incubating; attribute names and enabling conditions can change. Track CHANGELOG for updates.
-
-Roadmap (Indicative)
---------------------
-* Additional evaluation domain coverage (embeddings, tool calls)
-* More granular token metrics (streaming / incremental)
-* Potential redaction utilities for sensitive content
-* Attribute stabilization & alignment with future semconv releases
-
-Minimal End-to-End Test Snippet
---------------------------------
-.. code-block:: python
-
-   from opentelemetry.sdk.trace import TracerProvider
-   from opentelemetry.sdk.trace.export import SimpleSpanProcessor, InMemorySpanExporter
-   from opentelemetry import trace
-
-   exporter = InMemorySpanExporter()
-   provider = TracerProvider()
-   provider.add_span_processor(SimpleSpanProcessor(exporter))
-   trace.set_tracer_provider(provider)
 
    from opentelemetry.util.genai.handler import get_telemetry_handler
    from opentelemetry.util.genai.types import LLMInvocation, InputMessage, OutputMessage, Text
 
    handler = get_telemetry_handler()
-   inv = LLMInvocation(
-       request_model="demo-model",
-       provider="demo-provider",
-       input_messages=[InputMessage(role="user", parts=[Text(content="ping")])],
-   )
+   inv = LLMInvocation(request_model="demo-model", provider="demo")
+   inv.input_messages.append(InputMessage(role="user", parts=[Text(content="Hello?")]))
+
    handler.start_llm(inv)
-   inv.output_messages = [OutputMessage(role="assistant", parts=[Text(content="pong")], finish_reason="stop")]
-   handler.stop_llm(inv)
-   spans = exporter.get_finished_spans()
-   assert spans and spans[0].name == "chat demo-model"
+   # ... call model ...
+   inv.output_messages.append(OutputMessage(role="assistant", parts=[Text(content="Hi!")], finish_reason="stop"))
+   handler.stop_llm(inv)  # schedules async evaluation if enabled
+
+   # Optional: force evaluation processing (e.g., short script)
+   handler.process_evaluations()
+
+Environment Variables
+---------------------
+Core / Flavor / Content:
+
+* ``OTEL_INSTRUMENTATION_GENAI_EMITTERS`` – flavor + extras (``span`` | ``span_metric`` | ``span_metric_event`` + optional ``traceloop_compat``).
+* ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`` – ``NO_CONTENT`` | ``SPAN_ONLY`` | ``EVENT_ONLY`` | ``SPAN_AND_EVENT``.
+* ``OTEL_SEMCONV_STABILITY_OPT_IN`` – must include ``gen_ai_latest_experimental`` to unlock semantic attributes & content modes.
+
+Evaluation:
+
+* ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE`` – ``true`` / ``false``.
+* ``OTEL_INSTRUMENTATION_GENAI_EVALUATORS`` – comma list (e.g. ``length,sentiment,deepeval``).
+* ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE`` – ``off`` | ``aggregated`` | ``per_metric``.
+* ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL`` – background drain interval (seconds, default 5.0).
+* ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE`` – per‑evaluator sample cap (0 = unlimited).
+
+Upload / Artifacts:
+
+* ``OTEL_INSTRUMENTATION_GENAI_UPLOAD_HOOK`` – path to hook factory.
+* ``OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH`` – storage base path/URI.
+
+Advanced Use Cases
+------------------
+* **High‑volume inference service** – Set flavor to ``span_metric_event`` + message capture via events to keep spans small; enable sampling with a low rate limit for costlier external evaluators.
+* **Local benchmarking / quality lab** – Use synchronous ``evaluate_llm`` in a harness script for deterministic comparisons, or call ``process_evaluations`` at controlled checkpoints.
+* **Migration from Traceloop** – Run ``span_metric_event,traceloop_compat`` and compare spans side‑by‑side before removing the compat emitter.
+* **Selective evaluation** – Override ``should_sample`` to only evaluate certain models, routes, or request sizes.
+
+Extensibility Summary
+---------------------
++----------------------+-----------------------------------------------+
+| Extension Point      | How                                           |
++======================+===============================================+
+| Emitter              | Implement start/finish/error; add to pipeline |
++----------------------+-----------------------------------------------+
+| Evaluator            | Subclass ``Evaluator``; register factory      |
++----------------------+-----------------------------------------------+
+| Evaluation emitters  | (Advanced) Wrap EvaluationManager or fork     |
++----------------------+-----------------------------------------------+
+| Upload hook          | Provide entry point or import path            |
++----------------------+-----------------------------------------------+
+
+Troubleshooting
+---------------
+* **Missing evaluation data** – Ensure async drain occurred (call ``process_evaluations`` in short scripts).
+* **Score always None (deepeval)** – External integration not installed; you’re seeing the placeholder.
+* **High span size** – Switch to ``span_metric_event`` so message bodies move to events.
+* **Sampling too aggressive** – Increase rate limit or adjust custom ``should_sample`` logic.
+
+Migration Notes (from earlier synchronous-only evaluation versions)
+------------------------------------------------------------------
+* ``evaluate_llm(invocation)`` still works and returns immediate results.
+* Automatic evaluation now *queues*; rely on metrics/events after the worker drains.
+* Add explicit ``handler.process_evaluations()`` in unit tests that assert on evaluation telemetry.
+
+Stability Disclaimer
+--------------------
+GenAI semantic conventions and evaluation attributes are **incubating** and may evolve.
+Monitor the CHANGELOG before pinning dashboards or alerts to specific attribute names.
 
 License
 -------
-See repository LICENSE (Apache 2.0 unless otherwise stated).
+Apache 2.0 (see ``LICENSE``). Third‑party components retain their respective licenses.
