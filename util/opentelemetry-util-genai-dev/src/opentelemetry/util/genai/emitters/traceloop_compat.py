@@ -1,18 +1,21 @@
 # Traceloop compatibility emitter
 from __future__ import annotations
 
-import json
-from dataclasses import asdict
+import json  # noqa: F401 (backward compatibility re-export)
+from dataclasses import asdict  # noqa: F401 (backward compatibility re-export)
 from typing import Optional
 
 from opentelemetry import trace
-from opentelemetry.semconv._incubating.attributes.gen_ai_attributes import (
-    GEN_AI_RESPONSE_ID,
-)
 from opentelemetry.trace import SpanKind, Tracer
 from opentelemetry.trace.status import Status, StatusCode
 
+from ..attributes import GEN_AI_FRAMEWORK, GEN_AI_PROVIDER_NAME
 from ..types import Error, LLMInvocation
+from .utils import (
+    _apply_function_definitions,
+    _apply_llm_finish_semconv,
+    _serialize_messages,
+)
 
 
 class TraceloopCompatEmitter:
@@ -46,50 +49,16 @@ class TraceloopCompatEmitter:
 
     def _apply_semconv_start(self, invocation: LLMInvocation, span):
         """Apply semantic convention attributes at start."""
-        try:
+        try:  # pragma: no cover - defensive
             span.set_attribute("gen_ai.operation.name", "chat")
-            span.set_attribute("gen_ai.request.model", invocation.request_model)
+            span.set_attribute(
+                "gen_ai.request.model", invocation.request_model
+            )
             if invocation.provider:
-                span.set_attribute("gen_ai.provider.name", invocation.provider)
+                span.set_attribute(GEN_AI_PROVIDER_NAME, invocation.provider)
             if invocation.framework:
-                span.set_attribute("gen_ai.framework", invocation.framework)
-            # function definitions
-            if invocation.request_functions:
-                for idx, fn in enumerate(invocation.request_functions):
-                    name = fn.get("name")
-                    if name:
-                        span.set_attribute(f"gen_ai.request.function.{idx}.name", name)
-                    desc = fn.get("description")
-                    if desc:
-                        span.set_attribute(f"gen_ai.request.function.{idx}.description", desc)
-                    params = fn.get("parameters")
-                    if params is not None:
-                        span.set_attribute(f"gen_ai.request.function.{idx}.parameters", str(params))
-        except Exception:  # pragma: no cover
-            pass
-
-    def _apply_semconv_finish(self, invocation: LLMInvocation, span):
-        try:
-            if invocation.response_model_name:
-                span.set_attribute("gen_ai.response.model", invocation.response_model_name)
-            if invocation.response_id:
-                span.set_attribute(GEN_AI_RESPONSE_ID, invocation.response_id)
-            if invocation.input_tokens is not None:
-                span.set_attribute("gen_ai.usage.input_tokens", invocation.input_tokens)
-            if invocation.output_tokens is not None:
-                span.set_attribute("gen_ai.usage.output_tokens", invocation.output_tokens)
-            # Reapply function definitions if any added later
-            if invocation.request_functions:
-                for idx, fn in enumerate(invocation.request_functions):
-                    name = fn.get("name")
-                    if name:
-                        span.set_attribute(f"gen_ai.request.function.{idx}.name", name)
-                    desc = fn.get("description")
-                    if desc:
-                        span.set_attribute(f"gen_ai.request.function.{idx}.description", desc)
-                    params = fn.get("parameters")
-                    if params is not None:
-                        span.set_attribute(f"gen_ai.request.function.{idx}.parameters", str(params))
+                span.set_attribute(GEN_AI_FRAMEWORK, invocation.framework)
+            _apply_function_definitions(span, invocation.request_functions)
         except Exception:  # pragma: no cover
             pass
 
@@ -110,9 +79,8 @@ class TraceloopCompatEmitter:
         invocation.attributes.setdefault("traceloop.span.kind", "llm")
         invocation.__dict__["traceloop_span"] = span
         invocation.__dict__["traceloop_cm"] = cm
-        # Copy traceloop.* attributes
+        # Copy traceloop.* and any custom non-semconv attributes present at start
         for k, v in invocation.attributes.items():
-            # Copy all non-semconv custom attributes (includes traceloop.* and request_* etc.)
             if not k.startswith("gen_ai."):
                 try:
                     span.set_attribute(k, v)
@@ -122,13 +90,12 @@ class TraceloopCompatEmitter:
         self._apply_semconv_start(invocation, span)
         # Input capture
         if self._capture_content and invocation.input_messages:
-            try:
-                span.set_attribute(
-                    "traceloop.entity.input",
-                    json.dumps([asdict(m) for m in invocation.input_messages]),
-                )
-            except Exception:  # pragma: no cover
-                pass
+            serialized = _serialize_messages(invocation.input_messages)
+            if serialized is not None:
+                try:  # pragma: no cover
+                    span.set_attribute("traceloop.entity.input", serialized)
+                except Exception:  # pragma: no cover
+                    pass
 
     def finish(self, invocation: LLMInvocation) -> None:  # noqa: D401
         span = getattr(invocation, "traceloop_span", None)
@@ -137,21 +104,18 @@ class TraceloopCompatEmitter:
             return
         # Output capture
         if self._capture_content and invocation.output_messages:
-            try:
-                span.set_attribute(
-                    "traceloop.entity.output",
-                    json.dumps(
-                        [asdict(m) for m in invocation.output_messages]
-                    ),
-                )
-            except Exception:  # pragma: no cover
-                pass
-        # Apply finish-time semconv attributes + response id
-        self._apply_semconv_finish(invocation, span)
+            serialized = _serialize_messages(invocation.output_messages)
+            if serialized is not None:
+                try:  # pragma: no cover
+                    span.set_attribute("traceloop.entity.output", serialized)
+                except Exception:  # pragma: no cover
+                    pass
+        # Apply finish-time semconv attributes (response model/id, usage tokens, function defs)
+        _apply_llm_finish_semconv(span, invocation)
         if cm and hasattr(cm, "__exit__"):
             try:  # pragma: no cover
                 cm.__exit__(None, None, None)
-            except Exception:
+            except Exception:  # pragma: no cover
                 pass
         span.end()
 
@@ -160,15 +124,15 @@ class TraceloopCompatEmitter:
         cm = getattr(invocation, "traceloop_cm", None)
         if span is None:
             return
-        try:
+        try:  # pragma: no cover
             span.set_status(Status(StatusCode.ERROR, error.message))
         except Exception:  # pragma: no cover
             pass
         # On error still apply finishing semconv attributes if any set
-        self._apply_semconv_finish(invocation, span)
+        _apply_llm_finish_semconv(span, invocation)
         if cm and hasattr(cm, "__exit__"):
             try:  # pragma: no cover
                 cm.__exit__(None, None, None)
-            except Exception:
+            except Exception:  # pragma: no cover
                 pass
         span.end()

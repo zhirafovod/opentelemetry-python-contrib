@@ -1,8 +1,8 @@
 # Span emitter (moved from generators/span_emitter.py)
 from __future__ import annotations
 
-import json
-from dataclasses import asdict
+import json  # noqa: F401 (kept for backward compatibility if external code relies on this module re-exporting json)
+from dataclasses import asdict  # noqa: F401
 from typing import Optional
 
 from opentelemetry import trace
@@ -21,6 +21,11 @@ from ..attributes import (
     GEN_AI_PROVIDER_NAME,
 )
 from ..types import EmbeddingInvocation, Error, LLMInvocation, ToolCall
+from .utils import (
+    _apply_function_definitions,
+    _apply_llm_finish_semconv,
+    _serialize_messages,
+)
 
 
 class SpanEmitter:
@@ -48,12 +53,6 @@ class SpanEmitter:
         return True
 
     # ---- helpers ---------------------------------------------------------
-    def _serialize_messages(self, messages):
-        try:
-            return json.dumps([asdict(m) for m in messages])
-        except Exception:  # pragma: no cover
-            return None
-
     def _apply_start_attrs(
         self, invocation: LLMInvocation | EmbeddingInvocation
     ):
@@ -83,27 +82,8 @@ class SpanEmitter:
         if isinstance(invocation, LLMInvocation) and invocation.framework:
             span.set_attribute("gen_ai.framework", invocation.framework)
         # function definitions (semantic conv derived from structured list)
-        if (
-            isinstance(invocation, LLMInvocation)
-            and invocation.request_functions
-        ):
-            for idx, fn in enumerate(invocation.request_functions):
-                name = fn.get("name")
-                if name:
-                    span.set_attribute(
-                        f"gen_ai.request.function.{idx}.name", name
-                    )
-                desc = fn.get("description")
-                if desc:
-                    span.set_attribute(
-                        f"gen_ai.request.function.{idx}.description", desc
-                    )
-                params = fn.get("parameters")
-                if params is not None:
-                    span.set_attribute(
-                        f"gen_ai.request.function.{idx}.parameters",
-                        str(params),
-                    )
+        if isinstance(invocation, LLMInvocation):
+            _apply_function_definitions(span, invocation.request_functions)
         # Backward compatibility: copy non-semconv, non-traceloop attributes present at start
         if isinstance(invocation, LLMInvocation):
             for k, v in invocation.attributes.items():
@@ -127,46 +107,12 @@ class SpanEmitter:
             and GEN_AI_INPUT_MESSAGES not in span.attributes  # type: ignore[attr-defined]
             and invocation.input_messages
         ):
-            serialized_in = self._serialize_messages(invocation.input_messages)
+            serialized_in = _serialize_messages(invocation.input_messages)
             if serialized_in is not None:
                 span.set_attribute(GEN_AI_INPUT_MESSAGES, serialized_in)
-        # Finish-time semconv attributes (response + usage tokens)
+        # Finish-time semconv attributes (response + usage tokens + functions)
         if isinstance(invocation, LLMInvocation):
-            if invocation.response_model_name:
-                span.set_attribute(
-                    GenAI.GEN_AI_RESPONSE_MODEL, invocation.response_model_name
-                )
-            if invocation.response_id:
-                span.set_attribute(
-                    GenAI.GEN_AI_RESPONSE_ID, invocation.response_id
-                )
-            if invocation.input_tokens is not None:
-                span.set_attribute(
-                    GenAI.GEN_AI_USAGE_INPUT_TOKENS, invocation.input_tokens
-                )
-            if invocation.output_tokens is not None:
-                span.set_attribute(
-                    GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, invocation.output_tokens
-                )
-            # Re-apply function definitions if added late (idempotent)
-            if invocation.request_functions:
-                for idx, fn in enumerate(invocation.request_functions):
-                    name = fn.get("name")
-                    if name:
-                        span.set_attribute(
-                            f"gen_ai.request.function.{idx}.name", name
-                        )
-                    desc = fn.get("description")
-                    if desc:
-                        span.set_attribute(
-                            f"gen_ai.request.function.{idx}.description", desc
-                        )
-                    params = fn.get("parameters")
-                    if params is not None:
-                        span.set_attribute(
-                            f"gen_ai.request.function.{idx}.parameters",
-                            str(params),
-                        )
+            _apply_llm_finish_semconv(span, invocation)
             # Copy (or update) custom non-semconv, non-traceloop attributes added during invocation
             for k, v in invocation.attributes.items():
                 if k.startswith("gen_ai.") or k.startswith("traceloop."):
@@ -180,7 +126,7 @@ class SpanEmitter:
             and isinstance(invocation, LLMInvocation)
             and invocation.output_messages
         ):
-            serialized = self._serialize_messages(invocation.output_messages)
+            serialized = _serialize_messages(invocation.output_messages)
             if serialized is not None:
                 span.set_attribute(GEN_AI_OUTPUT_MESSAGES, serialized)
 

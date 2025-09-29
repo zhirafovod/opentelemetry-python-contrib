@@ -56,9 +56,6 @@ from opentelemetry import metrics as _metrics
 from opentelemetry import trace as _trace_mod
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import get_tracer
-
-# (Removed side-effect builtins import to preserve dynamic evaluator ordering)
-# Updated imports: unified emitters package
 from opentelemetry.util.genai.emitters import (
     CompositeGenerator,
     ContentEventsEmitter,

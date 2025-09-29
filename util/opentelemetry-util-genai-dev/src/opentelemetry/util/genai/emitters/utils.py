@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
-from uuid import UUID
 
 from opentelemetry import trace
-from opentelemetry._logs import Logger
+from opentelemetry._logs import (
+    Logger,  # noqa: F401 (kept for backward compatibility if referenced externally)
+)
 from opentelemetry.metrics import Histogram
 from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord
 from opentelemetry.semconv._incubating.attributes import (
@@ -16,7 +17,6 @@ from opentelemetry.semconv._incubating.attributes import (
 from opentelemetry.util.types import AttributeValue
 
 from ..attributes import (
-    GEN_AI_COMPLETION_PREFIX,
     GEN_AI_FRAMEWORK,
     GEN_AI_INPUT_MESSAGES,
     GEN_AI_PROVIDER_NAME,
@@ -24,14 +24,72 @@ from ..attributes import (
 from ..types import InputMessage, LLMInvocation, OutputMessage, Text
 
 
-@dataclass
-class _SpanState:
-    span: trace.Span
-    context: trace.Context
-    start_time: float
-    request_model: Optional[str] = None
-    system: Optional[str] = None
-    children: List[UUID] = field(default_factory=list)
+def _serialize_messages(messages) -> Optional[str]:
+    """Safely JSON serialize a sequence of dataclass messages.
+
+    Returns a JSON string or None on failure.
+    """
+    try:  # pragma: no cover - defensive
+        return json.dumps([asdict(m) for m in messages])
+    except Exception:  # pragma: no cover
+        return None
+
+
+def _apply_function_definitions(
+    span: trace.Span, request_functions: Optional[List[dict]]
+) -> None:
+    """Apply request function definition attributes (idempotent).
+
+    Shared between span emitters to avoid duplicated loops.
+    """
+    if not request_functions:
+        return
+    for idx, fn in enumerate(request_functions):
+        try:
+            name = fn.get("name")
+            if name:
+                span.set_attribute(f"gen_ai.request.function.{idx}.name", name)
+            desc = fn.get("description")
+            if desc:
+                span.set_attribute(
+                    f"gen_ai.request.function.{idx}.description", desc
+                )
+            params = fn.get("parameters")
+            if params is not None:
+                span.set_attribute(
+                    f"gen_ai.request.function.{idx}.parameters", str(params)
+                )
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+
+def _apply_llm_finish_semconv(
+    span: trace.Span, invocation: LLMInvocation
+) -> None:
+    """Apply finish-time semantic convention attributes for an LLMInvocation.
+
+    Includes response model/id, usage tokens, and function definitions (re-applied).
+    """
+    try:  # pragma: no cover - defensive
+        if invocation.response_model_name:
+            span.set_attribute(
+                GenAI.GEN_AI_RESPONSE_MODEL, invocation.response_model_name
+            )
+        if invocation.response_id:
+            span.set_attribute(
+                GenAI.GEN_AI_RESPONSE_ID, invocation.response_id
+            )
+        if invocation.input_tokens is not None:
+            span.set_attribute(
+                GenAI.GEN_AI_USAGE_INPUT_TOKENS, invocation.input_tokens
+            )
+        if invocation.output_tokens is not None:
+            span.set_attribute(
+                GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, invocation.output_tokens
+            )
+        _apply_function_definitions(span, invocation.request_functions)
+    except Exception:  # pragma: no cover
+        pass
 
 
 def _message_to_log_record(
@@ -108,6 +166,7 @@ def _get_metric_attributes(
     if framework is not None:
         attributes[GEN_AI_FRAMEWORK] = framework
     if system:
+        # NOTE: The 'system' parameter historically mapped to provider name; keeping for backward compatibility.
         attributes[GEN_AI_PROVIDER_NAME] = system
     if operation_name:
         attributes[GenAI.GEN_AI_OPERATION_NAME] = operation_name
@@ -147,4 +206,3 @@ def _record_duration(
     if invocation.end_time is not None:
         elapsed: float = invocation.end_time - invocation.start_time
         duration_histogram.record(elapsed, attributes=metric_attributes)
-
