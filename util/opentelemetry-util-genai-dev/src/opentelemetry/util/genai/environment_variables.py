@@ -111,6 +111,26 @@ Controls evaluation span creation strategy. Accepted values:
 * ``per_metric`` - one span per evaluation metric
 """
 
+# Evaluation async processing interval (seconds, float). Default: 5.0
+OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL = (
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL"
+)
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL
+
+Evaluation async processing interval in seconds (default: 5.0).
+"""
+
+# Per-evaluator max sampled invocations per minute (integer). Blank/0 = unlimited.
+OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE = (
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE"
+)
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE
+
+Per-evaluator max sampled invocations per minute. Set to 0 or leave blank for unlimited.
+"""
+
 # Backward/defensive: ensure evaluation span mode constant exists even if edits race
 try:  # pragma: no cover - defensive
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE
@@ -128,6 +148,8 @@ __all__ = [
     "OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE",
     "OTEL_INSTRUMENTATION_GENAI_EVALUATORS",
     "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE",
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL",
+    "OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE",
     # generator selection
     "OTEL_INSTRUMENTATION_GENAI_EMITTERS",
 ]

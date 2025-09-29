@@ -27,6 +27,11 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+# NEW: access telemetry handler to manually flush async evaluations
+try:  # pragma: no cover - defensive in case util package not installed
+    from opentelemetry.util.genai.handler import get_telemetry_handler
+except Exception:  # pragma: no cover
+    get_telemetry_handler = lambda **_: None  # type: ignore
 
 # configure tracing
 trace.set_tracer_provider(TracerProvider())
@@ -112,6 +117,20 @@ class TokenManager:
                 f.write(b"\0" * length)
             os.remove(self.cache_file)
 
+def _flush_evaluations():
+    """Force one evaluation processing cycle if async evaluators are enabled.
+
+    The GenAI evaluation system samples and enqueues invocations asynchronously.
+    For demo / test determinism we explicitly trigger one drain so evaluation
+    spans / events / metrics are emitted before the script exits.
+    """
+    try:
+        handler = get_telemetry_handler()
+        if handler and hasattr(handler, "process_evaluations"):
+            handler.process_evaluations()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
 def llm_invocation_demo(llm: ChatOpenAI):
     import random
 
@@ -139,6 +158,7 @@ def llm_invocation_demo(llm: ChatOpenAI):
     result = llm.invoke(messages)
 
     print("LLM output:\n", result)
+    _flush_evaluations()  # ensure first invocation evaluations processed
 
     selected_question = random.choice(capital_questions)
     print(f"Selected question: {selected_question}")
@@ -152,6 +172,7 @@ def llm_invocation_demo(llm: ChatOpenAI):
 
     result = llm.invoke(messages)
     print(f"LLM output: {getattr(result, 'content', result)}")
+    _flush_evaluations()  # flush after second invocation
 
 def agent_demo(llm: ChatOpenAI):
     """Demonstrate a LangGraph + LangChain agent with:
@@ -259,6 +280,7 @@ def agent_demo(llm: ChatOpenAI):
         # Initialize state with additive messages list.
         result_state = app.invoke({"input": q, "messages": []})
         print("Agent Output:", result_state.get("output"))
+        _flush_evaluations()
     print("--- End Agent Demo ---\n")
 
 
@@ -297,6 +319,7 @@ def main():
 
     # Run agent demo (tool + subagent). Safe if LangGraph unavailable.
     # agent_demo(llm)
+    _flush_evaluations()  # final flush before shutdown
 
     # Un-instrument after use
     LangchainInstrumentor().uninstrument()

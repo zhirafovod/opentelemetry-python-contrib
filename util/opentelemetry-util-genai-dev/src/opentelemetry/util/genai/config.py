@@ -5,6 +5,8 @@ from .environment_variables import (
     # OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
     OTEL_INSTRUMENTATION_GENAI_EMITTERS,
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE,
+    OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL,
+    OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE,
     OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE,
     OTEL_INSTRUMENTATION_GENAI_EVALUATORS,
 )
@@ -28,6 +30,8 @@ class Settings:
     only_traceloop_compat: bool
     raw_tokens: list[str]
     evaluation_span_mode: str
+    evaluation_interval: float
+    evaluation_max_per_minute: int
 
 
 def parse_env() -> Settings:
@@ -81,6 +85,19 @@ def parse_env() -> Settings:
             ContentCapturingMode.SPAN_ONLY,
             ContentCapturingMode.SPAN_AND_EVENT,
         )
+
+    # Inline evaluation span mode normalization (avoid lambda call for lint compliance)
+    raw_eval_span_mode = (
+        os.environ.get(OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE, "off")
+        .strip()
+        .lower()
+    )
+    normalized_eval_span_mode = (
+        raw_eval_span_mode
+        if raw_eval_span_mode in ("off", "aggregated", "per_metric")
+        else "off"
+    )
+
     return Settings(
         generator_kind=baseline,
         capture_content_span=capture_content_span,
@@ -96,20 +113,25 @@ def parse_env() -> Settings:
         evaluation_evaluators=[
             n.strip()
             for n in os.environ.get(
-                OTEL_INSTRUMENTATION_GENAI_EVALUATORS, ""
+                OTEL_INSTRUMENTATION_GENAI_EVALUATORS,
+                "",  # noqa: PLC3002
             ).split(",")
             if n.strip()
         ],
         extra_emitters=extra_emitters,
         only_traceloop_compat=only_traceloop,
         raw_tokens=tokens,
-        evaluation_span_mode=(
-            lambda v: v if v in ("off", "aggregated", "per_metric") else "off"
-        )(
+        evaluation_span_mode=normalized_eval_span_mode,
+        evaluation_interval=float(
             os.environ.get(
-                OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE, "off"
-            )
-            .strip()
-            .lower()
+                OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL, "5.0"
+            ).strip()
+            or 5.0
+        ),
+        evaluation_max_per_minute=int(
+            os.environ.get(
+                OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE, "0"
+            ).strip()
+            or 0
         ),
     )

@@ -232,6 +232,17 @@ class TelemetryHandler:
         """Finalize an LLM invocation successfully and end its span."""
         invocation.end_time = time.time()
         self._generator.finish(invocation)
+        # Automatic async evaluation sampling (non-blocking)
+        try:
+            if getattr(self, "_evaluation_manager", None):
+                sampling_map = self._evaluation_manager.offer(invocation)  # type: ignore[attr-defined]
+                # Expose sampling decision for callers (per evaluator) under a single attr
+                if sampling_map:
+                    invocation.attributes.setdefault(
+                        "gen_ai.evaluation.sampled", sampling_map
+                    )
+        except Exception:
+            pass
         # Force flush metrics if a custom provider with force_flush is present
         if (
             hasattr(self, "_meter_provider")
@@ -312,6 +323,18 @@ class TelemetryHandler:
         pluggable emission similar to emitters.
         """
         return self._evaluation_manager.evaluate(invocation, evaluators)  # type: ignore[arg-type]
+
+    def process_evaluations(self):
+        """Manually trigger one evaluation processing cycle (async queues).
+
+        Useful in tests or deterministic flushing scenarios where waiting for the
+        background thread interval is undesirable.
+        """
+        try:
+            if getattr(self, "_evaluation_manager", None):
+                self._evaluation_manager.process_once()  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     # Generic lifecycle API ------------------------------------------------
     def start(self, obj: Any) -> Any:
