@@ -46,8 +46,8 @@ def _apply_common_span_attributes(
 
     Returns (genai_attributes) for use with metrics.
     """
-    request_model = invocation.request_model
-    provider = invocation.provider
+    request_model = invocation.request.request_model
+    provider = invocation.request.provider
     span.update_name(
         f"{GenAI.GenAiOperationNameValues.CHAT.value} {request_model}"
     )
@@ -60,26 +60,28 @@ def _apply_common_span_attributes(
         # TODO: clean provider name to match GenAiProviderNameValues?
         span.set_attribute(GenAI.GEN_AI_PROVIDER_NAME, provider)
 
-    finish_reasons = [gen.finish_reason for gen in invocation.output_messages]
-    if finish_reasons:
-        span.set_attribute(
-            GenAI.GEN_AI_RESPONSE_FINISH_REASONS, finish_reasons
-        )
+    # Response data - only available if response is set
+    if invocation.response is not None:
+        finish_reasons = [gen.finish_reason for gen in invocation.response.output_messages]
+        if finish_reasons:
+            span.set_attribute(
+                GenAI.GEN_AI_RESPONSE_FINISH_REASONS, finish_reasons
+            )
 
-    if invocation.response_model_name is not None:
-        span.set_attribute(
-            GenAI.GEN_AI_RESPONSE_MODEL, invocation.response_model_name
-        )
-    if invocation.response_id is not None:
-        span.set_attribute(GenAI.GEN_AI_RESPONSE_ID, invocation.response_id)
-    if isinstance(invocation.input_tokens, (int, float)):
-        span.set_attribute(
-            GenAI.GEN_AI_USAGE_INPUT_TOKENS, invocation.input_tokens
-        )
-    if isinstance(invocation.output_tokens, (int, float)):
-        span.set_attribute(
-            GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, invocation.output_tokens
-        )
+        if invocation.response.response_model_name is not None:
+            span.set_attribute(
+                GenAI.GEN_AI_RESPONSE_MODEL, invocation.response.response_model_name
+            )
+        if invocation.response.response_id is not None:
+            span.set_attribute(GenAI.GEN_AI_RESPONSE_ID, invocation.response.response_id)
+        if isinstance(invocation.response.input_tokens, (int, float)):
+            span.set_attribute(
+                GenAI.GEN_AI_USAGE_INPUT_TOKENS, invocation.response.input_tokens
+            )
+        if isinstance(invocation.response.output_tokens, (int, float)):
+            span.set_attribute(
+                GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, invocation.response.output_tokens
+            )
 
 
 def _maybe_set_span_messages(
@@ -115,10 +117,13 @@ def _maybe_set_span_extra_attributes(
 def _apply_finish_attributes(span: Span, invocation: LLMInvocation) -> None:
     """Apply attributes/messages common to finish() paths."""
     _apply_common_span_attributes(span, invocation)
-    _maybe_set_span_messages(
-        span, invocation.input_messages, invocation.output_messages
-    )
-    _maybe_set_span_extra_attributes(span, invocation.attributes)
+
+    # Get messages from the nested structure
+    input_messages = invocation.request.input_messages
+    output_messages = invocation.response.output_messages if invocation.response else []
+
+    _maybe_set_span_messages(span, input_messages, output_messages)
+    _maybe_set_span_extra_attributes(span, invocation.request.attributes)
 
 
 def _apply_error_attributes(span: Span, error: Error) -> None:

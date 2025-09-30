@@ -28,39 +28,35 @@ Functions:
 Usage:
     handler = get_telemetry_handler()
 
-    # Create an invocation object with your request data
-    # The span and context_token attributes are set by the TelemetryHandler, and
-    # managed by the TelemetryHandler during the lifecycle of the span.
-
-    # Use the context manager to manage the lifecycle of an LLM invocation.
-    with handler.llm(invocation) as invocation:
-        # Populate outputs and any additional attributes
-        invocation.output_messages = [...]
-        invocation.attributes.update({"more": "attrs"})
-
-    # Or, if you prefer to manage the lifecycle manually
-    invocation = LLMInvocation(
+    # Create a request object with your input data
+    request = LLMRequest(
         request_model="my-model",
         input_messages=[...],
         provider="my-provider",
         attributes={"custom": "attr"},
     )
 
-    # Start the invocation (opens a span)
-    handler.start_llm(invocation)
+    # Start the invocation (opens a span) - returns a new invocation with telemetry
+    invocation = handler.start_llm(request)
 
-    # Populate outputs and any additional attributes, then stop (closes the span)
-    invocation.output_messages = [...]
-    invocation.attributes.update({"more": "attrs"})
-    handler.stop_llm(invocation)
+    # Create response data after LLM call completes
+    response = LLMResponse(
+        output_messages=[...],
+        response_model_name="my-model",
+        input_tokens=100,
+        output_tokens=50,
+    )
+
+    # Stop the invocation (closes the span) - returns final invocation
+    final_invocation = handler.stop_llm(invocation, response)
 
     # Or, in case of error
-    handler.fail_llm(invocation, Error(type="...", message="..."))
+    handler.fail_llm(invocation, Error(type=Exception, message="..."))
 """
 
 import time
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Any, Generator, Optional
 
 from opentelemetry import context as otel_context
 from opentelemetry import trace
@@ -78,7 +74,7 @@ from opentelemetry.util.genai.span_utils import (
     _apply_error_attributes,
     _apply_finish_attributes,
 )
-from opentelemetry.util.genai.types import Error, LLMInvocation
+from opentelemetry.util.genai.types import Error, LLMInvocation, LLMRequest, LLMResponse
 from opentelemetry.util.genai.version import __version__
 
 
@@ -98,40 +94,49 @@ class TelemetryHandler:
         )
         self._tracer: Tracer = tracer or trace.get_tracer(__name__)
 
-    def start_llm(
-        self,
-        invocation: LLMInvocation,
-    ) -> LLMInvocation:
-        """Start an LLM invocation and create a pending span entry."""
+    def start_llm(self, request: LLMRequest) -> LLMInvocation:
+        """Start an LLM invocation from a request and create a pending span."""
         # Create a span and attach it as current; keep the token to detach later
         span = self._tracer.start_span(
-            name=f"{GenAI.GenAiOperationNameValues.CHAT.value} {invocation.request_model}",
+            name=f"{GenAI.GenAiOperationNameValues.CHAT.value} {request.request_model}",
             kind=SpanKind.CLIENT,
         )
-        invocation.span = span
-        invocation.context_token = otel_context.attach(
-            set_span_in_context(span)
-        )
-        return invocation
+        context_token = otel_context.attach(set_span_in_context(span))
 
-    def stop_llm(self, invocation: LLMInvocation) -> LLMInvocation:  # pylint: disable=no-self-use
-        """Finalize an LLM invocation successfully and end its span."""
-        invocation.end_time = time.time()
+        # Return a new immutable invocation with the span and context_token set
+        return LLMInvocation(
+            request=request,
+            span=span,
+            context_token=context_token
+        )
+
+    def stop_llm(self, invocation: LLMInvocation, response: LLMResponse) -> LLMInvocation:
+        """Finalize an LLM invocation successfully with response data and end its span."""
+        end_time = time.time()
         if invocation.context_token is None or invocation.span is None:
             # TODO: Provide feedback that this invocation was not started
             return invocation
 
-        _apply_finish_attributes(invocation.span, invocation)
+        # Create the final invocation with response data
+        final_invocation = LLMInvocation(
+            request=invocation.request,
+            response=response,
+            start_time=invocation.start_time,
+            end_time=end_time,
+            span=invocation.span,
+            context_token=invocation.context_token
+        )
+
+        _apply_finish_attributes(invocation.span, final_invocation)
         # Detach context and end span
         otel_context.detach(invocation.context_token)
         invocation.span.end()
-        return invocation
 
-    def fail_llm(  # pylint: disable=no-self-use
-        self, invocation: LLMInvocation, error: Error
-    ) -> LLMInvocation:
+        return final_invocation
+
+    def fail_llm(self, invocation: LLMInvocation, error: Error) -> LLMInvocation:
         """Fail an LLM invocation and end its span with error status."""
-        invocation.end_time = time.time()
+        end_time = time.time()
         if invocation.context_token is None or invocation.span is None:
             # TODO: Provide feedback that this invocation was not started
             return invocation
@@ -140,31 +145,56 @@ class TelemetryHandler:
         # Detach context and end span
         otel_context.detach(invocation.context_token)
         invocation.span.end()
-        return invocation
+
+        # Return a new immutable invocation with the end_time set
+        return LLMInvocation(
+            request=invocation.request,
+            response=invocation.response,
+            start_time=invocation.start_time,
+            end_time=end_time,
+            span=invocation.span,
+            context_token=invocation.context_token
+        )
 
     @contextmanager
-    def llm(
-        self, invocation: Optional[LLMInvocation] = None
-    ) -> Iterator[LLMInvocation]:
-        """Context manager for LLM invocations.
-
-        Only set data attributes on the invocation object, do not modify the span or context.
-
-        Starts the span on entry. On normal exit, finalizes the invocation and ends the span.
-        If an exception occurs inside the context, marks the span as error, ends it, and
-        re-raises the original exception.
+    def llm(self, request: LLMRequest) -> Generator[LLMInvocation, None, None]:
         """
-        if invocation is None:
-            invocation = LLMInvocation(
-                request_model="",
-            )
-        self.start_llm(invocation)
+        Context manager for LLM invocations that automatically handles span lifecycle.
+
+        Usage:
+            request = LLMRequest(request_model="my-model", input_messages=[...])
+            with handler.llm(request) as invocation:
+                # Make your LLM call here
+                # ... your LLM logic ...
+
+                # To add response data, call stop_llm explicitly:
+                response = LLMResponse(output_messages=[...])
+                handler.stop_llm(invocation, response)
+
+        Args:
+            request: The LLM request containing model and input data
+
+        Yields:
+            LLMInvocation: The started invocation with an active span
+        """
+        invocation = self.start_llm(request)
+        span_ended = False
+
         try:
             yield invocation
-        except Exception as exc:
-            self.fail_llm(invocation, Error(message=str(exc), type=type(exc)))
+        except Exception as e:
+            # Handle any exception that occurs during the context
+            error = Error(type=type(e), message=str(e))
+            self.fail_llm(invocation, error)
+            span_ended = True
             raise
-        self.stop_llm(invocation)
+        finally:
+            # Only end the span if it wasn't already ended by stop_llm or fail_llm
+            if not span_ended and invocation.context_token is not None and invocation.span is not None:
+                # Check if the span is still recording (not ended by stop_llm)
+                if invocation.span.is_recording():
+                    otel_context.detach(invocation.context_token)
+                    invocation.span.end()
 
 
 def get_telemetry_handler(**kwargs: Any) -> TelemetryHandler:

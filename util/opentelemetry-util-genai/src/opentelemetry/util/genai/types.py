@@ -38,7 +38,7 @@ class ContentCapturingMode(Enum):
     SPAN_AND_EVENT = 3
 
 
-@dataclass()
+@dataclass(frozen=True)
 class ToolCall:
     arguments: Any
     name: str
@@ -46,7 +46,7 @@ class ToolCall:
     type: Literal["tool_call"] = "tool_call"
 
 
-@dataclass()
+@dataclass(frozen=True)
 class ToolCallResponse:
     response: Any
     id: Optional[str]
@@ -58,7 +58,7 @@ FinishReason = Literal[
 ]
 
 
-@dataclass()
+@dataclass(frozen=True)
 class Text:
     content: str
     type: Literal["text"] = "text"
@@ -67,13 +67,13 @@ class Text:
 MessagePart = Union[Text, ToolCall, ToolCallResponse, Any]
 
 
-@dataclass()
+@dataclass(frozen=True)
 class InputMessage:
     role: str
     parts: list[MessagePart]
 
 
-@dataclass()
+@dataclass(frozen=True)
 class OutputMessage:
     role: str
     parts: list[MessagePart]
@@ -92,34 +92,48 @@ def _new_str_any_dict() -> Dict[str, Any]:
     return {}
 
 
-@dataclass
-class LLMInvocation:
+@dataclass(frozen=True)
+class LLMRequest:
     """
-    Represents a single LLM call invocation. When creating an LLMInvocation object,
-    only update the data attributes. The span and context_token attributes are
-    set by the TelemetryHandler.
+    Immutable request data for an LLM invocation.
+    Contains all the input parameters and configuration for the LLM call.
     """
-
     request_model: str
-    context_token: Optional[ContextToken] = None
-    span: Optional[Span] = None
-    start_time: float = field(default_factory=time.time)
-    end_time: Optional[float] = None
-    input_messages: List[InputMessage] = field(
-        default_factory=_new_input_messages
-    )
-    output_messages: List[OutputMessage] = field(
-        default_factory=_new_output_messages
-    )
+    input_messages: List[InputMessage] = field(default_factory=_new_input_messages)
     provider: Optional[str] = None
+    attributes: Dict[str, Any] = field(default_factory=_new_str_any_dict)
+
+
+@dataclass(frozen=True)
+class LLMResponse:
+    """
+    Immutable response data from an LLM invocation.
+    Contains the outputs and metadata from the LLM call.
+    """
+    output_messages: List[OutputMessage] = field(default_factory=_new_output_messages)
     response_model_name: Optional[str] = None
     response_id: Optional[str] = None
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
-    attributes: Dict[str, Any] = field(default_factory=_new_str_any_dict)
+    finish_reason: Optional[str] = None
 
 
-@dataclass
+@dataclass(frozen=True)
+class LLMInvocation:
+    """
+    Immutable representation of a complete LLM invocation lifecycle.
+    Combines request, response, and telemetry metadata.
+    """
+    request: LLMRequest
+    response: Optional[LLMResponse] = None
+    start_time: float = field(default_factory=time.time)
+    end_time: Optional[float] = None
+    # Internal telemetry fields - managed by TelemetryHandler
+    span: Optional[Span] = field(default=None, repr=False)
+    context_token: Optional[ContextToken] = field(default=None, repr=False)
+
+
+@dataclass(frozen=True)
 class Error:
     message: str
     type: Type[BaseException]
