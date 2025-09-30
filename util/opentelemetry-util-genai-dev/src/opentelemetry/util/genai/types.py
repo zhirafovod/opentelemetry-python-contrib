@@ -128,6 +128,23 @@ class EvaluationResult:
     attributes: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class TraceloopInvocation(LLMInvocation):
+    """
+    Represents a Traceloop-compatible LLM invocation.
+    This data type extends LLMInvocation with additional fields for Traceloop-specific
+    transformations and proprietary attributes, while maintaining compatibility
+    with the existing generator infrastructure.
+    """
+
+    # Transformation rules for attributes
+    attribute_transformations: Dict[str, Any] = field(default_factory=dict)
+    # Name transformation rules
+    name_transformations: Dict[str, str] = field(default_factory=dict)
+    # Custom/proprietary attributes specific to Traceloop
+    traceloop_attributes: Dict[str, Any] = field(default_factory=dict)
+
+
 __all__ = [
     # existing exports intentionally implicit before; making explicit for new additions
     "ContentCapturingMode",
@@ -139,4 +156,5 @@ __all__ = [
     "LLMInvocation",
     "Error",
     "EvaluationResult",
+    "TraceloopInvocation",
 ]
