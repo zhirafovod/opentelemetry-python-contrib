@@ -78,6 +78,59 @@ from opentelemetry.util.genai.types import Error, LLMInvocation, LLMRequest, LLM
 from opentelemetry.util.genai.version import __version__
 
 
+class LLMInvocationManager:
+    """
+    Manager object for an active LLM invocation that provides methods to complete or fail the invocation.
+    This maintains the immutable design while providing a clean API.
+    """
+
+    def __init__(self, invocation: LLMInvocation, handler: 'TelemetryHandler'):
+        self._invocation = invocation
+        self._handler = handler
+        self._completed = False
+
+    @property
+    def invocation(self) -> LLMInvocation:
+        """Access to the underlying immutable invocation object."""
+        return self._invocation
+
+    def complete(self, response: LLMResponse) -> LLMInvocation:
+        """
+        Complete the LLM invocation with response data.
+
+        Args:
+            response: The LLM response containing output data and metadata
+
+        Returns:
+            The final immutable invocation with response data
+        """
+        if self._completed:
+            raise RuntimeError("Invocation has already been completed or failed")
+
+        self._completed = True
+        return self._handler.stop_llm(self._invocation, response)
+
+    def fail(self, error: Error) -> LLMInvocation:
+        """
+        Fail the LLM invocation with error data.
+
+        Args:
+            error: The error that occurred
+
+        Returns:
+            The final immutable invocation with error data
+        """
+        if self._completed:
+            raise RuntimeError("Invocation has already been completed or failed")
+
+        self._completed = True
+        return self._handler.fail_llm(self._invocation, error)
+
+    def is_completed(self) -> bool:
+        """Check if the invocation has been completed or failed."""
+        return self._completed
+
+
 class TelemetryHandler:
     """
     High-level handler managing GenAI invocation lifecycles and emitting
@@ -157,41 +210,41 @@ class TelemetryHandler:
         )
 
     @contextmanager
-    def llm(self, request: LLMRequest) -> Generator[LLMInvocation, None, None]:
+    def llm(self, request: LLMRequest) -> Generator[LLMInvocationManager, None, None]:
         """
         Context manager for LLM invocations that automatically handles span lifecycle.
 
         Usage:
             request = LLMRequest(request_model="my-model", input_messages=[...])
-            with handler.llm(request) as invocation:
+            with handler.llm(request) as invocation_mgr:
                 # Make your LLM call here
-                # ... your LLM logic ...
+                result = make_llm_call()
 
-                # To add response data, call stop_llm explicitly:
+                # Complete with response data:
                 response = LLMResponse(output_messages=[...])
-                handler.stop_llm(invocation, response)
+                final_invocation = invocation_mgr.complete(response)
 
         Args:
             request: The LLM request containing model and input data
 
         Yields:
-            LLMInvocation: The started invocation with an active span
+            LLMInvocationManager: Manager object with methods to complete or fail the invocation
         """
         invocation = self.start_llm(request)
-        span_ended = False
+        manager = LLMInvocationManager(invocation, self)
 
         try:
-            yield invocation
+            yield manager
         except Exception as e:
             # Handle any exception that occurs during the context
-            error = Error(type=type(e), message=str(e))
-            self.fail_llm(invocation, error)
-            span_ended = True
+            if not manager.is_completed():
+                error = Error(type=type(e), message=str(e))
+                manager.fail(error)
             raise
         finally:
-            # Only end the span if it wasn't already ended by stop_llm or fail_llm
-            if not span_ended and invocation.context_token is not None and invocation.span is not None:
-                # Check if the span is still recording (not ended by stop_llm)
+            # Only end the span if it wasn't already ended by complete() or fail()
+            if not manager.is_completed() and invocation.context_token is not None and invocation.span is not None:
+                # Check if the span is still recording
                 if invocation.span.is_recording():
                     otel_context.detach(invocation.context_token)
                     invocation.span.end()
