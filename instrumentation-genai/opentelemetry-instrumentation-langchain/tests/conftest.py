@@ -71,7 +71,6 @@ def fixture_tracer_provider(span_exporter):
     provider.add_span_processor(SimpleSpanProcessor(span_exporter))
     return provider
 
-
 @pytest.fixture(scope="function")
 def start_instrumentation(
     tracer_provider,
@@ -91,6 +90,7 @@ def environment():
         os.environ["OPENAI_API_KEY"] = "test_openai_api_key"
 
 
+
 @pytest.fixture(scope="module")
 def vcr_config():
     return {
@@ -103,7 +103,6 @@ def vcr_config():
         "decode_compressed_response": True,
         "before_record_response": scrub_response_headers,
     }
-
 
 class LiteralBlockScalar(str):
     """Formats the string as a literal block scalar, preserving whitespace and

@@ -15,6 +15,7 @@
 """
 Telemetry handler for GenAI invocations.
 
+
 This module exposes the `TelemetryHandler` class, which manages the lifecycle of
 GenAI (Generative AI) invocations and emits telemetry data (spans and related attributes).
 It supports starting, stopping, and failing LLM invocations.
@@ -87,6 +88,7 @@ class TelemetryHandler:
     High-level handler managing GenAI invocation lifecycles and emitting
     them as spans, metrics, and events.
     """
+
 
     def __init__(self, **kwargs: Any):
         tracer_provider = kwargs.get("tracer_provider")

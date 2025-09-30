@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import time
 from contextvars import Token
 from dataclasses import dataclass, field
@@ -71,6 +70,21 @@ MessagePart = Union[Text, ToolCall, ToolCallResponse, Any]
 class InputMessage:
     role: str
     parts: list[MessagePart]
+
+
+@dataclass
+class ToolInvocation:
+    """
+    Represents a single Tool call invocation.
+    """
+
+    run_id: UUID
+    output: ToolOutput = None
+    parent_run_id: Optional[UUID] = None
+    start_time: float = field(default_factory=time.time)
+    end_time: float = None
+    input_str: Optional[str] = None
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass()
