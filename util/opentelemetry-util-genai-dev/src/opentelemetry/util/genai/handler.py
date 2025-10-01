@@ -52,6 +52,7 @@ import time
 from typing import Any, Optional
 
 from opentelemetry import _events as _otel_events
+from opentelemetry import _logs
 from opentelemetry import metrics as _metrics
 from opentelemetry import trace as _trace_mod
 from opentelemetry.semconv.schemas import Schemas
@@ -102,6 +103,8 @@ class TelemetryHandler:
             schema_url=Schemas.V1_36_0.value,
         )
         self._event_logger = _otel_events.get_event_logger(__name__)
+        # Logger for content events (uses Logs API, not Events API)
+        self._content_logger = _logs.get_logger(__name__)
         meter_provider = kwargs.get("meter_provider")
         self._meter_provider = meter_provider  # store for flushing in tests
         if meter_provider is not None:
@@ -142,6 +145,7 @@ class TelemetryHandler:
                 )
                 metrics_emitter = MetricsEmitter(meter=meter)
                 content_emitter = ContentEventsEmitter(
+                    logger=self._content_logger,
                     capture_content=capture_events,
                 )
                 emitters = [span_emitter, metrics_emitter, content_emitter]
@@ -175,6 +179,7 @@ class TelemetryHandler:
         self._generator = CompositeGenerator(emitters)  # type: ignore[arg-type]
 
         # Instantiate evaluation manager (extensible evaluation pipeline)
+        # TODO should use Logs API
         self._evaluation_manager = EvaluationManager(
             settings=settings,
             tracer=self._tracer,

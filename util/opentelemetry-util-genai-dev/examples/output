@@ -1,23 +1,50 @@
 Starting workflow: customer_support_pipeline
 Creating agent: classifier_agent
 {
+    "body": "You are a customer intent classifier. Categorize queries into: order_status, refund, technical_support, or general.",
+    "severity_number": null,
+    "severity_text": null,
+    "attributes": {
+        "event.name": "gen_ai.system.message",
+        "gen_ai.framework": "custom",
+        "gen_ai.agent.name": "classifier_agent",
+        "gen_ai.agent.id": "aaa3071a-b34a-4f09-841e-11c07379d556"
+    },
+    "dropped_attributes": 0,
+    "timestamp": null,
+    "observed_timestamp": "2025-10-01T21:42:08.839527Z",
+    "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+    "span_id": "0xf43ea4be4d4d4314",
+    "trace_flags": 1,
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    },
+    "event_name": "gen_ai.system.message"
+}
+{
     "name": "create_agent classifier_agent",
     "context": {
-        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
-        "span_id": "0x9331c51ebba0d318",
+        "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+        "span_id": "0xf43ea4be4d4d4314",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
-    "parent_id": "0x0a459d8cdfcba08b",
-    "start_time": "2025-10-01T17:02:09.577416Z",
-    "end_time": "2025-10-01T17:02:09.632544Z",
+    "parent_id": "0x6bede78f00354576",
+    "start_time": "2025-10-01T21:42:08.784368Z",
+    "end_time": "2025-10-01T21:42:08.840522Z",
     "status": {
         "status_code": "UNSET"
     },
     "attributes": {
         "gen_ai.operation.name": "chat",
         "gen_ai.agent.name": "classifier_agent",
-        "gen_ai.agent.id": "85c1fbab-dd33-4c67-ad09-23791e752ce4",
+        "gen_ai.agent.id": "aaa3071a-b34a-4f09-841e-11c07379d556",
         "gen_ai.agent.type": "classifier",
         "gen_ai.agent.description": "Classifies customer intents",
         "gen_ai.framework": "custom",
@@ -42,16 +69,76 @@ Invoking agent: classifier_agent
 Executing task: classify_intent
 LLM call with agent context
 {
+    "body": {
+        "gen_ai.input.messages": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "type": "text",
+                        "content": "My order hasn't arrived yet"
+                    }
+                ]
+            }
+        ],
+        "gen_ai.system.instructions": [
+            {
+                "type": "text",
+                "content": "You are a customer intent classifier."
+            }
+        ],
+        "gen_ai.output.messages": [
+            {
+                "role": "assistant",
+                "parts": [
+                    {
+                        "type": "text",
+                        "content": "Intent: order_status"
+                    }
+                ],
+                "finish_reason": "stop"
+            }
+        ]
+    },
+    "severity_number": null,
+    "severity_text": null,
+    "attributes": {
+        "event.name": "gen_ai.client.inference.operation.details",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4",
+        "gen_ai.usage.input_tokens": 45,
+        "gen_ai.usage.output_tokens": 8,
+        "gen_ai.agent.name": "classifier_agent",
+        "gen_ai.agent.id": "aaa3071a-b34a-4f09-841e-11c07379d556"
+    },
+    "dropped_attributes": 0,
+    "timestamp": null,
+    "observed_timestamp": "2025-10-01T21:42:09.098564Z",
+    "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+    "span_id": "0x33672096a6f30247",
+    "trace_flags": 1,
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    },
+    "event_name": "gen_ai.client.inference.operation.details"
+}
+{
     "name": "chat gpt-4",
     "context": {
-        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
-        "span_id": "0x19bbe18813272046",
+        "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+        "span_id": "0x33672096a6f30247",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
-    "parent_id": "0xf86af8434ef01c8a",
-    "start_time": "2025-10-01T17:02:09.787842Z",
-    "end_time": "2025-10-01T17:02:09.891819Z",
+    "parent_id": "0x8b77bcefb5c25f77",
+    "start_time": "2025-10-01T21:42:08.996726Z",
+    "end_time": "2025-10-01T21:42:09.099987Z",
     "status": {
         "status_code": "UNSET"
     },
@@ -61,7 +148,7 @@ LLM call with agent context
         "gen_ai.provider.name": "openai",
         "gen_ai.framework": "custom",
         "gen_ai.agent.name": "classifier_agent",
-        "gen_ai.agent.id": "85c1fbab-dd33-4c67-ad09-23791e752ce4",
+        "gen_ai.agent.id": "aaa3071a-b34a-4f09-841e-11c07379d556",
         "gen_ai.usage.input_tokens": 45,
         "gen_ai.usage.output_tokens": 8
     },
@@ -78,16 +165,48 @@ LLM call with agent context
     }
 }
 {
+    "body": {
+        "input_data": "My order hasn't arrived yet",
+        "output_data": "order_status"
+    },
+    "severity_number": null,
+    "severity_text": null,
+    "attributes": {
+        "event.name": "gen_ai.task",
+        "gen_ai.task.name": "classify_intent",
+        "gen_ai.task.type": "classification",
+        "gen_ai.task.objective": "Determine the user's intent from their query",
+        "gen_ai.task.source": "agent",
+        "gen_ai.task.status": "completed"
+    },
+    "dropped_attributes": 0,
+    "timestamp": null,
+    "observed_timestamp": "2025-10-01T21:42:09.100722Z",
+    "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+    "span_id": "0x8b77bcefb5c25f77",
+    "trace_flags": 1,
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    },
+    "event_name": "gen_ai.task"
+}
+{
     "name": "gen_ai.task classify_intent",
     "context": {
-        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
-        "span_id": "0xf86af8434ef01c8a",
+        "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+        "span_id": "0x8b77bcefb5c25f77",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
-    "parent_id": "0xf68400dc6917200c",
-    "start_time": "2025-10-01T17:02:09.736009Z",
-    "end_time": "2025-10-01T17:02:09.892865Z",
+    "parent_id": "0xbebaea808ccbfe97",
+    "start_time": "2025-10-01T21:42:08.946075Z",
+    "end_time": "2025-10-01T21:42:09.101701Z",
     "status": {
         "status_code": "UNSET"
     },
@@ -113,21 +232,21 @@ LLM call with agent context
 {
     "name": "invoke_agent classifier_agent",
     "context": {
-        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
-        "span_id": "0xf68400dc6917200c",
+        "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+        "span_id": "0xbebaea808ccbfe97",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
-    "parent_id": "0x0a459d8cdfcba08b",
-    "start_time": "2025-10-01T17:02:09.633527Z",
-    "end_time": "2025-10-01T17:02:09.893328Z",
+    "parent_id": "0x6bede78f00354576",
+    "start_time": "2025-10-01T21:42:08.840705Z",
+    "end_time": "2025-10-01T21:42:09.101964Z",
     "status": {
         "status_code": "UNSET"
     },
     "attributes": {
         "gen_ai.operation.name": "chat",
         "gen_ai.agent.name": "classifier_agent",
-        "gen_ai.agent.id": "85c1fbab-dd33-4c67-ad09-23791e752ce4",
+        "gen_ai.agent.id": "aaa3071a-b34a-4f09-841e-11c07379d556",
         "gen_ai.agent.type": "classifier",
         "gen_ai.framework": "custom",
         "gen_ai.request.model": "gpt-4"
@@ -146,23 +265,50 @@ LLM call with agent context
 }
 Creating agent: support_agent
 {
+    "body": "You are a helpful customer support agent. Assist with order status inquiries.",
+    "severity_number": null,
+    "severity_text": null,
+    "attributes": {
+        "event.name": "gen_ai.system.message",
+        "gen_ai.framework": "custom",
+        "gen_ai.agent.name": "support_agent",
+        "gen_ai.agent.id": "6ac33e63-f494-4e22-a700-0f15b7f4a5e1"
+    },
+    "dropped_attributes": 0,
+    "timestamp": null,
+    "observed_timestamp": "2025-10-01T21:42:09.157692Z",
+    "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+    "span_id": "0xa62b96a019bca369",
+    "trace_flags": 1,
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    },
+    "event_name": "gen_ai.system.message"
+}
+{
     "name": "create_agent support_agent",
     "context": {
-        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
-        "span_id": "0x6ca41282dbf8be3f",
+        "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+        "span_id": "0xa62b96a019bca369",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
-    "parent_id": "0x0a459d8cdfcba08b",
-    "start_time": "2025-10-01T17:02:09.893982Z",
-    "end_time": "2025-10-01T17:02:09.945566Z",
+    "parent_id": "0x6bede78f00354576",
+    "start_time": "2025-10-01T21:42:09.102323Z",
+    "end_time": "2025-10-01T21:42:09.158672Z",
     "status": {
         "status_code": "UNSET"
     },
     "attributes": {
         "gen_ai.operation.name": "chat",
         "gen_ai.agent.name": "support_agent",
-        "gen_ai.agent.id": "cbaad7d8-fbc2-4c32-88d5-596c4c95c695",
+        "gen_ai.agent.id": "6ac33e63-f494-4e22-a700-0f15b7f4a5e1",
         "gen_ai.agent.type": "support",
         "gen_ai.agent.description": "Handles customer support requests",
         "gen_ai.framework": "custom",
@@ -188,16 +334,108 @@ Invoking agent: support_agent
   📝 Executing task: handle_request
 LLM call with agent context
 {
+    "body": {
+        "gen_ai.input.messages": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "type": "text",
+                        "content": "My order hasn't arrived yet"
+                    }
+                ]
+            },
+            {
+                "role": "assistant",
+                "parts": [
+                    {
+                        "type": "text",
+                        "content": "Intent: order_status"
+                    }
+                ]
+            },
+            {
+                "role": "assistant",
+                "parts": [
+                    {
+                        "type": "tool_call",
+                        "id": "call_abc123",
+                        "name": "check_order_status",
+                        "arguments": {
+                            "order_id": "ORD-12345"
+                        }
+                    }
+                ]
+            },
+            {
+                "role": "tool",
+                "parts": [
+                    {
+                        "type": "tool_call_response",
+                        "id": "call_abc123",
+                        "result": "Order ORD-12345 is in transit. Expected delivery: 2-3 business days."
+                    }
+                ]
+            }
+        ],
+        "gen_ai.system.instructions": [
+            {
+                "type": "text",
+                "content": "You are a helpful customer support agent. Assist with order status inquiries."
+            }
+        ],
+        "gen_ai.output.messages": [
+            {
+                "role": "assistant",
+                "parts": [
+                    {
+                        "type": "text",
+                        "content": "I've checked your order status. Your package is currently in transit and should arrive within 2-3 business days."
+                    }
+                ],
+                "finish_reason": "stop"
+            }
+        ]
+    },
+    "severity_number": null,
+    "severity_text": null,
+    "attributes": {
+        "event.name": "gen_ai.client.inference.operation.details",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.request.model": "gpt-4",
+        "gen_ai.usage.input_tokens": 52,
+        "gen_ai.usage.output_tokens": 28,
+        "gen_ai.agent.name": "support_agent",
+        "gen_ai.agent.id": "6ac33e63-f494-4e22-a700-0f15b7f4a5e1"
+    },
+    "dropped_attributes": 0,
+    "timestamp": null,
+    "observed_timestamp": "2025-10-01T21:42:09.422566Z",
+    "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+    "span_id": "0x5285912f16938f5b",
+    "trace_flags": 1,
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    },
+    "event_name": "gen_ai.client.inference.operation.details"
+}
+{
     "name": "chat gpt-4",
     "context": {
-        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
-        "span_id": "0x74c7c8414f89f55b",
+        "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+        "span_id": "0x5285912f16938f5b",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
-    "parent_id": "0x50a47e87a201fcb1",
-    "start_time": "2025-10-01T17:02:10.104402Z",
-    "end_time": "2025-10-01T17:02:10.208605Z",
+    "parent_id": "0xdbdd410bc0f105ec",
+    "start_time": "2025-10-01T21:42:09.316896Z",
+    "end_time": "2025-10-01T21:42:09.425050Z",
     "status": {
         "status_code": "UNSET"
     },
@@ -207,7 +445,7 @@ LLM call with agent context
         "gen_ai.provider.name": "openai",
         "gen_ai.framework": "custom",
         "gen_ai.agent.name": "support_agent",
-        "gen_ai.agent.id": "cbaad7d8-fbc2-4c32-88d5-596c4c95c695",
+        "gen_ai.agent.id": "6ac33e63-f494-4e22-a700-0f15b7f4a5e1",
         "gen_ai.usage.input_tokens": 52,
         "gen_ai.usage.output_tokens": 28
     },
@@ -224,16 +462,49 @@ LLM call with agent context
     }
 }
 {
+    "body": {
+        "input_data": "Query about order status",
+        "output_data": "Order status provided to customer"
+    },
+    "severity_number": null,
+    "severity_text": null,
+    "attributes": {
+        "event.name": "gen_ai.task",
+        "gen_ai.task.name": "handle_request",
+        "gen_ai.task.type": "execution",
+        "gen_ai.task.objective": "Provide order status information to customer",
+        "gen_ai.task.source": "agent",
+        "gen_ai.agent.name": "support_agent",
+        "gen_ai.task.status": "completed"
+    },
+    "dropped_attributes": 0,
+    "timestamp": null,
+    "observed_timestamp": "2025-10-01T21:42:09.425486Z",
+    "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+    "span_id": "0xdbdd410bc0f105ec",
+    "trace_flags": 1,
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    },
+    "event_name": "gen_ai.task"
+}
+{
     "name": "gen_ai.task handle_request",
     "context": {
-        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
-        "span_id": "0x50a47e87a201fcb1",
+        "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+        "span_id": "0xdbdd410bc0f105ec",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
-    "parent_id": "0xecb8590db5e83e41",
-    "start_time": "2025-10-01T17:02:10.052112Z",
-    "end_time": "2025-10-01T17:02:10.209883Z",
+    "parent_id": "0xeea1d8f3e7a83a9f",
+    "start_time": "2025-10-01T21:42:09.261338Z",
+    "end_time": "2025-10-01T21:42:09.426289Z",
     "status": {
         "status_code": "UNSET"
     },
@@ -260,21 +531,21 @@ LLM call with agent context
 {
     "name": "invoke_agent support_agent",
     "context": {
-        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
-        "span_id": "0xecb8590db5e83e41",
+        "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+        "span_id": "0xeea1d8f3e7a83a9f",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
-    "parent_id": "0x0a459d8cdfcba08b",
-    "start_time": "2025-10-01T17:02:09.946742Z",
-    "end_time": "2025-10-01T17:02:10.210408Z",
+    "parent_id": "0x6bede78f00354576",
+    "start_time": "2025-10-01T21:42:09.158944Z",
+    "end_time": "2025-10-01T21:42:09.426537Z",
     "status": {
         "status_code": "UNSET"
     },
     "attributes": {
         "gen_ai.operation.name": "chat",
         "gen_ai.agent.name": "support_agent",
-        "gen_ai.agent.id": "cbaad7d8-fbc2-4c32-88d5-596c4c95c695",
+        "gen_ai.agent.id": "6ac33e63-f494-4e22-a700-0f15b7f4a5e1",
         "gen_ai.agent.type": "support",
         "gen_ai.framework": "custom",
         "gen_ai.request.model": "gpt-4"
@@ -293,16 +564,47 @@ LLM call with agent context
 }
 Completing workflow
 {
+    "body": {
+        "initial_input": "User query: My order hasn't arrived yet",
+        "final_output": "Customer query resolved: Order status provided"
+    },
+    "severity_number": null,
+    "severity_text": null,
+    "attributes": {
+        "event.name": "gen_ai.workflow",
+        "gen_ai.workflow.name": "customer_support_pipeline",
+        "gen_ai.workflow.type": "sequential",
+        "gen_ai.workflow.description": "Multi-agent customer support workflow",
+        "gen_ai.framework": "custom"
+    },
+    "dropped_attributes": 0,
+    "timestamp": null,
+    "observed_timestamp": "2025-10-01T21:42:09.426902Z",
+    "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+    "span_id": "0x6bede78f00354576",
+    "trace_flags": 1,
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    },
+    "event_name": "gen_ai.workflow"
+}
+{
     "name": "gen_ai.workflow customer_support_pipeline",
     "context": {
-        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
-        "span_id": "0x0a459d8cdfcba08b",
+        "trace_id": "0x6e3515bf13fea9d13202f8487c6c673b",
+        "span_id": "0x6bede78f00354576",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
     "parent_id": null,
-    "start_time": "2025-10-01T17:02:09.472278Z",
-    "end_time": "2025-10-01T17:02:10.210922Z",
+    "start_time": "2025-10-01T21:42:08.679176Z",
+    "end_time": "2025-10-01T21:42:09.427447Z",
     "status": {
         "status_code": "UNSET"
     },
@@ -341,14 +643,14 @@ ERROR HANDLING EXAMPLE
 {
     "name": "invoke_agent error_agent",
     "context": {
-        "trace_id": "0x57d70b51464e9b46ef2c34034c72c690",
-        "span_id": "0xb4ac7f390e7dde87",
+        "trace_id": "0x73bda4081e65b8c9a1311182e81baf3d",
+        "span_id": "0xd555598938af129d",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
-    "parent_id": "0x7254a5adcdd7813b",
-    "start_time": "2025-10-01T17:02:11.213158Z",
-    "end_time": "2025-10-01T17:02:11.213346Z",
+    "parent_id": "0xb5d8d50b8c9dcbc2",
+    "start_time": "2025-10-01T21:42:10.433434Z",
+    "end_time": "2025-10-01T21:42:10.433733Z",
     "status": {
         "status_code": "ERROR",
         "description": "Simulated agent failure"
@@ -356,7 +658,7 @@ ERROR HANDLING EXAMPLE
     "attributes": {
         "gen_ai.operation.name": "chat",
         "gen_ai.agent.name": "error_agent",
-        "gen_ai.agent.id": "6365c72c-4968-41ba-a134-8bc88e3a9485",
+        "gen_ai.agent.id": "ddbdea0f-8110-43fc-ad00-87b10795a586",
         "gen_ai.agent.type": "test",
         "gen_ai.framework": "custom",
         "error.type": "RuntimeError"
@@ -376,14 +678,14 @@ ERROR HANDLING EXAMPLE
 {
     "name": "gen_ai.workflow failing_workflow",
     "context": {
-        "trace_id": "0x57d70b51464e9b46ef2c34034c72c690",
-        "span_id": "0x7254a5adcdd7813b",
+        "trace_id": "0x73bda4081e65b8c9a1311182e81baf3d",
+        "span_id": "0xb5d8d50b8c9dcbc2",
         "trace_state": "[]"
     },
     "kind": "SpanKind.CLIENT",
     "parent_id": null,
-    "start_time": "2025-10-01T17:02:11.212929Z",
-    "end_time": "2025-10-01T17:02:11.214075Z",
+    "start_time": "2025-10-01T21:42:10.433038Z",
+    "end_time": "2025-10-01T21:42:10.434684Z",
     "status": {
         "status_code": "ERROR",
         "description": "Simulated agent failure"

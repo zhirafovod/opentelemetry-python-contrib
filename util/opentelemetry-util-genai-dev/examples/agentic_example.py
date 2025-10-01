@@ -9,13 +9,17 @@ This example shows:
 4. LLM calls within agent context
 5. Parent-child span relationships
 6. Metrics and events emission
-
-Run with: python examples/agentic_example.py
 """
 
 import time
 
+from opentelemetry import _logs as logs
 from opentelemetry import trace
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import (
+    ConsoleLogExporter,
+    SimpleLogRecordProcessor,
+)
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import (
     ConsoleMetricExporter,
@@ -35,6 +39,8 @@ from opentelemetry.util.genai.types import (
     OutputMessage,
     Task,
     Text,
+    ToolCall,
+    ToolCallResponse,
     Workflow,
 )
 
@@ -53,7 +59,14 @@ def setup_telemetry():
     )
     meter_provider = MeterProvider(metric_readers=[metric_reader])
 
-    return trace_provider, meter_provider
+    # Set up logging (for events)
+    logger_provider = LoggerProvider()
+    logger_provider.add_log_record_processor(
+        SimpleLogRecordProcessor(ConsoleLogExporter())
+    )
+    logs.set_logger_provider(logger_provider)
+
+    return trace_provider, meter_provider, logger_provider
 
 
 def simulate_multi_agent_workflow():
@@ -226,12 +239,40 @@ def simulate_multi_agent_workflow():
             InputMessage(
                 role="system",
                 parts=[
-                    Text(content="You are a helpful customer support agent.")
+                    Text(
+                        content="You are a helpful customer support agent. Assist with order status inquiries."
+                    )
                 ],
             ),
             InputMessage(
                 role="user",
                 parts=[Text(content="My order hasn't arrived yet")],
+            ),
+            # Include the classifier agent's output in the conversation history
+            InputMessage(
+                role="assistant",
+                parts=[Text(content="Intent: order_status")],
+            ),
+            # Simulate a tool call made by the assistant to check order status
+            InputMessage(
+                role="assistant",
+                parts=[
+                    ToolCall(
+                        id="call_abc123",
+                        name="check_order_status",
+                        arguments={"order_id": "ORD-12345"},
+                    )
+                ],
+            ),
+            # Tool response with the order status information
+            InputMessage(
+                role="tool",
+                parts=[
+                    ToolCallResponse(
+                        id="call_abc123",
+                        response="Order ORD-12345 is in transit. Expected delivery: 2-3 business days.",
+                    )
+                ],
             ),
         ],
         # Agent context
@@ -321,7 +362,7 @@ def simulate_error_handling():
 
 if __name__ == "__main__":
     # Set up telemetry
-    trace_provider, meter_provider = setup_telemetry()
+    trace_provider, meter_provider, logger_provider = setup_telemetry()
 
     # Run examples
     simulate_multi_agent_workflow()

@@ -7,8 +7,7 @@ from opentelemetry._logs import Logger, get_logger
 from ..types import Agent, Error, LLMInvocation, Task, Workflow
 from .utils import (
     _agent_to_log_record,
-    _chat_generation_to_log_record,
-    _message_to_log_record,
+    _llm_invocation_to_log_record,
     _task_to_log_record,
     _workflow_to_log_record,
 )
@@ -37,27 +36,8 @@ class ContentEventsEmitter:
         self._capture_content = capture_content
 
     def start(self, obj: Any) -> None:
-        if not self._capture_content:
-            return
-
-        if isinstance(obj, LLMInvocation):
-            invocation = obj
-            if not invocation.input_messages:
-                return
-            for msg in invocation.input_messages:
-                try:
-                    record = _message_to_log_record(
-                        msg,
-                        provider_name=invocation.provider,
-                        framework=invocation.attributes.get("framework"),
-                        capture_content=self._capture_content,
-                        agent_name=invocation.agent_name,
-                        agent_id=invocation.agent_id,
-                    )
-                    if record and self._logger:
-                        self._logger.emit(record)
-                except Exception:
-                    pass
+        # LLM events are emitted in finish() when we have both input and output
+        return None
 
     def finish(self, obj: Any) -> None:
         if not self._capture_content:
@@ -74,27 +54,22 @@ class ContentEventsEmitter:
             return
 
         if isinstance(obj, LLMInvocation):
-            invocation = obj
-            if invocation.span is None or not invocation.output_messages:
-                return
-            for index, msg in enumerate(invocation.output_messages):
-                try:
-                    record = _chat_generation_to_log_record(
-                        msg,
-                        index,
-                        invocation.provider,
-                        invocation.attributes.get("framework"),
-                        self._capture_content,
-                        agent_name=invocation.agent_name,
-                        agent_id=invocation.agent_id,
-                    )
-                    if record:
-                        try:
-                            self._logger.emit(record)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+            # Emit a single event for the entire LLM invocation
+            # (not one per message like the old implementation)
+            try:
+                record = _llm_invocation_to_log_record(
+                    obj,
+                    self._capture_content,
+                )
+                if record and self._logger:
+                    self._logger.emit(record)
+            except Exception as e:
+                # Log the error for debugging (but don't crash)
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    f"Failed to emit LLM invocation event: {e}", exc_info=True
+                )
 
     def error(self, error: Error, obj: Any) -> None:
         return None
