@@ -113,7 +113,7 @@ class SpanEmitter:
         # function definitions (semantic conv derived from structured list)
         if isinstance(invocation, LLMInvocation):
             _apply_function_definitions(span, invocation.request_functions)
-        # Agent context (for agentic applications)
+        # Agent context
         agent_name = getattr(invocation, "agent_name", None)
         if agent_name:
             span.set_attribute(GEN_AI_AGENT_NAME, agent_name)
@@ -205,14 +205,12 @@ class SpanEmitter:
             self._apply_start_attrs(invocation)
 
     def finish(self, invocation: LLMInvocation | EmbeddingInvocation) -> None:  # type: ignore[override]
-        # Handle new agentic types
         if isinstance(invocation, Workflow):
             self._finish_workflow(invocation)
         elif isinstance(invocation, Agent):
             self._finish_agent(invocation)
         elif isinstance(invocation, Task):
             self._finish_task(invocation)
-        # Handle existing types
         else:
             span = getattr(invocation, "span", None)
             if span is None:
@@ -229,14 +227,12 @@ class SpanEmitter:
     def error(
         self, error: Error, invocation: LLMInvocation | EmbeddingInvocation
     ) -> None:  # type: ignore[override]
-        # Handle new agentic types
         if isinstance(invocation, Workflow):
             self._error_workflow(error, invocation)
         elif isinstance(invocation, Agent):
             self._error_agent(error, invocation)
         elif isinstance(invocation, Task):
             self._error_task(error, invocation)
-        # Handle existing types
         else:
             span = getattr(invocation, "span", None)
             if span is None:

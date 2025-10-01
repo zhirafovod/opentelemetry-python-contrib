@@ -32,14 +32,14 @@ GEN_AI_AGENT_SYSTEM_INSTRUCTIONS = "gen_ai.agent.system_instructions"
 GEN_AI_AGENT_INPUT_CONTEXT = "gen_ai.agent.input_context"
 GEN_AI_AGENT_OUTPUT_RESULT = "gen_ai.agent.output_result"
 
-# Workflow attributes (following semantic convention pattern)
+# Workflow attributes (not in semantic conventions)
 GEN_AI_WORKFLOW_NAME = "gen_ai.workflow.name"
 GEN_AI_WORKFLOW_TYPE = "gen_ai.workflow.type"
 GEN_AI_WORKFLOW_DESCRIPTION = "gen_ai.workflow.description"
 GEN_AI_WORKFLOW_INITIAL_INPUT = "gen_ai.workflow.initial_input"
 GEN_AI_WORKFLOW_FINAL_OUTPUT = "gen_ai.workflow.final_output"
 
-# Task attributes (following semantic convention pattern)
+# Task attributes (not in semantic conventions)
 GEN_AI_TASK_NAME = "gen_ai.task.name"
 GEN_AI_TASK_TYPE = "gen_ai.task.type"
 GEN_AI_TASK_OBJECTIVE = "gen_ai.task.objective"

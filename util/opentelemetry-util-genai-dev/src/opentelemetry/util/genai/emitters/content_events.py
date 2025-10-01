@@ -40,7 +40,6 @@ class ContentEventsEmitter:
         if not self._capture_content:
             return
 
-        # Handle LLM invocations with agent context
         if isinstance(obj, LLMInvocation):
             invocation = obj
             if not invocation.input_messages:
@@ -64,7 +63,6 @@ class ContentEventsEmitter:
         if not self._capture_content:
             return
 
-        # Handle new agentic types
         if isinstance(obj, Workflow):
             self._emit_workflow_event(obj)
             return
@@ -75,7 +73,6 @@ class ContentEventsEmitter:
             self._emit_task_event(obj)
             return
 
-        # Handle LLM invocations with agent context
         if isinstance(obj, LLMInvocation):
             invocation = obj
             if invocation.span is None or not invocation.output_messages:

@@ -64,7 +64,7 @@ class ToolCall:
     end_time: Optional[float] = None
     span: Optional[Span] = None
     context_token: Optional[ContextToken] = None
-    # Agent context (for agentic applications)
+    # Agent context
     agent_name: Optional[str] = None
     agent_id: Optional[str] = None
 
@@ -145,7 +145,7 @@ class LLMInvocation:
     # Ahead of upstream
     run_id: UUID = field(default_factory=uuid4)
     parent_run_id: Optional[UUID] = None
-    # Agent context (for agentic applications)
+    # Agent context
     agent_name: Optional[str] = None
     agent_id: Optional[str] = None
 
@@ -240,25 +240,6 @@ class Agent:
     An agent is an autonomous entity with capabilities (tools, models) that can
     execute tasks. This dataclass supports both agent creation (initialization)
     and agent invocation (execution) phases.
-
-    Attributes:
-        name: Identifier for the agent (e.g., "research_agent", "customer_support_bot")
-        operation: Operation being performed - "create" or "invoke"
-        agent_type: Type/role of agent (e.g., "researcher", "planner", "executor", "critic")
-        description: Human-readable description of the agent's purpose/capabilities
-        framework: Framework implementing the agent (e.g., "langchain", "autogen", "crewai")
-        model: Primary model used by the agent (if applicable)
-        tools: List of tool names available to the agent
-        system_instructions: System prompt or instructions defining agent behavior
-        input_context: Input received by the agent (for invoke operations)
-        output_result: Output produced by the agent (for invoke operations)
-        attributes: Additional custom attributes (e.g., temperature, max_iterations)
-        start_time: Timestamp when operation started
-        end_time: Timestamp when operation completed
-        span: OpenTelemetry span associated with this agent operation
-        context_token: Context token for span management
-        run_id: Unique identifier for this agent operation
-        parent_run_id: Optional parent workflow/agent identifier
     """
 
     name: str
@@ -289,24 +270,6 @@ class Task:
     Tasks can be orchestrated at the workflow level (assigned to agents) or
     decomposed internally by agents during execution. This design supports both
     scenarios through flexible parent relationships.
-
-    Attributes:
-        name: Identifier for the task (e.g., "classify_sentiment", "search_knowledge_base")
-        objective: What the task aims to achieve (human-readable goal)
-        task_type: Type of task (e.g., "planning", "execution", "reflection", "tool_use")
-        source: Where the task originated - "workflow" (orchestrator-assigned) or "agent" (agent-decomposed)
-        assigned_agent: Agent name/ID responsible for this task (for workflow-assigned tasks)
-        status: Current status of the task
-        description: Detailed description of the task
-        input_data: Input data/context provided to the task
-        output_data: Output data/result produced by the task
-        attributes: Additional custom attributes (e.g., priority, dependencies)
-        start_time: Timestamp when task started
-        end_time: Timestamp when task completed
-        span: OpenTelemetry span associated with this task
-        context_token: Context token for span management
-        run_id: Unique identifier for this task execution
-        parent_run_id: Optional parent workflow/agent/task identifier
     """
 
     name: str

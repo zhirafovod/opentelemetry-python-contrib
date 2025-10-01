@@ -33,7 +33,6 @@ class MetricsEmitter:
             instruments.operation_duration_histogram
         )
         self._token_histogram: Histogram = instruments.token_usage_histogram
-        # Agentic AI histograms
         self._workflow_duration_histogram: Histogram = (
             instruments.workflow_duration_histogram
         )
@@ -48,7 +47,6 @@ class MetricsEmitter:
         return None
 
     def finish(self, obj: Any) -> None:
-        # Handle new agentic types
         if isinstance(obj, Workflow):
             self._record_workflow_metrics(obj)
             return
@@ -59,7 +57,6 @@ class MetricsEmitter:
             self._record_task_metrics(obj)
             return
 
-        # Handle existing types with agent context
         if isinstance(obj, LLMInvocation):
             invocation = obj
             metric_attrs = _get_metric_attributes(
