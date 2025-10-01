@@ -1,0 +1,411 @@
+Starting workflow: customer_support_pipeline
+Creating agent: classifier_agent
+{
+    "name": "create_agent classifier_agent",
+    "context": {
+        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
+        "span_id": "0x9331c51ebba0d318",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": "0x0a459d8cdfcba08b",
+    "start_time": "2025-10-01T17:02:09.577416Z",
+    "end_time": "2025-10-01T17:02:09.632544Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.agent.name": "classifier_agent",
+        "gen_ai.agent.id": "85c1fbab-dd33-4c67-ad09-23791e752ce4",
+        "gen_ai.agent.type": "classifier",
+        "gen_ai.agent.description": "Classifies customer intents",
+        "gen_ai.framework": "custom",
+        "gen_ai.request.model": "gpt-4",
+        "gen_ai.agent.tools": [
+            "intent_classifier"
+        ]
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+Invoking agent: classifier_agent
+Executing task: classify_intent
+LLM call with agent context
+{
+    "name": "chat gpt-4",
+    "context": {
+        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
+        "span_id": "0x19bbe18813272046",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": "0xf86af8434ef01c8a",
+    "start_time": "2025-10-01T17:02:09.787842Z",
+    "end_time": "2025-10-01T17:02:09.891819Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "gpt-4",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.framework": "custom",
+        "gen_ai.agent.name": "classifier_agent",
+        "gen_ai.agent.id": "85c1fbab-dd33-4c67-ad09-23791e752ce4",
+        "gen_ai.usage.input_tokens": 45,
+        "gen_ai.usage.output_tokens": 8
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+{
+    "name": "gen_ai.task classify_intent",
+    "context": {
+        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
+        "span_id": "0xf86af8434ef01c8a",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": "0xf68400dc6917200c",
+    "start_time": "2025-10-01T17:02:09.736009Z",
+    "end_time": "2025-10-01T17:02:09.892865Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {
+        "gen_ai.task.name": "classify_intent",
+        "gen_ai.task.type": "classification",
+        "gen_ai.task.objective": "Determine the user's intent from their query",
+        "gen_ai.task.source": "agent",
+        "gen_ai.task.status": "completed"
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+{
+    "name": "invoke_agent classifier_agent",
+    "context": {
+        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
+        "span_id": "0xf68400dc6917200c",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": "0x0a459d8cdfcba08b",
+    "start_time": "2025-10-01T17:02:09.633527Z",
+    "end_time": "2025-10-01T17:02:09.893328Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.agent.name": "classifier_agent",
+        "gen_ai.agent.id": "85c1fbab-dd33-4c67-ad09-23791e752ce4",
+        "gen_ai.agent.type": "classifier",
+        "gen_ai.framework": "custom",
+        "gen_ai.request.model": "gpt-4"
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+Creating agent: support_agent
+{
+    "name": "create_agent support_agent",
+    "context": {
+        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
+        "span_id": "0x6ca41282dbf8be3f",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": "0x0a459d8cdfcba08b",
+    "start_time": "2025-10-01T17:02:09.893982Z",
+    "end_time": "2025-10-01T17:02:09.945566Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.agent.name": "support_agent",
+        "gen_ai.agent.id": "cbaad7d8-fbc2-4c32-88d5-596c4c95c695",
+        "gen_ai.agent.type": "support",
+        "gen_ai.agent.description": "Handles customer support requests",
+        "gen_ai.framework": "custom",
+        "gen_ai.request.model": "gpt-4",
+        "gen_ai.agent.tools": [
+            "order_lookup",
+            "shipping_tracker"
+        ]
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+Invoking agent: support_agent
+  📝 Executing task: handle_request
+LLM call with agent context
+{
+    "name": "chat gpt-4",
+    "context": {
+        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
+        "span_id": "0x74c7c8414f89f55b",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": "0x50a47e87a201fcb1",
+    "start_time": "2025-10-01T17:02:10.104402Z",
+    "end_time": "2025-10-01T17:02:10.208605Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": "gpt-4",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.framework": "custom",
+        "gen_ai.agent.name": "support_agent",
+        "gen_ai.agent.id": "cbaad7d8-fbc2-4c32-88d5-596c4c95c695",
+        "gen_ai.usage.input_tokens": 52,
+        "gen_ai.usage.output_tokens": 28
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+{
+    "name": "gen_ai.task handle_request",
+    "context": {
+        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
+        "span_id": "0x50a47e87a201fcb1",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": "0xecb8590db5e83e41",
+    "start_time": "2025-10-01T17:02:10.052112Z",
+    "end_time": "2025-10-01T17:02:10.209883Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {
+        "gen_ai.task.name": "handle_request",
+        "gen_ai.task.type": "execution",
+        "gen_ai.task.objective": "Provide order status information to customer",
+        "gen_ai.task.source": "agent",
+        "gen_ai.task.assigned_agent": "support_agent",
+        "gen_ai.task.status": "completed"
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+{
+    "name": "invoke_agent support_agent",
+    "context": {
+        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
+        "span_id": "0xecb8590db5e83e41",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": "0x0a459d8cdfcba08b",
+    "start_time": "2025-10-01T17:02:09.946742Z",
+    "end_time": "2025-10-01T17:02:10.210408Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.agent.name": "support_agent",
+        "gen_ai.agent.id": "cbaad7d8-fbc2-4c32-88d5-596c4c95c695",
+        "gen_ai.agent.type": "support",
+        "gen_ai.framework": "custom",
+        "gen_ai.request.model": "gpt-4"
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+Completing workflow
+{
+    "name": "gen_ai.workflow customer_support_pipeline",
+    "context": {
+        "trace_id": "0x51b7c1dc468869f99ae1b9669fc02fcc",
+        "span_id": "0x0a459d8cdfcba08b",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": null,
+    "start_time": "2025-10-01T17:02:09.472278Z",
+    "end_time": "2025-10-01T17:02:10.210922Z",
+    "status": {
+        "status_code": "UNSET"
+    },
+    "attributes": {
+        "gen_ai.workflow.name": "customer_support_pipeline",
+        "gen_ai.workflow.type": "sequential",
+        "gen_ai.workflow.description": "Multi-agent customer support workflow",
+        "gen_ai.framework": "custom"
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+
+================================================================================
+Workflow completed! Check the console output above for:
+  • Span hierarchy (Workflow → Agent → Task → LLM)
+  • Agent context on LLM spans (gen_ai.agent.name, gen_ai.agent.id)
+  • Metrics with agent attributes
+  • Events for workflow/agent/task (if content capture enabled)
+================================================================================
+
+
+================================================================================
+ERROR HANDLING EXAMPLE
+================================================================================
+
+{
+    "name": "invoke_agent error_agent",
+    "context": {
+        "trace_id": "0x57d70b51464e9b46ef2c34034c72c690",
+        "span_id": "0xb4ac7f390e7dde87",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": "0x7254a5adcdd7813b",
+    "start_time": "2025-10-01T17:02:11.213158Z",
+    "end_time": "2025-10-01T17:02:11.213346Z",
+    "status": {
+        "status_code": "ERROR",
+        "description": "Simulated agent failure"
+    },
+    "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.agent.name": "error_agent",
+        "gen_ai.agent.id": "6365c72c-4968-41ba-a134-8bc88e3a9485",
+        "gen_ai.agent.type": "test",
+        "gen_ai.framework": "custom",
+        "error.type": "RuntimeError"
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+{
+    "name": "gen_ai.workflow failing_workflow",
+    "context": {
+        "trace_id": "0x57d70b51464e9b46ef2c34034c72c690",
+        "span_id": "0x7254a5adcdd7813b",
+        "trace_state": "[]"
+    },
+    "kind": "SpanKind.CLIENT",
+    "parent_id": null,
+    "start_time": "2025-10-01T17:02:11.212929Z",
+    "end_time": "2025-10-01T17:02:11.214075Z",
+    "status": {
+        "status_code": "ERROR",
+        "description": "Simulated agent failure"
+    },
+    "attributes": {
+        "gen_ai.workflow.name": "failing_workflow",
+        "gen_ai.workflow.type": "sequential",
+        "gen_ai.workflow.description": "Demonstrates error handling",
+        "gen_ai.framework": "custom",
+        "error.type": "RuntimeError"
+    },
+    "events": [],
+    "links": [],
+    "resource": {
+        "attributes": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.38.0.dev0",
+            "service.name": "unknown_service"
+        },
+        "schema_url": ""
+    }
+}
+Error handling demonstrated - check spans for error status
+

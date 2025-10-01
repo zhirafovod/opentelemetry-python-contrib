@@ -63,12 +63,15 @@ from opentelemetry.util.genai.emitters import (
     SpanEmitter,
 )
 from opentelemetry.util.genai.types import (
+    Agent,
     ContentCapturingMode,
     EmbeddingInvocation,
     Error,
     EvaluationResult,
     LLMInvocation,
+    Task,
     ToolCall,
+    Workflow,
 )
 from opentelemetry.util.genai.utils import get_content_capturing_mode
 from opentelemetry.util.genai.version import __version__
@@ -308,6 +311,111 @@ class TelemetryHandler:
         self._generator.error(error, invocation)
         return invocation
 
+    # Workflow lifecycle --------------------------------------------------
+    def start_workflow(self, workflow: Workflow) -> Workflow:
+        """Start a workflow and create a pending span entry."""
+        self._refresh_capture_content()
+        self._generator.start(workflow)
+        return workflow
+
+    def stop_workflow(self, workflow: Workflow) -> Workflow:
+        """Finalize a workflow successfully and end its span."""
+        workflow.end_time = time.time()
+        self._generator.finish(workflow)
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:  # pragma: no cover
+                self._meter_provider.force_flush()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return workflow
+
+    def fail_workflow(self, workflow: Workflow, error: Error) -> Workflow:
+        """Fail a workflow and end its span with error status."""
+        workflow.end_time = time.time()
+        self._generator.error(error, workflow)
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:  # pragma: no cover
+                self._meter_provider.force_flush()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return workflow
+
+    # Agent lifecycle -----------------------------------------------------
+    def start_agent(self, agent: Agent) -> Agent:
+        """Start an agent operation (create or invoke) and create a pending span entry."""
+        self._refresh_capture_content()
+        self._generator.start(agent)
+        return agent
+
+    def stop_agent(self, agent: Agent) -> Agent:
+        """Finalize an agent operation successfully and end its span."""
+        agent.end_time = time.time()
+        self._generator.finish(agent)
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:  # pragma: no cover
+                self._meter_provider.force_flush()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return agent
+
+    def fail_agent(self, agent: Agent, error: Error) -> Agent:
+        """Fail an agent operation and end its span with error status."""
+        agent.end_time = time.time()
+        self._generator.error(error, agent)
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:  # pragma: no cover
+                self._meter_provider.force_flush()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return agent
+
+    # Task lifecycle ------------------------------------------------------
+    def start_task(self, task: Task) -> Task:
+        """Start a task and create a pending span entry."""
+        self._refresh_capture_content()
+        self._generator.start(task)
+        return task
+
+    def stop_task(self, task: Task) -> Task:
+        """Finalize a task successfully and end its span."""
+        task.end_time = time.time()
+        self._generator.finish(task)
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:  # pragma: no cover
+                self._meter_provider.force_flush()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return task
+
+    def fail_task(self, task: Task, error: Error) -> Task:
+        """Fail a task and end its span with error status."""
+        task.end_time = time.time()
+        self._generator.error(error, task)
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:  # pragma: no cover
+                self._meter_provider.force_flush()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return task
+
     def evaluate_llm(
         self,
         invocation: LLMInvocation,
@@ -336,17 +444,28 @@ class TelemetryHandler:
     # Generic lifecycle API ------------------------------------------------
     def start(self, obj: Any) -> Any:
         """Generic start method for any invocation type."""
+        if isinstance(obj, Workflow):
+            return self.start_workflow(obj)
+        if isinstance(obj, Agent):
+            return self.start_agent(obj)
+        if isinstance(obj, Task):
+            return self.start_task(obj)
         if isinstance(obj, LLMInvocation):
             return self.start_llm(obj)
         if isinstance(obj, EmbeddingInvocation):
             return self.start_embedding(obj)
         if isinstance(obj, ToolCall):
             return self.start_tool_call(obj)
-        # Future types (e.g., ToolCall) handled here
         return obj
 
     def finish(self, obj: Any) -> Any:
         """Generic finish method for any invocation type."""
+        if isinstance(obj, Workflow):
+            return self.stop_workflow(obj)
+        if isinstance(obj, Agent):
+            return self.stop_agent(obj)
+        if isinstance(obj, Task):
+            return self.stop_task(obj)
         if isinstance(obj, LLMInvocation):
             return self.stop_llm(obj)
         if isinstance(obj, EmbeddingInvocation):
@@ -357,6 +476,12 @@ class TelemetryHandler:
 
     def fail(self, obj: Any, error: Error) -> Any:
         """Generic fail method for any invocation type."""
+        if isinstance(obj, Workflow):
+            return self.fail_workflow(obj, error)
+        if isinstance(obj, Agent):
+            return self.fail_agent(obj, error)
+        if isinstance(obj, Task):
+            return self.fail_task(obj, error)
         if isinstance(obj, LLMInvocation):
             return self.fail_llm(obj, error)
         if isinstance(obj, EmbeddingInvocation):
