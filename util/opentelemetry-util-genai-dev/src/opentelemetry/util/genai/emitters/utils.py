@@ -353,7 +353,7 @@ def _workflow_to_log_record(
 ) -> Optional[SDKLogRecord]:
     """Create a log record for a workflow event."""
     attributes: Dict[str, Any] = {
-        "event.name": "gen_ai.workflow",
+        "event.name": "gen_ai.client.workflow.operation.details",
         "gen_ai.workflow.name": workflow.name,
     }
 
@@ -375,7 +375,7 @@ def _workflow_to_log_record(
     return SDKLogRecord(
         body=body or None,
         attributes=attributes,
-        event_name="gen_ai.workflow",
+        event_name="gen_ai.client.workflow.operation.details",
     )
 
 
@@ -387,7 +387,7 @@ def _agent_to_log_record(
         return None
 
     attributes: Dict[str, Any] = {
-        "event.name": "gen_ai.system.message",
+        "event.name": "gen_ai.client.agent.operation.details",
         GEN_AI_FRAMEWORK: agent.framework,
     }
 
@@ -399,7 +399,7 @@ def _agent_to_log_record(
     return SDKLogRecord(
         body=body,
         attributes=attributes,
-        event_name="gen_ai.system.message",
+        event_name="gen_ai.client.agent.operation.details",
     )
 
 
@@ -413,7 +413,7 @@ def _task_to_log_record(
     """
     # Attributes contain metadata (not content)
     attributes: Dict[str, Any] = {
-        "event.name": "gen_ai.task",
+        "event.name": "gen_ai.client.task.operation.details",
         "gen_ai.task.name": task.name,
     }
 
@@ -447,5 +447,5 @@ def _task_to_log_record(
     return SDKLogRecord(
         body=body or None,
         attributes=attributes,
-        event_name="gen_ai.task",
+        event_name="gen_ai.client.task.operation.details",
     )

@@ -43,19 +43,18 @@ class ContentEventsEmitter:
         if not self._capture_content:
             return
 
-        if isinstance(obj, Workflow):
-            self._emit_workflow_event(obj)
-            return
-        if isinstance(obj, Agent):
-            self._emit_agent_event(obj)
-            return
-        if isinstance(obj, Task):
-            self._emit_task_event(obj)
-            return
+        # if isinstance(obj, Workflow):
+        #     self._emit_workflow_event(obj)
+        #     return
+        # if isinstance(obj, Agent):
+        #     self._emit_agent_event(obj)
+        #     return
+        # if isinstance(obj, Task):
+        #     self._emit_task_event(obj)
+        #     return
 
         if isinstance(obj, LLMInvocation):
             # Emit a single event for the entire LLM invocation
-            # (not one per message like the old implementation)
             try:
                 record = _llm_invocation_to_log_record(
                     obj,
@@ -64,7 +63,6 @@ class ContentEventsEmitter:
                 if record and self._logger:
                     self._logger.emit(record)
             except Exception as e:
-                # Log the error for debugging (but don't crash)
                 import logging
 
                 logging.getLogger(__name__).warning(
