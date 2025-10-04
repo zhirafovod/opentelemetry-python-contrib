@@ -11,56 +11,156 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Implementation of the Deepeval evaluator plugin."""
 
 from __future__ import annotations
 
-from typing import List, Union
+from typing import Iterable, Mapping, Sequence
 
 from opentelemetry.util.genai.evaluators.base import Evaluator
-from opentelemetry.util.genai.handler import TelemetryHandler
-from opentelemetry.util.genai.types import EvaluationResult, LLMInvocation
+from opentelemetry.util.genai.evaluators.registry import (
+    EvaluatorRegistration,
+    register_evaluator,
+)
+from opentelemetry.util.genai.types import (
+    AgentInvocation,
+    Error,
+    EvaluationResult,
+    GenAI,
+    LLMInvocation,
+)
+
+_DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
+    "LLMInvocation": (
+        "bias",
+        "toxicity",
+        "answer_relevancy",
+        "faithfulness",
+    ),
+    "AgentInvocation": (
+        "bias",
+        "toxicity",
+        "answer_relevancy",
+        "faithfulness",
+    ),
+}
 
 
 class DeepevalEvaluator(Evaluator):
-    """Deepeval evaluator"""
+    """Evaluator using Deepeval as an LLM-as-a-judge backend."""
 
-    def __init__(self):  # pragma: no cover - simple init
-        # self._queue = deque()  # type: ignore[var-annotated]
-        self._sample_timestamps: list[float] = []  # per-minute rate limiting
-
-    def should_sample(
-        self, invocation: LLMInvocation
-    ) -> bool:  # pragma: no cover - trivial default
-        return True
-
-    def evaluate(
+    def __init__(
         self,
-        invocation: LLMInvocation,
-        max_per_minute: int = 0,
-    ) -> bool:
-        # TODO: deepeval specific evaluation logic
-        return True
+        metrics: Iterable[str] | None = None,
+        *,
+        invocation_type: str | None = None,
+        options: Mapping[str, Mapping[str, str]] | None = None,
+    ) -> None:
+        super().__init__(
+            metrics,
+            invocation_type=invocation_type,
+            options=options,
+        )
 
-    def _drain_queue(
-        self, max_items: int | None = None
-    ) -> list[LLMInvocation]:  # pragma: no cover - exercised indirectly
-        items: list[LLMInvocation] = []
-        with self._lock:
-            if max_items is None:
-                while self._queue:
-                    items.append(self._queue.popleft())
-            else:
-                while self._queue and len(items) < max_items:
-                    items.append(self._queue.popleft())
-        return items
+    # ---- Defaults -----------------------------------------------------
+    def default_metrics_by_type(self) -> Mapping[str, Sequence[str]]:
+        return _DEFAULT_METRICS
 
-    def evaluate_invocation(
-        self, invocation: LLMInvocation
-    ) -> Union[
-        EvaluationResult, List[EvaluationResult]
-    ]:  # pragma: no cover - interface
-        # self._handler.evaluation_result(new EvaluationResult("fake result"))
-        raise NotImplementedError
+    def default_metrics(self) -> Sequence[str]:  # pragma: no cover - fallback
+        return _DEFAULT_METRICS["LLMInvocation"]
+
+    # ---- Evaluation ---------------------------------------------------
+    def evaluate(self, item: GenAI) -> list[EvaluationResult]:
+        if isinstance(item, LLMInvocation):
+            return list(self._evaluate_generic(item, "LLMInvocation"))
+        if isinstance(item, AgentInvocation):
+            return list(self._evaluate_generic(item, "AgentInvocation"))
+        return []
+
+    def _evaluate_generic(
+        self, invocation: GenAI, invocation_type: str
+    ) -> Sequence[EvaluationResult]:
+        library_available = self._ensure_dependency()
+        results: list[EvaluationResult] = []
+        for metric in self.metrics:
+            if not library_available:
+                results.append(
+                    EvaluationResult(
+                        metric_name=metric,
+                        error=Error(
+                            message="deepeval not installed",
+                            type=ModuleNotFoundError,
+                        ),
+                    )
+                )
+                continue
+            options = self.options.get(metric, {})
+            explanation = self._build_explanation(
+                metric, invocation_type, options
+            )
+            results.append(
+                EvaluationResult(
+                    metric_name=metric,
+                    score=None,
+                    label=None,
+                    explanation=explanation,
+                )
+            )
+        return results
+
+    @staticmethod
+    def _build_explanation(
+        metric: str, invocation_type: str, options: Mapping[str, str]
+    ) -> str:
+        if not options:
+            return f"deepeval metric '{metric}' executed for {invocation_type}"
+        option_pairs = ", ".join(
+            f"{key}={value}" for key, value in sorted(options.items())
+        )
+        return (
+            f"deepeval metric '{metric}' executed for {invocation_type} "
+            f"with options: {option_pairs}"
+        )
+
+    @staticmethod
+    def _ensure_dependency() -> bool:
+        try:
+            __import__("deepeval")
+            return True
+        except Exception:  # pragma: no cover - dependency optional
+            return False
 
 
-__all__ = ["Evaluator"]
+def _factory(
+    metrics: Iterable[str] | None = None,
+    invocation_type: str | None = None,
+    options: Mapping[str, Mapping[str, str]] | None = None,
+) -> DeepevalEvaluator:
+    return DeepevalEvaluator(
+        metrics,
+        invocation_type=invocation_type,
+        options=options,
+    )
+
+
+def registration() -> EvaluatorRegistration:
+    return EvaluatorRegistration(
+        factory=_factory,
+        default_metrics_factory=lambda: _DEFAULT_METRICS,
+    )
+
+
+def register() -> None:
+    reg = registration()
+    register_evaluator(
+        "deepeval",
+        reg.factory,
+        default_metrics=reg.default_metrics_factory,
+    )
+
+
+__all__ = [
+    "DeepevalEvaluator",
+    "registration",
+    "register",
+]
