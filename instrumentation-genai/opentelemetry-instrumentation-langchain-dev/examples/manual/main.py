@@ -126,8 +126,8 @@ def _flush_evaluations():
     """
     try:
         handler = get_telemetry_handler()
-        if handler and hasattr(handler, "process_evaluations"):
-            handler.process_evaluations()  # type: ignore[attr-defined]
+        if handler is not None:
+            handler.wait_for_evaluations(60.0)
     except Exception:
         pass
 

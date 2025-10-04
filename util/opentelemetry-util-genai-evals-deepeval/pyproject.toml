@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.entry-points.opentelemetry_util_genai_evaluators]
-deepeval = "opentelemetry.util.evaluator.deepeval:registration"
+deepeval = "opentelemetry.util.evaluator.deepeval:_REGISTRATION"
 
 [project.optional-dependencies]
 test = ["pytest>=7.0.0"]

@@ -88,16 +88,18 @@ class Manager(CompletionCallback):
         self._evaluators = self._instantiate_evaluators(self._plans)
         self._queue: queue.Queue[GenAI] = queue.Queue()
         self._shutdown = threading.Event()
-        self._worker = threading.Thread(
-            target=self._worker_loop,
-            name="opentelemetry-genai-evaluator",
-            daemon=True,
-        )
-        self._worker.start()
+        self._worker: threading.Thread | None = None
+        if self.has_evaluators:
+            self._worker = threading.Thread(
+                target=self._worker_loop,
+                name="opentelemetry-genai-evaluator",
+                daemon=True,
+            )
+            self._worker.start()
 
     # CompletionCallback -------------------------------------------------
     def on_completion(self, invocation: GenAI) -> None:
-        if not self._evaluators:
+        if not self.has_evaluators:
             return
         try:
             if self._sampler.should_sample(invocation):
@@ -109,6 +111,8 @@ class Manager(CompletionCallback):
     def offer(self, invocation: GenAI) -> None:
         """Enqueue an invocation for asynchronous evaluation."""
 
+        if not self.has_evaluators:
+            return
         try:
             self._queue.put_nowait(invocation)
         except Exception:  # pragma: no cover - defensive
@@ -117,6 +121,8 @@ class Manager(CompletionCallback):
             )
 
     def wait_for_all(self, timeout: float | None = None) -> None:
+        if not self.has_evaluators:
+            return
         if timeout is None:
             self._queue.join()
             return
@@ -127,8 +133,11 @@ class Manager(CompletionCallback):
             time.sleep(0.05)
 
     def shutdown(self) -> None:
+        if self._worker is None:
+            return
         self._shutdown.set()
         self._worker.join(timeout=1.0)
+        self._worker = None
 
     def evaluate_now(self, invocation: GenAI) -> list[EvaluationResult]:
         """Synchronously evaluate an invocation."""
@@ -137,6 +146,10 @@ class Manager(CompletionCallback):
         flattened = self._emit_results(invocation, buckets)
         self._flag_invocation(invocation)
         return flattened
+
+    @property
+    def has_evaluators(self) -> bool:
+        return any(self._evaluators.values())
 
     # Internal helpers ---------------------------------------------------
     def _worker_loop(self) -> None:
@@ -153,6 +166,8 @@ class Manager(CompletionCallback):
                 self._queue.task_done()
 
     def _process_invocation(self, invocation: GenAI) -> None:
+        if not self.has_evaluators:
+            return
         buckets = self._collect_results(invocation)
         self._emit_results(invocation, buckets)
         self._flag_invocation(invocation)
@@ -160,6 +175,8 @@ class Manager(CompletionCallback):
     def _collect_results(
         self, invocation: GenAI
     ) -> Sequence[Sequence[EvaluationResult]]:
+        if not self.has_evaluators:
+            return ()
         type_name = type(invocation).__name__
         evaluators = self._evaluators.get(type_name, ())
         if not evaluators:
@@ -198,15 +215,21 @@ class Manager(CompletionCallback):
         return flattened
 
     def _flag_invocation(self, invocation: GenAI) -> None:
+        if not self.has_evaluators:
+            return
         attributes = getattr(invocation, "attributes", None)
         if isinstance(attributes, dict):
             attributes.setdefault("gen_ai.evaluation.executed", True)
 
     # Configuration ------------------------------------------------------
     def _load_plans(self) -> Sequence[EvaluatorPlan]:
-        raw = _read_raw_evaluator_config()
-        if not raw:
+        raw_value = _read_raw_evaluator_config()
+        raw = (raw_value or "").strip()
+        normalized = raw.lower()
+        if normalized in {"none", "off", "false"}:
             return []
+        if not raw:
+            return self._generate_default_plans()
         try:
             requested = _parse_evaluator_config(raw)
         except ValueError as exc:
@@ -283,15 +306,37 @@ class Manager(CompletionCallback):
                 evaluators_by_type.setdefault(type_name, []).append(evaluator)
         return evaluators_by_type
 
+    def _generate_default_plans(self) -> Sequence[EvaluatorPlan]:
+        plans: list[EvaluatorPlan] = []
+        available = list_evaluators()
+        if not available:
+            return plans
+        for name in available:
+            try:
+                defaults = get_default_metrics(name)
+            except ValueError:
+                continue
+            if not defaults:
+                continue
+            per_type: dict[str, Sequence[MetricConfig]] = {}
+            for type_name, metrics in defaults.items():
+                entries = [
+                    MetricConfig(name=metric, options={}) for metric in metrics
+                ]
+                if entries:
+                    per_type[type_name] = entries
+            if not per_type:
+                continue
+            plans.append(EvaluatorPlan(name=name, per_type=per_type))
+        return plans
+
 
 # ---------------------------------------------------------------------------
 # Environment parsing helpers
 
 
-def _read_raw_evaluator_config() -> str:
-    return (
-        _get_env(OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS) or ""
-    ).strip()
+def _read_raw_evaluator_config() -> str | None:
+    return _get_env(OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS)
 
 
 def _read_interval() -> float:

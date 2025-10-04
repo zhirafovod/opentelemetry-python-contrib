@@ -143,19 +143,21 @@ def _factory(
     )
 
 
+_REGISTRATION = EvaluatorRegistration(
+    factory=_factory,
+    default_metrics_factory=lambda: _DEFAULT_METRICS,
+)
+
+
 def registration() -> EvaluatorRegistration:
-    return EvaluatorRegistration(
-        factory=_factory,
-        default_metrics_factory=lambda: _DEFAULT_METRICS,
-    )
+    return _REGISTRATION
 
 
 def register() -> None:
-    reg = registration()
     register_evaluator(
         "deepeval",
-        reg.factory,
-        default_metrics=reg.default_metrics_factory,
+        _REGISTRATION.factory,
+        default_metrics=_REGISTRATION.default_metrics_factory,
     )
 
 

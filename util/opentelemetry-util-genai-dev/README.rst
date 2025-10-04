@@ -212,7 +212,7 @@ Core / Flavor / Content:
 
 Evaluation:
 
-* ``OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS`` – comma list describing evaluator configuration (e.g. ``Deepeval(LLMInvocation(bias,toxicity))``).
+* ``OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS`` – comma list describing evaluator configuration (e.g. ``Deepeval(LLMInvocation(bias,toxicity))``). Leave unset (or blank) to auto-enable every registered evaluator with its default metrics; set to ``none`` to disable all evaluators.
 * ``OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION`` – aggregate all evaluator results per invocation when ``true``.
 * ``OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE`` – ``off`` | ``aggregated`` | ``per_metric`` (controls evaluation span emission when enabled).
 

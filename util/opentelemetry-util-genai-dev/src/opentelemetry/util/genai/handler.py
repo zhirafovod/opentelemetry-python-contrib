@@ -93,7 +93,6 @@ from .callbacks import CompletionCallback
 from .config import parse_env
 from .environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
-    OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -458,9 +457,6 @@ class TelemetryHandler:
                 continue
 
     def _initialize_default_callbacks(self) -> None:
-        raw = os.environ.get(OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS, "")
-        if not raw or not raw.strip():
-            return
         try:
             from .evaluators.manager import Manager
         except Exception:  # pragma: no cover - import errors
@@ -473,6 +469,9 @@ class TelemetryHandler:
             manager = Manager(self)
         except Exception as exc:  # pragma: no cover - defensive
             _LOGGER.warning("Failed to initialise evaluation manager: %s", exc)
+            return
+        if not manager.has_evaluators:
+            manager.shutdown()
             return
         self._evaluation_manager = manager
         self.register_completion_callback(manager)
@@ -595,7 +594,7 @@ class TelemetryHandler:
         pluggable emission similar to emitters.
         """
         manager = getattr(self, "_evaluation_manager", None)
-        if manager is None:
+        if manager is None or not manager.has_evaluators:
             return []
         if evaluators:
             _LOGGER.warning(
@@ -610,7 +609,7 @@ class TelemetryHandler:
         all asynchronous evaluation tasks have finished before assertions are made.
         """
         manager = getattr(self, "_evaluation_manager", None)
-        if manager is None:
+        if manager is None or not manager.has_evaluators:
             return
         manager.wait_for_all(timeout)  # type: ignore[attr-defined]
 

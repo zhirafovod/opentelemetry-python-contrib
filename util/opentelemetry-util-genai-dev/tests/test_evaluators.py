@@ -153,6 +153,28 @@ class TestManagerConfiguration(unittest.TestCase):
         self.assertEqual(options["metric_one"].get("threshold"), "0.5")
         self.assertFalse(options["metric_two"])
 
+    @patch.dict(os.environ, {}, clear=True)
+    def test_manager_auto_discovers_defaults(self) -> None:
+        handler = _RecordingHandler()
+        manager = Manager(handler)
+        try:
+            self.assertTrue(manager.has_evaluators)
+        finally:
+            manager.shutdown()
+
+    @patch.dict(
+        os.environ,
+        {OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS: "none"},
+        clear=True,
+    )
+    def test_manager_respects_none(self) -> None:
+        handler = _RecordingHandler()
+        manager = Manager(handler)
+        try:
+            self.assertFalse(manager.has_evaluators)
+        finally:
+            manager.shutdown()
+
 
 class TestHandlerIntegration(unittest.TestCase):
     def setUp(self) -> None:
@@ -226,6 +248,27 @@ class TestHandlerIntegration(unittest.TestCase):
             manager.shutdown()
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].metric_name, "static_metric")
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_handler_auto_enables_when_env_missing(self) -> None:
+        handler = get_telemetry_handler()
+        manager = getattr(handler, "_evaluation_manager", None)
+        self.assertIsNotNone(manager)
+        self.assertTrue(manager.has_evaluators)  # type: ignore[union-attr]
+        if manager is not None:
+            manager.shutdown()
+
+    @patch.dict(
+        os.environ,
+        {OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS: "none"},
+        clear=True,
+    )
+    def test_handler_disables_when_none(self) -> None:
+        handler = get_telemetry_handler()
+        manager = getattr(handler, "_evaluation_manager", None)
+        if manager is not None:
+            manager.shutdown()
+        self.assertIsNone(manager)
 
 
 if __name__ == "__main__":  # pragma: no cover
