@@ -212,9 +212,9 @@ Core / Flavor / Content:
 
 Evaluation:
 
-* ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE`` – ``true`` / ``false``.
-* ``OTEL_INSTRUMENTATION_GENAI_EVALUATORS`` – comma list (e.g. ``length,sentiment,deepeval``) optionally with metric overrides via ``name(metric_a,metric_b)``.
-* ``OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE`` – ``off`` | ``aggregated`` | ``per_metric``.
+* ``OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS`` – comma list describing evaluator configuration (e.g. ``Deepeval(LLMInvocation(bias,toxicity))``).
+* ``OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION`` – aggregate all evaluator results per invocation when ``true``.
+* ``OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE`` – ``off`` | ``aggregated`` | ``per_metric`` (controls evaluation span emission when enabled).
 
 Upload / Artifacts:
 

@@ -48,6 +48,7 @@ Usage:
     # handler.fail_llm(invocation, Error(type="...", message="..."))
 """
 
+import logging
 import os
 import time
 from typing import Any, Optional
@@ -88,11 +89,14 @@ from opentelemetry.util.genai.types import (
 from opentelemetry.util.genai.utils import get_content_capturing_mode
 from opentelemetry.util.genai.version import __version__
 
+from .callbacks import CompletionCallback
 from .config import parse_env
 from .environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
 )
-from .evaluators.manager import EvaluationManager
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class TelemetryHandler:
@@ -137,7 +141,12 @@ class TelemetryHandler:
         # store settings for evaluation config
         self._settings = settings
         self._generator_kind = settings.generator_kind
-        capture_span = settings.capture_content_span
+        self._suppress_span_content = (
+            settings.generator_kind == "span_metric_event"
+        )
+        capture_span = (
+            settings.capture_content_span and not self._suppress_span_content
+        )
         capture_span_traceloop = capture_span
         if not capture_span_traceloop:
             capture_flag = os.environ.get(
@@ -164,6 +173,8 @@ class TelemetryHandler:
         self._evaluation_emitter = CompositeEvaluationEmitter(
             evaluation_emitters
         )
+
+        self._completion_callbacks: list[CompletionCallback] = []
 
         # Compose emitters based on parsed settings
         plugin_bundles: list[PluginEmitterBundle] = []
@@ -242,12 +253,8 @@ class TelemetryHandler:
         # Phase 1: wrap in composite (single element) to prepare for multi-emitter
         self._generator = CompositeGenerator(emitters)  # type: ignore[arg-type]
 
-        # Instantiate evaluation manager (extensible evaluation pipeline)
-        # TODO should use Logs API
-        self._evaluation_manager = EvaluationManager(
-            settings=settings,
-            submit_results=self._handle_evaluation_results,
-        )
+        self._evaluation_manager = None
+        self._initialize_default_callbacks()
 
     def _refresh_capture_content(
         self,
@@ -259,6 +266,9 @@ class TelemetryHandler:
             new_value_span = mode in (
                 ContentCapturingMode.SPAN_ONLY,
                 ContentCapturingMode.SPAN_AND_EVENT,
+            )
+            span_capture_allowed = not getattr(
+                self, "_suppress_span_content", False
             )
             # Respect the content capture mode for all generator kinds
             traceloop_requested = os.environ.get(
@@ -280,7 +290,9 @@ class TelemetryHandler:
                 ):
                     try:
                         desired = new_value_span
-                        if not new_value_span and role == "traceloop_compat":
+                        if role == "span" and not span_capture_allowed:
+                            desired = False
+                        if not desired and role == "traceloop_compat":
                             desired = traceloop_requested
                         em.set_capture_content(desired)  # type: ignore[attr-defined]
                     except Exception:
@@ -303,17 +315,7 @@ class TelemetryHandler:
         """Finalize an LLM invocation successfully and end its span."""
         invocation.end_time = time.time()
         self._generator.finish(invocation)
-        # Automatic async evaluation sampling (non-blocking)
-        try:
-            manager = getattr(self, "_evaluation_manager", None)
-            if manager and manager.should_evaluate(invocation):  # type: ignore[attr-defined]
-                scheduled = manager.offer(invocation)  # type: ignore[attr-defined]
-                if scheduled:
-                    invocation.attributes.setdefault(
-                        "gen_ai.evaluation.executed", True
-                    )
-        except Exception:
-            pass
+        self._notify_completion(invocation)
         # Force flush metrics if a custom provider with force_flush is present
         if (
             hasattr(self, "_meter_provider")
@@ -331,6 +333,7 @@ class TelemetryHandler:
         """Fail an LLM invocation and end its span with error status."""
         invocation.end_time = time.time()
         self._generator.error(error, invocation)
+        self._notify_completion(invocation)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -356,6 +359,7 @@ class TelemetryHandler:
         """Finalize an embedding invocation successfully and end its span."""
         invocation.end_time = time.time()
         self._generator.finish(invocation)
+        self._notify_completion(invocation)
         # Force flush metrics if a custom provider with force_flush is present
         if (
             hasattr(self, "_meter_provider")
@@ -373,6 +377,7 @@ class TelemetryHandler:
         """Fail an embedding invocation and end its span with error status."""
         invocation.end_time = time.time()
         self._generator.error(error, invocation)
+        self._notify_completion(invocation)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -393,12 +398,14 @@ class TelemetryHandler:
         """Finalize a tool call invocation successfully and end its span."""
         invocation.end_time = time.time()
         self._generator.finish(invocation)
+        self._notify_completion(invocation)
         return invocation
 
     def fail_tool_call(self, invocation: ToolCall, error: Error) -> ToolCall:
         """Fail a tool call invocation and end its span with error status."""
         invocation.end_time = time.time()
         self._generator.error(error, invocation)
+        self._notify_completion(invocation)
         return invocation
 
     # Workflow lifecycle --------------------------------------------------
@@ -418,10 +425,63 @@ class TelemetryHandler:
         except Exception:  # pragma: no cover - defensive
             pass
 
+    def evaluation_results(
+        self, invocation: GenAI, results: list[EvaluationResult]
+    ) -> None:
+        """Public hook for completion callbacks to report evaluation output."""
+
+        self._handle_evaluation_results(invocation, results)
+
+    def register_completion_callback(
+        self, callback: CompletionCallback
+    ) -> None:
+        if callback in self._completion_callbacks:
+            return
+        self._completion_callbacks.append(callback)
+
+    def unregister_completion_callback(
+        self, callback: CompletionCallback
+    ) -> None:
+        try:
+            self._completion_callbacks.remove(callback)
+        except ValueError:
+            pass
+
+    def _notify_completion(self, invocation: GenAI) -> None:
+        if not self._completion_callbacks:
+            return
+        callbacks = list(self._completion_callbacks)
+        for callback in callbacks:
+            try:
+                callback.on_completion(invocation)
+            except Exception:  # pragma: no cover - defensive
+                continue
+
+    def _initialize_default_callbacks(self) -> None:
+        raw = os.environ.get(OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS, "")
+        if not raw or not raw.strip():
+            return
+        try:
+            from .evaluators.manager import Manager
+        except Exception:  # pragma: no cover - import errors
+            _LOGGER.debug(
+                "Evaluation manager not available; skipping default registration",
+                exc_info=True,
+            )
+            return
+        try:
+            manager = Manager(self)
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOGGER.warning("Failed to initialise evaluation manager: %s", exc)
+            return
+        self._evaluation_manager = manager
+        self.register_completion_callback(manager)
+
     def stop_workflow(self, workflow: Workflow) -> Workflow:
         """Finalize a workflow successfully and end its span."""
         workflow.end_time = time.time()
         self._generator.finish(workflow)
+        self._notify_completion(workflow)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -436,6 +496,7 @@ class TelemetryHandler:
         """Fail a workflow and end its span with error status."""
         workflow.end_time = time.time()
         self._generator.error(error, workflow)
+        self._notify_completion(workflow)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -457,17 +518,7 @@ class TelemetryHandler:
         """Finalize an agent operation successfully and end its span."""
         agent.end_time = time.time()
         self._generator.finish(agent)
-        # Automatic async evaluation if configured for agents
-        try:
-            manager = getattr(self, "_evaluation_manager", None)
-            if manager and manager.should_evaluate(agent):  # type: ignore[attr-defined]
-                scheduled = manager.offer(agent)  # type: ignore[attr-defined]
-                if scheduled:
-                    agent.attributes.setdefault(
-                        "gen_ai.evaluation.executed", True
-                    )
-        except Exception:
-            pass
+        self._notify_completion(agent)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -484,6 +535,7 @@ class TelemetryHandler:
         """Fail an agent operation and end its span with error status."""
         agent.end_time = time.time()
         self._generator.error(error, agent)
+        self._notify_completion(agent)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -505,6 +557,7 @@ class TelemetryHandler:
         """Finalize a task successfully and end its span."""
         task.end_time = time.time()
         self._generator.finish(task)
+        self._notify_completion(task)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -519,6 +572,7 @@ class TelemetryHandler:
         """Fail a task and end its span with error status."""
         task.end_time = time.time()
         self._generator.error(error, task)
+        self._notify_completion(task)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -540,7 +594,14 @@ class TelemetryHandler:
         implementation has been refactored into EvaluationManager to allow
         pluggable emission similar to emitters.
         """
-        return self._evaluation_manager.evaluate(invocation, evaluators)  # type: ignore[arg-type]
+        manager = getattr(self, "_evaluation_manager", None)
+        if manager is None:
+            return []
+        if evaluators:
+            _LOGGER.warning(
+                "Direct evaluator overrides are ignored; using configured evaluators"
+            )
+        return manager.evaluate_now(invocation)  # type: ignore[attr-defined]
 
     def wait_for_evaluations(self, timeout: Optional[float] = None) -> None:
         """Wait for all pending evaluations to complete, up to the specified timeout.
@@ -548,8 +609,10 @@ class TelemetryHandler:
         This is primarily intended for use in test scenarios to ensure that
         all asynchronous evaluation tasks have finished before assertions are made.
         """
-        # TODO: implment
-        self._evaluation_manager.wait_for_all(timeout)  # type: ignore[attr-defined]
+        manager = getattr(self, "_evaluation_manager", None)
+        if manager is None:
+            return
+        manager.wait_for_all(timeout)  # type: ignore[attr-defined]
 
     # Generic lifecycle API ------------------------------------------------
     def start(self, obj: Any) -> Any:

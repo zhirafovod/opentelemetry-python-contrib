@@ -388,10 +388,11 @@ def main():
     llm_invocation_demo(llm)
 
     # Embedding invocation demo
-    embedding_invocation_demo()
+    # TODO: fix api keys
+    # embedding_invocation_demo()
 
     # Run agent demo (tool + subagent). Safe if LangGraph unavailable.
-    agent_demo(llm)
+    # agent_demo(llm)
 
     _flush_evaluations()  # final flush before shutdown
 

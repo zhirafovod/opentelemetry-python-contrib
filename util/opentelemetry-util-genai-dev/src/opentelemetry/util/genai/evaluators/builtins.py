@@ -13,14 +13,15 @@
 # limitations under the License.
 """Builtin evaluators.
 
-Lightweight reference evaluators that demonstrate the interface.
-Heavy / optional dependencies are imported lazily. If the dependency is not
-available, the evaluator returns an EvaluationResult with an error field set.
+These evaluators implement lightweight reference behaviour to exercise the
+pluggable evaluation infrastructure. Heavy / optional dependencies are
+imported lazily. When a dependency is not available the evaluator returns an
+``EvaluationResult`` with the ``error`` field populated.
 """
 
 from __future__ import annotations
 
-from typing import List, Sequence
+from typing import List, Mapping, Sequence
 
 from opentelemetry.util.genai.evaluators.base import Evaluator
 from opentelemetry.util.genai.evaluators.registry import register_evaluator
@@ -36,17 +37,13 @@ def _extract_text(invocation: LLMInvocation) -> str:
     text_parts: List[str] = []
     for msg in invocation.output_messages:
         for part in msg.parts:
-            if isinstance(part, Text):  # simple content aggregation
+            if isinstance(part, Text):
                 text_parts.append(part.content)
     return "\n".join(text_parts).strip()
 
 
 class LengthEvaluator(Evaluator):
-    """Simple evaluator producing a score based on response length.
-
-    Score: normalized length = len / (len + 50) in [0,1).
-    Label tiers: short (<50 chars), medium (50-200), long (>200).
-    """
+    """Simple evaluator producing a score based on response length."""
 
     def default_metrics(self) -> Sequence[str]:  # pragma: no cover - trivial
         return ("length",)
@@ -82,43 +79,67 @@ class LengthEvaluator(Evaluator):
 
 
 class DeepevalEvaluator(Evaluator):
-    """Placeholder Deepeval evaluator.
+    """Placeholder Deepeval evaluator supporting multiple metrics."""
 
-    Attempts to import deepeval. If unavailable, returns error. A future
-    integration may map multiple metrics; for now this returns a single
-    placeholder result when the dependency is present.
-    """
+    _DEFAULT_METRICS = (
+        "bias",
+        "toxicity",
+        "answer_relevancy",
+        "faithfulness",
+    )
 
     def default_metrics(self) -> Sequence[str]:  # pragma: no cover - trivial
-        return ("deepeval",)
+        return self._DEFAULT_METRICS
+
+    def default_metrics_by_type(self) -> Mapping[str, Sequence[str]]:
+        metrics = self._DEFAULT_METRICS
+        return {
+            "LLMInvocation": metrics,
+            "AgentInvocation": metrics,
+        }
 
     def evaluate_llm(
         self, invocation: LLMInvocation
     ) -> Sequence[EvaluationResult]:  # type: ignore[override]
-        metric_name = self.metrics[0] if self.metrics else "deepeval"
+        return self._evaluate_generic()
+
+    def _evaluate_generic(self) -> Sequence[EvaluationResult]:
         try:
             import deepeval  # noqa: F401
-        except Exception as exc:  # pragma: no cover - environment dependent
+        except Exception as exc:  # pragma: no cover - dependency optional
             return [
                 EvaluationResult(
-                    metric_name=metric_name,
+                    metric_name=metric,
                     error=Error(
                         message="deepeval not installed", type=type(exc)
                     ),
                 )
+                for metric in self.metrics
             ]
-        return [
-            EvaluationResult(
-                metric_name=metric_name,
-                score=None,
-                label=None,
-                explanation="Deepeval integration placeholder (no metrics recorded)",
+        results: list[EvaluationResult] = []
+        for metric in self.metrics:
+            options = self.options.get(metric, {})
+            explanation = (
+                "Deepeval integration placeholder (no metrics recorded)"
             )
-        ]
+            if options:
+                options_desc = ", ".join(
+                    f"{key}={value}" for key, value in sorted(options.items())
+                )
+                explanation = f"{explanation}; options: {options_desc}"
+            results.append(
+                EvaluationResult(
+                    metric_name=metric,
+                    score=None,
+                    label=None,
+                    explanation=explanation,
+                )
+            )
+        return results
 
 
 class SentimentEvaluator(Evaluator):
-    """Simple sentiment evaluator using nltk's VADER analyzer if available."""
+    """Simple sentiment evaluator using nltk's VADER analyser if available."""
 
     def default_metrics(self) -> Sequence[str]:  # pragma: no cover - trivial
         return ("sentiment",)
@@ -168,13 +189,39 @@ class SentimentEvaluator(Evaluator):
         ]
 
 
+def _wrap_factory(cls):
+    def _factory(
+        metrics=None,
+        invocation_type=None,
+        options=None,
+    ):
+        return cls(
+            metrics,
+            invocation_type=invocation_type,
+            options=options,
+        )
+
+    return _factory
+
+
 # Auto-register builtin evaluators (names stable lowercase)
-register_evaluator("length", lambda metrics=None: LengthEvaluator(metrics))
 register_evaluator(
-    "deepeval", lambda metrics=None: DeepevalEvaluator(metrics)
+    "length",
+    _wrap_factory(LengthEvaluator),
+    default_metrics=lambda: {"LLMInvocation": ("length",)},
 )
 register_evaluator(
-    "sentiment", lambda metrics=None: SentimentEvaluator(metrics)
+    "deepeval",
+    _wrap_factory(DeepevalEvaluator),
+    default_metrics=lambda: {
+        "LLMInvocation": DeepevalEvaluator._DEFAULT_METRICS,
+        "AgentInvocation": DeepevalEvaluator._DEFAULT_METRICS,
+    },
+)
+register_evaluator(
+    "sentiment",
+    _wrap_factory(SentimentEvaluator),
+    default_metrics=lambda: {"LLMInvocation": ("sentiment",)},
 )
 
 __all__ = [

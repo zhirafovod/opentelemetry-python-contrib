@@ -4,12 +4,7 @@ from dataclasses import dataclass
 from .environment_variables import (
     # OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
     OTEL_INSTRUMENTATION_GENAI_EMITTERS,
-    OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE,
-    OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL,
-    OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE,
-    OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE,
-    OTEL_INSTRUMENTATION_GENAI_EVALUATION_TARGETS,
-    OTEL_INSTRUMENTATION_GENAI_EVALUATORS,
+    OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE,
 )
 from .types import ContentCapturingMode
 from .utils import get_content_capturing_mode
@@ -22,8 +17,6 @@ class Settings:
     """
 
     generator_kind: str
-    evaluation_enabled: bool
-    evaluation_evaluators: list[str]
     capture_content_span: bool
     capture_content_events: bool
     # New fields for multi-token emitter selection
@@ -31,9 +24,6 @@ class Settings:
     only_traceloop_compat: bool
     raw_tokens: list[str]
     evaluation_span_mode: str
-    evaluation_interval: float
-    evaluation_max_per_minute: int
-    evaluation_targets: list[str]  # normalized list (e.g. ["llm", "agent"])
 
 
 def parse_env() -> Settings:
@@ -94,7 +84,7 @@ def parse_env() -> Settings:
 
     # Inline evaluation span mode normalization (avoid lambda call for lint compliance)
     raw_eval_span_mode = (
-        os.environ.get(OTEL_INSTRUMENTATION_GENAI_EVALUATION_SPAN_MODE, "off")
+        os.environ.get(OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE, "off")
         .strip()
         .lower()
     )
@@ -104,60 +94,12 @@ def parse_env() -> Settings:
         else "off"
     )
 
-    # Evaluation targets (llm by default). Accepts comma separated values.
-    raw_targets = os.environ.get(
-        OTEL_INSTRUMENTATION_GENAI_EVALUATION_TARGETS, "llm"
-    )
-    evaluation_targets = []
-    seen = set()
-    for tok in raw_targets.split(","):
-        val = tok.strip().lower()
-        if not val:
-            continue
-        if val not in ("llm", "agent"):
-            continue  # ignore unsupported future tokens silently
-        if val in seen:
-            continue
-        seen.add(val)
-        evaluation_targets.append(val)
-    if not evaluation_targets:
-        evaluation_targets = ["llm"]  # fallback
-
     return Settings(
         generator_kind=baseline,
         capture_content_span=capture_content_span,
         capture_content_events=capture_content_events,
-        evaluation_enabled=(
-            os.environ.get(
-                OTEL_INSTRUMENTATION_GENAI_EVALUATION_ENABLE, "false"
-            )
-            .strip()
-            .lower()
-            in ("true", "1", "yes")
-        ),
-        evaluation_evaluators=[
-            n.strip()
-            for n in os.environ.get(
-                OTEL_INSTRUMENTATION_GENAI_EVALUATORS,
-                "",  # noqa: PLC3002
-            ).split(",")
-            if n.strip()
-        ],
         extra_emitters=extra_emitters,
         only_traceloop_compat=only_traceloop,
         raw_tokens=tokens,
         evaluation_span_mode=normalized_eval_span_mode,
-        evaluation_interval=float(
-            os.environ.get(
-                OTEL_INSTRUMENTATION_GENAI_EVALUATION_INTERVAL, "5.0"
-            ).strip()
-            or 5.0
-        ),
-        evaluation_max_per_minute=int(
-            os.environ.get(
-                OTEL_INSTRUMENTATION_GENAI_EVALUATION_MAX_PER_MINUTE, "0"
-            ).strip()
-            or 0
-        ),
-        evaluation_targets=evaluation_targets,
     )
