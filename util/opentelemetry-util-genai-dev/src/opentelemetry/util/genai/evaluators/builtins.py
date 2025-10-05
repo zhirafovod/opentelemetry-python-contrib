@@ -21,7 +21,7 @@ imported lazily. When a dependency is not available the evaluator returns an
 
 from __future__ import annotations
 
-from typing import List, Mapping, Sequence
+from typing import List, Sequence
 
 from opentelemetry.util.genai.evaluators.base import Evaluator
 from opentelemetry.util.genai.evaluators.registry import register_evaluator
@@ -76,66 +76,6 @@ class LengthEvaluator(Evaluator):
                 attributes={"gen_ai.evaluation.length.chars": length},
             )
         ]
-
-
-class DeepevalEvaluator(Evaluator):
-    """Placeholder Deepeval evaluator supporting multiple metrics."""
-
-    _DEFAULT_METRICS = (
-        "bias",
-        "toxicity",
-        "answer_relevancy",
-        "faithfulness",
-    )
-
-    def default_metrics(self) -> Sequence[str]:  # pragma: no cover - trivial
-        return self._DEFAULT_METRICS
-
-    def default_metrics_by_type(self) -> Mapping[str, Sequence[str]]:
-        metrics = self._DEFAULT_METRICS
-        return {
-            "LLMInvocation": metrics,
-            "AgentInvocation": metrics,
-        }
-
-    def evaluate_llm(
-        self, invocation: LLMInvocation
-    ) -> Sequence[EvaluationResult]:  # type: ignore[override]
-        return self._evaluate_generic()
-
-    def _evaluate_generic(self) -> Sequence[EvaluationResult]:
-        try:
-            import deepeval  # noqa: F401
-        except Exception as exc:  # pragma: no cover - dependency optional
-            return [
-                EvaluationResult(
-                    metric_name=metric,
-                    error=Error(
-                        message="deepeval not installed", type=type(exc)
-                    ),
-                )
-                for metric in self.metrics
-            ]
-        results: list[EvaluationResult] = []
-        for metric in self.metrics:
-            options = self.options.get(metric, {})
-            explanation = (
-                "Deepeval integration placeholder (no metrics recorded)"
-            )
-            if options:
-                options_desc = ", ".join(
-                    f"{key}={value}" for key, value in sorted(options.items())
-                )
-                explanation = f"{explanation}; options: {options_desc}"
-            results.append(
-                EvaluationResult(
-                    metric_name=metric,
-                    score=None,
-                    label=None,
-                    explanation=explanation,
-                )
-            )
-        return results
 
 
 class SentimentEvaluator(Evaluator):
@@ -211,14 +151,6 @@ register_evaluator(
     default_metrics=lambda: {"LLMInvocation": ("length",)},
 )
 register_evaluator(
-    "deepeval",
-    _wrap_factory(DeepevalEvaluator),
-    default_metrics=lambda: {
-        "LLMInvocation": DeepevalEvaluator._DEFAULT_METRICS,
-        "AgentInvocation": DeepevalEvaluator._DEFAULT_METRICS,
-    },
-)
-register_evaluator(
     "sentiment",
     _wrap_factory(SentimentEvaluator),
     default_metrics=lambda: {"LLMInvocation": ("sentiment",)},
@@ -226,6 +158,5 @@ register_evaluator(
 
 __all__ = [
     "LengthEvaluator",
-    "DeepevalEvaluator",
     "SentimentEvaluator",
 ]

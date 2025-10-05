@@ -227,6 +227,10 @@ class Manager(CompletionCallback):
         raw = (raw_value or "").strip()
         normalized = raw.lower()
         if normalized in {"none", "off", "false"}:
+            _LOGGER.info(
+                "GenAI evaluations disabled via %s",
+                OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
+            )
             return []
         if not raw:
             return self._generate_default_plans()
@@ -310,6 +314,9 @@ class Manager(CompletionCallback):
         plans: list[EvaluatorPlan] = []
         available = list_evaluators()
         if not available:
+            _LOGGER.info(
+                "No evaluator entry points registered; skipping evaluations"
+            )
             return plans
         for name in available:
             try:
@@ -328,6 +335,11 @@ class Manager(CompletionCallback):
             if not per_type:
                 continue
             plans.append(EvaluatorPlan(name=name, per_type=per_type))
+        if not plans:
+            _LOGGER.warning(
+                "No evaluators declared default metrics; set %s to an explicit list to enable evaluations",
+                OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
+            )
         return plans
 
 

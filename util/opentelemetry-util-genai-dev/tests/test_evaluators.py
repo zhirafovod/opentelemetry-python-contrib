@@ -155,12 +155,22 @@ class TestManagerConfiguration(unittest.TestCase):
 
     @patch.dict(os.environ, {}, clear=True)
     def test_manager_auto_discovers_defaults(self) -> None:
-        handler = _RecordingHandler()
-        manager = Manager(handler)
-        try:
-            self.assertTrue(manager.has_evaluators)
-        finally:
-            manager.shutdown()
+        with (
+            patch(
+                "opentelemetry.util.genai.evaluators.manager.list_evaluators",
+                return_value=["Static"],
+            ),
+            patch(
+                "opentelemetry.util.genai.evaluators.manager.get_default_metrics",
+                return_value={"LLMInvocation": ("static_metric",)},
+            ),
+        ):
+            handler = _RecordingHandler()
+            manager = Manager(handler)
+            try:
+                self.assertTrue(manager.has_evaluators)
+            finally:
+                manager.shutdown()
 
     @patch.dict(
         os.environ,
@@ -251,12 +261,22 @@ class TestHandlerIntegration(unittest.TestCase):
 
     @patch.dict(os.environ, {}, clear=True)
     def test_handler_auto_enables_when_env_missing(self) -> None:
-        handler = get_telemetry_handler()
-        manager = getattr(handler, "_evaluation_manager", None)
-        self.assertIsNotNone(manager)
-        self.assertTrue(manager.has_evaluators)  # type: ignore[union-attr]
-        if manager is not None:
-            manager.shutdown()
+        with (
+            patch(
+                "opentelemetry.util.genai.evaluators.manager.list_evaluators",
+                return_value=["Static"],
+            ),
+            patch(
+                "opentelemetry.util.genai.evaluators.manager.get_default_metrics",
+                return_value={"LLMInvocation": ("static_metric",)},
+            ),
+        ):
+            handler = get_telemetry_handler()
+            manager = getattr(handler, "_evaluation_manager", None)
+            self.assertIsNotNone(manager)
+            self.assertTrue(manager.has_evaluators)  # type: ignore[union-attr]
+            if manager is not None:
+                manager.shutdown()
 
     @patch.dict(
         os.environ,
