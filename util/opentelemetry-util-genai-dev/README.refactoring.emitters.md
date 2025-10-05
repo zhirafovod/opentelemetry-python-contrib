@@ -296,3 +296,35 @@ If blocked, append a BLOCKED section with reason and proposed resolution.
 - Centralised spec instantiation with defensive logging to isolate emitter factory failures.
 - Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/configuration.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/plugins.py`.
 - Follow-ups: Emit telemetry counters for instantiation failures once metrics plumbing is available.
+
+### Validation Audit (Implementation Status up to Task 12)
+Date: 2025-10-05
+
+Audit Summary:
+- Tasks 1–12 are PRESENT in the codebase and align with the target architecture draft.
+- `EmitterProtocol` defined in `interfaces.py`; legacy generator naming removed from active code paths.
+- `CompositeEmitter` with category ordering implemented in `emitters/composite.py`.
+- Evaluation emitters (`EvaluationMetrics`, `EvaluationEvents`, optional `EvaluationSpans`) integrated as a category inside the composite.
+- Env parsing & capture logic delegated to `build_emitter_pipeline` + `Settings`; handler no longer constructs emitters directly (it only invokes the builder).
+- Spec-based registration (`EmitterSpec`, `load_emitter_specs`) and category override logic implemented; ordering / replace modes (`replace-category`, `prepend`, `replace-same-name`, `append`) supported.
+- Traceloop still resides in core as `traceloop_compat.py` (NOT YET extracted – pending Task 13).
+- Invocation-type filtering NOT YET implemented (pending Task 19 – no `invocation_types` evaluation in dispatch path yet).
+- Error isolation: dispatch wrapper catches and logs exceptions (metrics counters still TODO – Task 12 follow-up).
+
+Outstanding (Not Started Unless Noted):
+- Task 13–14: Traceloop extraction & removal of compat from core (planned).
+- Task 15: Test suite rewrite / pruning of legacy generator assumptions (partial – some tests still reference old names; needs cleanup pass).
+- Task 16–18: Splunk evaluation aggregator & extra metrics emitter (not implemented here – separate package work pending; current Splunk package adaptation status unverified in this audit).
+- Task 19–20: Invocation type filtering & tests (not implemented).
+- Task 21–22: Documentation sync & architecture drift review (partially pending; README still legacy prior to this audit, will be rewritten).
+- Task 23: Final cleanup / shim removal (future).
+
+Next Immediate Actions:
+1. Extract Traceloop emitter to external package per spec (Task 13/14).
+2. Implement invocation-type filtering in composite dispatch or during spec instantiation (Task 19).
+3. Add metrics counters for emitter failures (extend Task 12 follow-up).
+4. Rewrite README (Task 21) – concise quick start + link to architecture.
+
+Notes:
+- Keep CHANGELOG append-only; do not retroactively edit earlier task sections.
+- When Task 13 lands, add a new CHANGELOG entry rather than altering this audit.
