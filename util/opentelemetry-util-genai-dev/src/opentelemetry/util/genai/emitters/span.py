@@ -39,6 +39,7 @@ from ..attributes import (
     SERVER_ADDRESS,
     SERVER_PORT,
 )
+from ..interfaces import EmitterMeta
 from ..types import (
     AgentInvocation,
     EmbeddingInvocation,
@@ -108,11 +109,11 @@ def _apply_gen_ai_semconv_attributes(
             pass
 
 
-class SpanEmitter:
+class SpanEmitter(EmitterMeta):
     """Span-focused emitter supporting optional content capture.
 
     Original implementation migrated from generators/span_emitter.py. Additional telemetry
-    (metrics, content events) are handled by separate emitters composed via CompositeGenerator.
+    (metrics, content events) are handled by separate emitters composed via CompositeEmitter.
     """
 
     role = "span"
@@ -237,7 +238,9 @@ class SpanEmitter:
                 span.set_attribute(GEN_AI_OUTPUT_MESSAGES, serialized)
 
     # ---- lifecycle -------------------------------------------------------
-    def start(self, invocation: LLMInvocation | EmbeddingInvocation) -> None:  # type: ignore[override]
+    def on_start(
+        self, invocation: LLMInvocation | EmbeddingInvocation
+    ) -> None:  # type: ignore[override]
         # Handle new agentic types
         if isinstance(invocation, Workflow):
             self._start_workflow(invocation)
@@ -270,7 +273,7 @@ class SpanEmitter:
             invocation.context_token = cm  # type: ignore[assignment]
             self._apply_start_attrs(invocation)
 
-    def finish(self, invocation: LLMInvocation | EmbeddingInvocation) -> None:  # type: ignore[override]
+    def on_end(self, invocation: LLMInvocation | EmbeddingInvocation) -> None:  # type: ignore[override]
         if isinstance(invocation, Workflow):
             self._finish_workflow(invocation)
         elif isinstance(invocation, AgentInvocation):
@@ -292,7 +295,7 @@ class SpanEmitter:
                     pass
             span.end()
 
-    def error(
+    def on_error(
         self, error: Error, invocation: LLMInvocation | EmbeddingInvocation
     ) -> None:  # type: ignore[override]
         if isinstance(invocation, Workflow):

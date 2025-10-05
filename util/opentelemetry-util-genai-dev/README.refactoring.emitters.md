@@ -1,6 +1,6 @@
 # GenAI Emitters Refactoring Plan
 
-This document is a living plan for refactoring the current PoC emitters (in `util/opentelemetry-util-genai-dev`) to the target reference architecture defined in `READEM.architecture.md` (reference architecture file colocated in this directory). It includes:
+This document is a living plan for refactoring the current PoC emitters (in `util/opentelemetry-util-genai-dev`) to the target reference architecture defined in `README.architecture.md` (reference architecture file colocated in this directory). It includes:
 - Gap analysis (Current vs Target)
 - Refactoring phases & tasks
 - Changelog / Worklog section for an AI Coder Agent
@@ -12,8 +12,8 @@ Keep this document updated as changes land. The AI Coder Agent must append updat
 
 ---
 ## 1. Reference Documents
-- Architecture: `util/opentelemetry-util-genai/READEM.architecture.md`
-- This plan: `util/opentelemetry-util-genai/README.refactoring.emitters.md`
+- Architecture: `util/opentelemetry-util-genai-dev/README.architecture.md`
+- This plan: `util/opentelemetry-util-genai-dev/README.refactoring.emitters.md`
 
 ---
 ## 2. Current State (Summary)
@@ -237,3 +237,62 @@ If blocked, append a BLOCKED section with reason and proposed resolution.
 - Created initial refactoring plan & gap analysis.
 - No code changes yet.
 
+### Task 1: Introduce EmitterProtocol
+- Replaced GeneratorProtocol with EmitterProtocol and added evaluation hook scaffold.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/interfaces.py`.
+- Follow-ups: ensure downstream modules adopt new protocol naming and imports.
+
+### Task 2: Rename emitter lifecycle methods
+- Renamed start/finish/error lifecycle hooks to on_start/on_end/on_error across emitters and handler wiring.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/{span.py,metrics.py,content_events.py,traceloop_compat.py,composite.py}`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/handler.py`, `util/opentelemetry-util-genai-dev/tests/test_span_metric_event_generator.py`, `util/opentelemetry-util-genai-emitters-splunk/src/opentelemetry/util/genai/emitters/splunk.py`, `util/opentelemetry-util-genai-emitters-splunk/tests/test_splunk_emitters.py`.
+- Follow-ups: Future CompositeEmitter implementation should enforce category-aware fanout and remove legacy CompositeGenerator naming.
+
+### Task 3: Implement CompositeEmitter categories
+- Replaced CompositeGenerator with CompositeEmitter that orchestrates span, metrics, content, and evaluation emitters with ordered dispatch and defensive error handling.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/composite.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/__init__.py`, `util/opentelemetry-util-genai-dev/tests/test_span_metric_event_generator.py`.
+- Follow-ups: Extend dispatcher to honour invocation-type filters once emitter specs support them.
+
+### Task 4: Fold evaluation emitters into composite
+- Adapted evaluation emitters to implement on_evaluation_results and removed CompositeEvaluationEmitter in favour of CompositeEmitter's evaluation category.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/evaluation.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/handler.py`.
+- Follow-ups: Add metrics/log assertions ensuring evaluation emitters fire when manager reports results.
+
+### Task 5: Update handler and plugins for new emitter architecture
+- Reworked handler configuration to build category lists, updated plugin tests, and ensured Splunk emitter implements new protocol.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/handler.py`, `util/opentelemetry-util-genai-dev/tests/test_plugins.py`, `util/opentelemetry-util-genai-emitters-splunk/src/opentelemetry/util/genai/emitters/splunk.py`, `util/opentelemetry-util-genai-emitters-splunk/tests/test_splunk_emitters.py`.
+- Follow-ups: Future work will introduce emitter spec parsing and environment-driven category overrides.
+
+### Task 6: Implement emitter settings parser
+- Replaced legacy generator-centric env parsing with structured Settings including category overrides and capture semantics.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/config.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/environment_variables.py`.
+- Follow-ups: Add targeted tests covering category override directives and legacy compatibility.
+
+### Task 7: Add OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES support
+- Introduced the new capture-messages env var and updated helpers to prioritise it over legacy capture flags.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/environment_variables.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/utils.py`, `util/opentelemetry-util-genai-emitters-splunk/src/opentelemetry/util/genai/emitters/splunk.py`.
+- Follow-ups: Extend test matrix to assert both legacy and new env vars produce expected capture modes.
+
+### Task 8: Remove generator_kind branching in handler
+- Streamlined TelemetryHandler by eliminating generator_kind checks and deferring capture toggles to new capture control metadata.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/handler.py`.
+- Follow-ups: Ensure future handler logic reads capture allowances from CaptureControl only.
+
+### Task 9: Move emitter composition to builder
+- Added emitter spec/build pipeline with category-aware composition and per-category overrides, returning CompositeEmitter plus capture control.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/configuration.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/spec.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/__init__.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/handler.py`, `util/opentelemetry-util-genai-dev/tests/test_plugins.py`.
+- Follow-ups: Layer entry-point sourced specs and ordering semantics atop the builder.
+
+### Task 10: Introduce emitter spec entry-point loading
+- Replaced legacy plugin bundles with spec-based entry point discovery and conversion helpers.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/plugins.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/configuration.py`, `util/opentelemetry-util-genai-dev/tests/test_plugins.py`.
+- Follow-ups: Document the new entry-point contract and add coverage for duplicate spec resolution.
+
+### Task 11: Apply spec mode ordering semantics
+- Honoured spec-level modes (append/prepend/replace) and wired the Splunk entry point to replace content events via an emitter spec.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/configuration.py`, `util/opentelemetry-util-genai-emitters-splunk/src/opentelemetry/util/genai/emitters/splunk.py`, `util/opentelemetry-util-genai-emitters-splunk/tests/test_splunk_emitters.py`.
+- Follow-ups: Add tests covering prepend and replace-same-name combinations with builtin specs.
+
+### Task 12: Enhance emitter instantiation robustness
+- Centralised spec instantiation with defensive logging to isolate emitter factory failures.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/configuration.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/plugins.py`.
+- Follow-ups: Emit telemetry counters for instantiation failures once metrics plumbing is available.

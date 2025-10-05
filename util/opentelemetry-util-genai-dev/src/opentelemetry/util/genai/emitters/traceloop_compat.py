@@ -10,6 +10,7 @@ from opentelemetry.trace import SpanKind, Tracer
 from opentelemetry.trace.status import Status, StatusCode
 
 from ..attributes import GEN_AI_FRAMEWORK, GEN_AI_PROVIDER_NAME
+from ..interfaces import EmitterMeta
 from ..types import Error, LLMInvocation
 from .utils import (
     _apply_function_definitions,
@@ -18,7 +19,7 @@ from .utils import (
 )
 
 
-class TraceloopCompatEmitter:
+class TraceloopCompatEmitter(EmitterMeta):
     """Emitter that recreates (a subset of) the original Traceloop LangChain span format.
 
     Phase 1 scope:
@@ -62,7 +63,7 @@ class TraceloopCompatEmitter:
         except Exception:  # pragma: no cover
             pass
 
-    def start(self, invocation: LLMInvocation) -> None:  # noqa: D401
+    def on_start(self, invocation: LLMInvocation) -> None:  # noqa: D401
         if not isinstance(invocation, LLMInvocation):  # defensive
             return
         operation = invocation.operation
@@ -101,7 +102,7 @@ class TraceloopCompatEmitter:
                 except Exception:  # pragma: no cover
                     pass
 
-    def finish(self, invocation: LLMInvocation) -> None:  # noqa: D401
+    def on_end(self, invocation: LLMInvocation) -> None:  # noqa: D401
         span = getattr(invocation, "traceloop_span", None)
         cm = getattr(invocation, "traceloop_cm", None)
         if span is None:
@@ -126,7 +127,7 @@ class TraceloopCompatEmitter:
                 pass
         span.end()
 
-    def error(self, error: Error, invocation: LLMInvocation) -> None:  # noqa: D401
+    def on_error(self, error: Error, invocation: LLMInvocation) -> None:  # noqa: D401
         span = getattr(invocation, "traceloop_span", None)
         cm = getattr(invocation, "traceloop_cm", None)
         if span is None:

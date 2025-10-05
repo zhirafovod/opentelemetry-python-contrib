@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Protocol
+from typing import Any, Dict, Sequence
 
 from opentelemetry import _events as _otel_events
 from opentelemetry.trace import Link, Tracer
@@ -16,13 +16,8 @@ from ..attributes import (
     GEN_AI_REQUEST_MODEL,
     GEN_AI_RESPONSE_ID,
 )
+from ..interfaces import EmitterMeta
 from ..types import EvaluationResult, GenAI
-
-
-class EvaluationEmitter(Protocol):  # pragma: no cover - structural protocol
-    def emit(
-        self, results: List[EvaluationResult], invocation: GenAI
-    ) -> None: ...
 
 
 def _get_request_model(invocation: GenAI) -> str | None:
@@ -35,17 +30,39 @@ def _get_response_id(invocation: GenAI) -> str | None:  # best-effort
     return getattr(invocation, "response_id", None)
 
 
-class EvaluationMetricsEmitter:
+class _EvaluationEmitterBase(EmitterMeta):
+    role = "evaluation"
+
+    def on_start(self, obj: Any) -> None:  # pragma: no cover - default no-op
+        return None
+
+    def on_end(self, obj: Any) -> None:  # pragma: no cover - default no-op
+        return None
+
+    def on_error(
+        self, error, obj: Any
+    ) -> None:  # pragma: no cover - default no-op
+        return None
+
+
+class EvaluationMetricsEmitter(_EvaluationEmitterBase):
     """Records evaluation scores to a unified histogram."""
 
     role = "evaluation_metrics"
 
     def __init__(
         self, histogram
-    ):  # histogram: opentelemetry.metrics.Histogram
+    ) -> None:  # histogram: opentelemetry.metrics.Histogram
         self._hist = histogram
 
-    def emit(self, results: List[EvaluationResult], invocation: GenAI) -> None:  # type: ignore[override]
+    def on_evaluation_results(  # type: ignore[override]
+        self,
+        results: Sequence[EvaluationResult],
+        obj: Any | None = None,
+    ) -> None:
+        invocation = obj if isinstance(obj, GenAI) else None
+        if invocation is None:
+            return
         for res in results:
             if isinstance(res.score, (int, float)):
                 attrs: Dict[str, Any] = {
@@ -62,25 +79,29 @@ class EvaluationMetricsEmitter:
                     attrs[GEN_AI_EVALUATION_SCORE_LABEL] = res.label
                 if res.error is not None:
                     attrs["error.type"] = res.error.type.__qualname__
-                # record numeric score
                 try:
                     self._hist.record(res.score, attributes=attrs)  # type: ignore[attr-defined]
                 except Exception:  # pragma: no cover - defensive
                     pass
 
 
-class EvaluationEventsEmitter:
+class EvaluationEventsEmitter(_EvaluationEmitterBase):
     """Emits a single gen_ai.evaluations event containing all results."""
 
     role = "evaluation_events"
 
-    def __init__(self, event_logger):
+    def __init__(self, event_logger) -> None:
         self._event_logger = event_logger
 
-    def emit(self, results: List[EvaluationResult], invocation: GenAI) -> None:  # type: ignore[override]
-        if not results:
+    def on_evaluation_results(  # type: ignore[override]
+        self,
+        results: Sequence[EvaluationResult],
+        obj: Any | None = None,
+    ) -> None:
+        invocation = obj if isinstance(obj, GenAI) else None
+        if invocation is None or not results:
             return
-        evaluation_items: List[Dict[str, Any]] = []
+        evaluation_items: list[Dict[str, Any]] = []
         for res in results:
             item: Dict[str, Any] = {"gen_ai.evaluation.name": res.metric_name}
             if isinstance(res.score, (int, float)):
@@ -132,22 +153,24 @@ class EvaluationEventsEmitter:
             pass
 
 
-class EvaluationSpansEmitter:
-    """Creates spans representing evaluation outcomes.
-
-    span_mode: off | aggregated | per_metric
-    """
+class EvaluationSpansEmitter(_EvaluationEmitterBase):
+    """Creates spans representing evaluation outcomes."""
 
     role = "evaluation_spans"
 
-    def __init__(self, tracer: Tracer, span_mode: str):
+    def __init__(self, tracer: Tracer, span_mode: str) -> None:
         self._tracer = tracer
         self._mode = span_mode
 
-    def emit(self, results: List[EvaluationResult], invocation: GenAI) -> None:  # type: ignore[override]
-        if not results or self._mode == "off":
+    def on_evaluation_results(  # type: ignore[override]
+        self,
+        results: Sequence[EvaluationResult],
+        obj: Any | None = None,
+    ) -> None:
+        invocation = obj if isinstance(obj, GenAI) else None
+        if invocation is None or not results or self._mode == "off":
             return
-        evaluation_items: List[Dict[str, Any]] = []
+        evaluation_items: list[Dict[str, Any]] = []
         for res in results:
             item: Dict[str, Any] = {"gen_ai.evaluation.name": res.metric_name}
             if isinstance(res.score, (int, float)):
@@ -234,24 +257,8 @@ class EvaluationSpansEmitter:
                         span.set_attribute("error.type", item["error.type"])
 
 
-class CompositeEvaluationEmitter:
-    """Fan-out evaluation results to an ordered list of evaluation emitters."""
-
-    def __init__(self, emitters: Iterable[EvaluationEmitter]):
-        self._emitters: List[EvaluationEmitter] = list(emitters)
-
-    def emit(self, results: List[EvaluationResult], invocation: GenAI) -> None:
-        for em in self._emitters:
-            try:
-                em.emit(results, invocation)
-            except Exception:  # pragma: no cover
-                pass
-
-
 __all__ = [
-    "EvaluationEmitter",
     "EvaluationMetricsEmitter",
     "EvaluationEventsEmitter",
     "EvaluationSpansEmitter",
-    "CompositeEvaluationEmitter",
 ]

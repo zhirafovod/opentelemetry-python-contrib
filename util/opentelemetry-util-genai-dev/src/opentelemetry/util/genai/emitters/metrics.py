@@ -9,7 +9,15 @@ from opentelemetry.semconv._incubating.attributes import (
 
 from ..attributes import GEN_AI_AGENT_ID, GEN_AI_AGENT_NAME
 from ..instruments import Instruments
-from ..types import AgentInvocation, Error, LLMInvocation, Task, Workflow, EmbeddingInvocation
+from ..interfaces import EmitterMeta
+from ..types import (
+    AgentInvocation,
+    EmbeddingInvocation,
+    Error,
+    LLMInvocation,
+    Task,
+    Workflow,
+)
 from .utils import (
     _get_metric_attributes,
     _record_duration,
@@ -17,7 +25,7 @@ from .utils import (
 )
 
 
-class MetricsEmitter:
+class MetricsEmitter(EmitterMeta):
     """Emits GenAI metrics (duration + token usage).
 
     Supports LLMInvocation, EmbeddingInvocation, ToolCall, Workflow, Agent, and Task.
@@ -43,10 +51,10 @@ class MetricsEmitter:
             instruments.task_duration_histogram
         )
 
-    def start(self, obj: Any) -> None:  # no-op for metrics
+    def on_start(self, obj: Any) -> None:  # no-op for metrics
         return None
 
-    def finish(self, obj: Any) -> None:
+    def on_end(self, obj: Any) -> None:
         if isinstance(obj, Workflow):
             self._record_workflow_metrics(obj)
             return
@@ -122,7 +130,7 @@ class MetricsEmitter:
                 self._duration_histogram, invocation, metric_attrs
             )
 
-    def error(self, error: Error, obj: Any) -> None:
+    def on_error(self, error: Error, obj: Any) -> None:
         # Handle new agentic types
         if isinstance(obj, Workflow):
             self._record_workflow_metrics(obj)
@@ -199,7 +207,14 @@ class MetricsEmitter:
 
         return isinstance(
             obj,
-            (LLMInvocation, ToolCall, Workflow, AgentInvocation, Task, EmbeddingInvocation),
+            (
+                LLMInvocation,
+                ToolCall,
+                Workflow,
+                AgentInvocation,
+                Task,
+                EmbeddingInvocation,
+            ),
         )
 
     # Helper methods for new agentic types

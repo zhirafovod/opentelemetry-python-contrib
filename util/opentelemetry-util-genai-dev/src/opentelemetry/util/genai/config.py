@@ -1,105 +1,169 @@
+from __future__ import annotations
+
+import logging
 import os
 from dataclasses import dataclass
+from typing import Dict
 
+from .emitters.spec import CategoryOverride
 from .environment_variables import (
-    # OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES,
     OTEL_INSTRUMENTATION_GENAI_EMITTERS,
+    OTEL_INSTRUMENTATION_GENAI_EMITTERS_CONTENT_EVENTS,
+    OTEL_INSTRUMENTATION_GENAI_EMITTERS_EVALUATION,
+    OTEL_INSTRUMENTATION_GENAI_EMITTERS_METRICS,
+    OTEL_INSTRUMENTATION_GENAI_EMITTERS_SPAN,
     OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE,
 )
 from .types import ContentCapturingMode
 from .utils import get_content_capturing_mode
 
+_logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class Settings:
-    """
-    Configuration for GenAI telemetry based on environment variables.
-    """
+    """Configuration for GenAI emitters derived from environment variables."""
 
-    generator_kind: str
-    capture_content_span: bool
-    capture_content_events: bool
-    # New fields for multi-token emitter selection
+    enable_span: bool
+    enable_metrics: bool
+    enable_content_events: bool
     extra_emitters: list[str]
     only_traceloop_compat: bool
     raw_tokens: list[str]
     evaluation_span_mode: str
+    capture_messages_mode: ContentCapturingMode
+    capture_messages_override: bool
+    legacy_traceloop_capture: bool
+    category_overrides: Dict[str, CategoryOverride]
 
 
 def parse_env() -> Settings:
-    """
-    Parse relevant environment variables into a Settings object.
+    """Parse emitter-related environment variables into structured settings."""
 
-    Supports comma-separated OTEL_INSTRUMENTATION_GENAI_EMITTERS allowing extra emitters
-    (e.g. "span,traceloop_compat"). Baseline values control the core span/metric/event set.
-    """
     raw_val = os.environ.get(OTEL_INSTRUMENTATION_GENAI_EMITTERS, "span")
-    tokens = [t.strip().lower() for t in raw_val.split(",") if t.strip()]
+    tokens = [
+        token.strip().lower() for token in raw_val.split(",") if token.strip()
+    ]
     if not tokens:
         tokens = ["span"]
-    baseline_candidates = {"span", "span_metric", "span_metric_event"}
-    baseline = next((t for t in tokens if t in baseline_candidates), None)
+
+    baseline_map = {
+        "span": (True, False, False),
+        "span_metric": (True, True, False),
+        "span_metric_event": (True, True, True),
+    }
+
+    baseline = next((token for token in tokens if token in baseline_map), None)
     extra_emitters: list[str] = []
+    only_traceloop_compat = False
+
     if baseline is None:
-        # No baseline provided. If traceloop_compat only, treat specially.
         if tokens == ["traceloop_compat"]:
-            baseline = "span"  # placeholder baseline but we'll suppress later
+            baseline = "span"
             extra_emitters = ["traceloop_compat"]
-            only_traceloop = True
+            only_traceloop_compat = True
         else:
-            # Fallback to span and keep the others as extras
             baseline = "span"
             extra_emitters = [
-                t for t in tokens if t not in baseline_candidates
+                token for token in tokens if token not in baseline_map
             ]
-            only_traceloop = False
     else:
-        extra_emitters = [t for t in tokens if t != baseline]
-        only_traceloop = tokens == [
-            "traceloop_compat"
-        ]  # True only if sole token
+        extra_emitters = [token for token in tokens if token != baseline]
 
-    # Content capturing mode (span vs event vs both)
-    try:
-        mode = get_content_capturing_mode()
-    except Exception:
-        mode = ContentCapturingMode.NO_CONTENT
+    enable_span, enable_metrics, enable_content_events = baseline_map.get(
+        baseline, (True, False, False)
+    )
 
-    if baseline == "span_metric_event":
-        capture_content_events = mode in (
-            ContentCapturingMode.EVENT_ONLY,
-            ContentCapturingMode.SPAN_AND_EVENT,
-        )
-        # Capture in spans when mode is SPAN_ONLY or SPAN_AND_EVENT
-        capture_content_span = mode in (
-            ContentCapturingMode.SPAN_ONLY,
-            ContentCapturingMode.SPAN_AND_EVENT,
-        )
-    else:
-        capture_content_events = False
-        capture_content_span = mode in (
-            ContentCapturingMode.SPAN_ONLY,
-            ContentCapturingMode.SPAN_AND_EVENT,
-        )
+    capture_messages_override = bool(
+        os.environ.get(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES)
+    )
+    capture_mode = get_content_capturing_mode()
 
-    # Inline evaluation span mode normalization (avoid lambda call for lint compliance)
+    legacy_flag = os.environ.get(
+        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, ""
+    ).strip()
+    legacy_traceloop_capture = legacy_flag.lower() in {"true", "1", "yes"}
+
     raw_eval_span_mode = (
         os.environ.get(OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE, "off")
         .strip()
         .lower()
     )
-    normalized_eval_span_mode = (
+    evaluation_span_mode = (
         raw_eval_span_mode
-        if raw_eval_span_mode in ("off", "aggregated", "per_metric")
+        if raw_eval_span_mode in {"off", "aggregated", "per_metric"}
         else "off"
     )
 
+    overrides: Dict[str, CategoryOverride] = {}
+    override_env_map = {
+        "span": os.environ.get(OTEL_INSTRUMENTATION_GENAI_EMITTERS_SPAN, ""),
+        "metrics": os.environ.get(
+            OTEL_INSTRUMENTATION_GENAI_EMITTERS_METRICS, ""
+        ),
+        "content_events": os.environ.get(
+            OTEL_INSTRUMENTATION_GENAI_EMITTERS_CONTENT_EVENTS, ""
+        ),
+        "evaluation": os.environ.get(
+            OTEL_INSTRUMENTATION_GENAI_EMITTERS_EVALUATION, ""
+        ),
+    }
+    for category, raw in override_env_map.items():
+        override = _parse_category_override(category, raw)
+        if override is not None:
+            overrides[category] = override
+
     return Settings(
-        generator_kind=baseline,
-        capture_content_span=capture_content_span,
-        capture_content_events=capture_content_events,
+        enable_span=enable_span,
+        enable_metrics=enable_metrics,
+        enable_content_events=enable_content_events,
         extra_emitters=extra_emitters,
-        only_traceloop_compat=only_traceloop,
+        only_traceloop_compat=only_traceloop_compat,
         raw_tokens=tokens,
-        evaluation_span_mode=normalized_eval_span_mode,
+        evaluation_span_mode=evaluation_span_mode,
+        capture_messages_mode=capture_mode,
+        capture_messages_override=capture_messages_override,
+        legacy_traceloop_capture=legacy_traceloop_capture,
+        category_overrides=overrides,
     )
+
+
+def _parse_category_override(
+    category: str, raw: str
+) -> CategoryOverride | None:  # pragma: no cover - thin parsing
+    if not raw:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    directive = None
+    remainder = text
+    if ":" in text:
+        prefix, remainder = text.split(":", 1)
+        directive = prefix.strip().lower()
+    names = [name.strip() for name in remainder.split(",") if name.strip()]
+    mode_map = {
+        None: "append",
+        "append": "append",
+        "prepend": "prepend",
+        "replace": "replace-category",
+        "replace-category": "replace-category",
+        "replace-same-name": "replace-same-name",
+    }
+    mode = mode_map.get(directive)
+    if mode is None:
+        if directive:
+            _logger.warning(
+                "Unknown emitter override directive '%s' for category '%s'",
+                directive,
+                category,
+            )
+        mode = "append"
+    if mode != "replace-category" and not names:
+        return None
+    return CategoryOverride(mode=mode, emitter_names=tuple(names))
+
+
+__all__ = ["Settings", "parse_env"]
