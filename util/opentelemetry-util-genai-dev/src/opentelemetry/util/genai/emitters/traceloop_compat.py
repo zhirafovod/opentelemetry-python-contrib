@@ -58,7 +58,7 @@ class TraceloopCompatEmitter(EmitterMeta):
             if invocation.provider:
                 span.set_attribute(GEN_AI_PROVIDER_NAME, invocation.provider)
             if invocation.framework:
-                span.set_attribute(GEN_AI_FRAMEWORK, invocation.framework)
+                span.set_attribute(GEN_AI_FRAMEWORK, invocation.framewoxrk)
             _apply_function_definitions(span, invocation.request_functions)
         except Exception:  # pragma: no cover
             pass
