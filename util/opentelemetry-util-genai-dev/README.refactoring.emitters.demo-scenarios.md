@@ -7,8 +7,9 @@ Scenarios:
 2. Switch content from span attributes to events (content events flavor)  
 3. Enable builtin evaluators via environment variable  
 4. Install and auto-register Deepeval evaluators  
-5. Switch to Traceloop telemetry flavor (after installing package)  
-6. Replace evaluation emission with Splunk evaluation aggregator (after installing Splunk emitters package)  
+5. Install NLTK sentiment evaluator plug-in  
+6. Switch to Traceloop telemetry flavor (after installing package)  
+7. Replace evaluation emission with Splunk evaluation aggregator (after installing Splunk emitters package)  
 
 > All commands assume an active virtual environment inside the repo root and a running OpenTelemetry Collector at `localhost:4317` (gRPC). Replace secret placeholders. Do not commit secrets.
 
@@ -97,24 +98,24 @@ Verification Tips:
 
 ---
 ## Scenario 3: Enable Builtin Evaluators (Implemented)
-Builtin evaluators shipped today: `length`, `sentiment` (names are lowercase). They apply only to `LLMInvocation` objects.
+Builtin evaluators shipped today: `length` (name lowercase). They apply only to `LLMInvocation` objects. Additional evaluators such as sentiment analysis are available via optional packages (for example `opentelemetry-util-genai-evals-nltk`).
 
 Env additions on top of Scenario 2 (content events flavor is a good baseline for evaluation clarity):
 ```bash
 export OTEL_INSTRUMENTATION_GENAI_EMITTERS="span_metric_event"
 export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE="EVENT_ONLY"
 # Enable evaluators (example syntax—adjust to actual implemented variable names if they differ)
-export OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS="length,sentiment"  # actual builtin evaluators
+export OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS="length"
 export OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION="true"     # aggregate all results per invocation
 export OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE="aggregated"          # emit one evaluation span
 ```
 Run the demo.
 
 Expect (current implementation):
-- If `sentiment`'s optional dependency `nltk` (VADER) isn't installed it emits an EvaluationResult with an `error` field (still generates an event when aggregation is disabled). Install `nltk` + download VADER lexicon for real scores if desired.
+- If optional evaluator packages (e.g., `opentelemetry-util-genai-evals-nltk`) are installed, include them in `OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS` alongside `length` (e.g., `length,nltk_sentiment`). These packages manage their own dependencies such as NLTK/VADER.
 - With aggregation on: a single evaluation event containing both metrics.
 - With `OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE=aggregated` (default off): one evaluation span summarising all results (future behaviour; span mode plumbing present but spans may be suppressed if not yet wired in your branch).
-- Histogram `gen_ai.evaluation.score` receives one point per numeric result (length always numeric; sentiment numeric only if dependency available).
+- Histogram `gen_ai.evaluation.score` receives one point per numeric result emitted by the active evaluators (length is always numeric; additional evaluators may emit numeric or error-only results depending on their dependencies).
 - Invocation span attribute `gen_ai.evaluation.executed=true` set when at least one evaluator ran.
 
 If not visible:
@@ -151,7 +152,38 @@ Troubleshooting:
 - If deepeval installed but metrics missing: set `OTEL_LOG_LEVEL=debug` and look for "Evaluator 'deepeval' is not registered" warning.
 
 ---
-## Scenario 5: Switch to Traceloop Telemetry Flavor
+## Scenario 5: Install NLTK Sentiment Evaluator Plug-in
+Goal: Add the optional NLTK/VADER sentiment evaluator via the new plug-in package.
+
+Install (editable from this repo or published wheel):
+```bash
+pip install -e util/opentelemetry-util-genai-evals-nltk  # or pip install opentelemetry-util-genai-evals-nltk
+```
+
+Optional: download the VADER lexicon if not already cached (one-time):
+```python
+python -c "import nltk; nltk.download('vader_lexicon')"
+```
+
+Env (build on Scenario 3 configuration):
+```bash
+export OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS="length,nltk_sentiment"
+export OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION="true"
+```
+
+Run the demo.
+
+Expect:
+- Additional evaluation results with metric name `sentiment` containing the VADER-derived score and label (`positive`, `neutral`, `negative`).
+- Histogram `gen_ai.evaluation.score` receives an extra point per invocation for the sentiment result when the dependency is available.
+- If NLTK or the VADER lexicon is missing the evaluator emits an `EvaluationResult` with the `error` field populated (no score) so that failures remain observable.
+
+Troubleshooting:
+- Ensure the plug-in package is installed in the active environment (`pip show opentelemetry-util-genai-evals-nltk`).
+- If you see missing dependency errors, verify that both `nltk` and the VADER data set are installed.
+
+---
+## Scenario 6: Switch to Traceloop Telemetry Flavor
 Goal: Demonstrate vendor-style span attribute extension by appending Traceloop emitter.
 
 Install (future externalization; until extracted may be internal only):
@@ -173,14 +205,14 @@ If not visible:
 - Verify package exposes entry point group `opentelemetry_util_genai_emitters` and name matches expected spec list.
 
 ---
-## Scenario 6: Splunk Evaluation Aggregator (Replace Evaluation Chain)
+## Scenario 7: Splunk Evaluation Aggregator (Replace Evaluation Chain)
 Goal: Replace standard evaluation emitters with Splunk aggregator + append extra metrics.
 
 Install:
 ```bash
 pip install opentelemetry-util-genai-emitters-splunk
 ```
-Env (build on Scenario 4 so that evaluations are enabled):
+Env (build on Scenario 4 or Scenario 5 so that evaluations are enabled):
 ```bash
 export OTEL_INSTRUMENTATION_GENAI_EMITTERS_EVALUATION="replace-category:SplunkEvaluationAggregator"
 export OTEL_INSTRUMENTATION_GENAI_EMITTERS_METRICS="append:SplunkExtraMetricsEmitter"  # example name

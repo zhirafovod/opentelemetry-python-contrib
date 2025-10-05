@@ -26,7 +26,6 @@ from typing import List, Sequence
 from opentelemetry.util.genai.evaluators.base import Evaluator
 from opentelemetry.util.genai.evaluators.registry import register_evaluator
 from opentelemetry.util.genai.types import (
-    Error,
     EvaluationResult,
     LLMInvocation,
     Text,
@@ -78,57 +77,6 @@ class LengthEvaluator(Evaluator):
         ]
 
 
-class SentimentEvaluator(Evaluator):
-    """Simple sentiment evaluator using nltk's VADER analyser if available."""
-
-    def default_metrics(self) -> Sequence[str]:  # pragma: no cover - trivial
-        return ("sentiment",)
-
-    def evaluate_llm(
-        self, invocation: LLMInvocation
-    ) -> Sequence[EvaluationResult]:  # type: ignore[override]
-        metric_name = self.metrics[0] if self.metrics else "sentiment"
-        try:
-            from nltk.sentiment import (
-                SentimentIntensityAnalyzer,  # type: ignore
-            )
-        except Exception as exc:  # pragma: no cover - dependency optional
-            return [
-                EvaluationResult(
-                    metric_name=metric_name,
-                    error=Error(
-                        message="nltk (vader) not installed",
-                        type=type(exc),
-                    ),
-                )
-            ]
-        content = _extract_text(invocation)
-        if not content:
-            return [
-                EvaluationResult(
-                    metric_name=metric_name, score=0.0, label="neutral"
-                )
-            ]
-        analyzer = SentimentIntensityAnalyzer()
-        scores = analyzer.polarity_scores(content)
-        compound = scores.get("compound", 0.0)
-        score = (compound + 1) / 2
-        if compound >= 0.2:
-            label = "positive"
-        elif compound <= -0.2:
-            label = "negative"
-        else:
-            label = "neutral"
-        return [
-            EvaluationResult(
-                metric_name=metric_name,
-                score=score,
-                label=label,
-                explanation=f"compound={compound}",
-            )
-        ]
-
-
 def _wrap_factory(cls):
     def _factory(
         metrics=None,
@@ -150,13 +98,7 @@ register_evaluator(
     _wrap_factory(LengthEvaluator),
     default_metrics=lambda: {"LLMInvocation": ("length",)},
 )
-register_evaluator(
-    "sentiment",
-    _wrap_factory(SentimentEvaluator),
-    default_metrics=lambda: {"LLMInvocation": ("sentiment",)},
-)
 
 __all__ = [
     "LengthEvaluator",
-    "SentimentEvaluator",
 ]

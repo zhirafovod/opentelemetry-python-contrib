@@ -297,6 +297,16 @@ If blocked, append a BLOCKED section with reason and proposed resolution.
 - Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/configuration.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/plugins.py`.
 - Follow-ups: Emit telemetry counters for instantiation failures once metrics plumbing is available.
 
+### Task 13: Externalise NLTK sentiment evaluator
+- Removed the NLTK sentiment implementation from core builtins and updated demo docs to point to an optional evaluator package.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/evaluators/builtins.py`, `util/opentelemetry-util-genai-dev/README.refactoring.emitters.demo-scenarios.md`.
+- Follow-ups: Publish package metadata once the refactor branch is merged.
+
+### Task 14: Introduce util/opentelemetry-util-genai-evals-nltk package
+- Added standalone NLTK sentiment evaluator plug-in with entry-point registration and tests.
+- Files touched: `util/opentelemetry-util-genai-evals-nltk/**`, `util/opentelemetry-util-genai-dev/tests/test_evaluators.py`.
+- Follow-ups: Consider bundling VADER lexicon download guidance or automation post-install.
+
 ### Validation Audit (Implementation Status up to Task 12)
 Date: 2025-10-05
 
