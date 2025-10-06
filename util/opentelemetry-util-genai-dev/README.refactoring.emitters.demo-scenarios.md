@@ -186,9 +186,9 @@ Troubleshooting:
 ## Scenario 6: Switch to Traceloop Telemetry Flavor
 Goal: Demonstrate vendor-style span attribute extension by appending Traceloop emitter.
 
-Install (future externalization; until extracted may be internal only):
+Install the Traceloop plug-in from this repo (or the published wheel when available):
 ```bash
-pip install opentelemetry-util-genai-emitters-traceloop  # when available
+pip install -e util/opentelemetry-util-genai-emitters-traceloop
 ```
 Env (start from Scenario 2 or 3 config):
 ```bash

@@ -14,7 +14,6 @@ from .evaluation import EvaluationEventsEmitter, EvaluationMetricsEmitter
 from .metrics import MetricsEmitter
 from .span import SpanEmitter
 from .spec import CategoryOverride, EmitterFactoryContext, EmitterSpec
-from .traceloop_compat import TraceloopCompatEmitter  # type: ignore
 
 _logger = logging.getLogger(__name__)
 
@@ -99,64 +98,36 @@ def build_emitter_pipeline(
             target.append(spec)
         spec_registry[spec.name] = spec
 
-    if settings.only_traceloop_compat:
+    if settings.enable_span and not settings.only_traceloop_compat:
         _register(
             EmitterSpec(
-                name="TraceloopCompatSpan",
+                name="SemanticConvSpan",
                 category=_CATEGORY_SPAN,
-                factory=lambda ctx: TraceloopCompatEmitter(
+                factory=lambda ctx: SpanEmitter(
                     tracer=ctx.tracer,
-                    capture_content=(
-                        ctx.capture_span_content or ctx.capture_event_content
-                    ),
+                    capture_content=ctx.capture_span_content,
                 ),
             )
         )
-    else:
-        if settings.enable_span:
-            _register(
-                EmitterSpec(
-                    name="SemanticConvSpan",
-                    category=_CATEGORY_SPAN,
-                    factory=lambda ctx: SpanEmitter(
-                        tracer=ctx.tracer,
-                        capture_content=ctx.capture_span_content,
-                    ),
-                )
+    if settings.enable_metrics:
+        _register(
+            EmitterSpec(
+                name="SemanticConvMetrics",
+                category=_CATEGORY_METRICS,
+                factory=lambda ctx: MetricsEmitter(meter=ctx.meter),
             )
-        if settings.enable_metrics:
-            _register(
-                EmitterSpec(
-                    name="SemanticConvMetrics",
-                    category=_CATEGORY_METRICS,
-                    factory=lambda ctx: MetricsEmitter(meter=ctx.meter),
-                )
+        )
+    if settings.enable_content_events:
+        _register(
+            EmitterSpec(
+                name="ContentEvents",
+                category=_CATEGORY_CONTENT,
+                factory=lambda ctx: ContentEventsEmitter(
+                    logger=ctx.content_logger,
+                    capture_content=ctx.capture_event_content,
+                ),
             )
-        if settings.enable_content_events:
-            _register(
-                EmitterSpec(
-                    name="ContentEvents",
-                    category=_CATEGORY_CONTENT,
-                    factory=lambda ctx: ContentEventsEmitter(
-                        logger=ctx.content_logger,
-                        capture_content=ctx.capture_event_content,
-                    ),
-                )
-            )
-        if "traceloop_compat" in settings.extra_emitters:
-            _register(
-                EmitterSpec(
-                    name="TraceloopCompatSpan",
-                    category=_CATEGORY_SPAN,
-                    factory=lambda ctx: TraceloopCompatEmitter(
-                        tracer=ctx.tracer,
-                        capture_content=(
-                            ctx.capture_span_content
-                            or ctx.capture_event_content
-                        ),
-                    ),
-                )
-            )
+        )
 
     # Evaluation emitters are always present
     _register(
@@ -176,10 +147,7 @@ def build_emitter_pipeline(
         )
     )
 
-    entrypoint_names = [
-        name for name in settings.extra_emitters if name != "traceloop_compat"
-    ]
-    for spec in load_emitter_specs(entrypoint_names):
+    for spec in load_emitter_specs(settings.extra_emitters):
         if spec.category not in {
             _CATEGORY_SPAN,
             _CATEGORY_METRICS,

@@ -126,7 +126,7 @@ Select telemetry flavor (composed emitters). Accepted baseline values (case-inse
 * ``span_metric_event`` - spans + metrics + content events
 
 Additional extender emitters:
-* ``traceloop_compat`` - adds a Traceloop-compatible LLM span. If specified *alone*, only the compat span is emitted. If combined (e.g. ``span,traceloop_compat``) both semconv and compat spans are produced.
+* ``traceloop_compat`` - adds a Traceloop-compatible LLM span (requires installing ``opentelemetry-util-genai-emitters-traceloop``). If specified *alone*, only the compat span is emitted. If combined (e.g. ``span,traceloop_compat``) both semconv and compat spans are produced.
 
 Invalid or unset values fallback to ``span``.
 """

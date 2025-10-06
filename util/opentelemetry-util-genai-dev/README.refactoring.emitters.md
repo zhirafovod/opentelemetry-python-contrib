@@ -25,7 +25,7 @@ Key components:
 - Environment variables (prefix `OTEL_INSTRUMENTATION_GENAI_*`) drive:
   - which emitters/generators set (span, span_metric, span_metric_event, traceloop_compat)
   - capture of message content (mode & boolean variants)
-- Traceloop compatibility span lives in `emitters/traceloop_compat.py` inside the dev package.
+- Traceloop compatibility span is provided by the `opentelemetry-util-genai-emitters-traceloop` package (core no longer ships the compat emitter).
 - No explicit third-party entry point discovery for emitters yet (there is a plugin loader concept via `load_emitter_plugin` but it differs from reference spec: uses `plugins.py` with `PluginEmitterBundle`).
 - Splunk-specific emitter logic not present (exists only in separate Splunk dev package `opentelemetry-util-genai-emitters-splunk` but not yet aligned with target CompositeEmitter & EmitterSpec pattern).
 - Naming still references "generator" in multiple places.
@@ -52,7 +52,7 @@ Per architecture spec:
 | Env var namespace | `OTEL_INSTRUMENTATION_GENAI_*` | Same | No change needed (retain existing prefix) |
 | Configuration parsing location | Inside `TelemetryHandler` | Inside `CompositeEmitter` (handler only calls builder) | Move logic; keep handler minimal |
 | Registration/discovery | Custom plugin loader + `extra_emitters` in settings | Entry points returning `EmitterSpec` list | Replace plugin loader path with unified loader; migrate traceloop & splunk packages |
-| Traceloop emitter placement | In core dev package | External package | Extract to new package, remove from core |
+| Traceloop emitter placement | In core dev package | External package | **Completed:** emitted by `opentelemetry-util-genai-emitters-traceloop` |
 | Splunk emission pattern | Basic example emitter (not full spec) | Replace evaluation category + append metrics | Expand Splunk package to implement evaluation aggregator + metrics extender |
 | Evaluation emission | Separate `CompositeEvaluationEmitter` internal | Part of unified evaluation emitters chain | Fold evaluation emitters into CompositeEmitter evaluation category |
 | Message content capture control | Mixed span/events logic in handler refresh | Config-driven category toggles & per-emitter flags | Abstract message capture decisions into emitter initialization & runtime settings |
@@ -109,16 +109,12 @@ Tasks:
 Exit Criteria:
 - External example package (temporary stub) can register an extra metrics emitter via entry point and appears in chain.
 
-### Phase 5: Traceloop Extraction
-Tasks:
-1. Create new package skeleton `opentelemetry-util-genai-emitters-traceloop` (parallel to Splunk & Deepeval packages style).
-2. Move `traceloop_compat.py` logic; rename to `traceloop.py` implementing `TraceloopSpanEmitter` (or `TraceloopEmitter`).
-3. Provide its `load_emitters()` returning `EmitterSpec` with `position: after:SemanticConvSpan`.
-4. Remove traceloop references & special-casing from handler/config & tests.
-5. Update architecture doc references if needed (already aligned).
-
-Exit Criteria:
-- Core passes tests without traceloop code; installing traceloop package reintroduces functionality.
+### Phase 5: Traceloop Extraction *(completed)*
+Delivered:
+1. Created `opentelemetry-util-genai-emitters-traceloop` exposing the compat span emitter via entry points.
+2. Migrated the legacy emitter out of core and removed handler/config special-casing.
+3. Added focused tests ensuring the plug-in captures content and propagates errors correctly.
+4. Documentation now instructs installing the plug-in for Traceloop scenarios.
 
 ### Phase 6: Splunk Package Alignment
 Tasks:
@@ -317,6 +313,11 @@ If blocked, append a BLOCKED section with reason and proposed resolution.
 - Files touched: `util/opentelemetry-util-genai-evals-deepeval/src/opentelemetry/util/evaluator/deepeval.py`, `util/opentelemetry-util-genai-dev/README.refactoring.emitters.demo-scenarios.md`, `.vscode/launch.json`.
 - Follow-ups: When publishing the Deepeval adapter, highlight the opt-out behavior in release notes.
 
+### Task 17: Extract Traceloop compat emitter to plug-in
+- Moved the Traceloop compatibility emitter into the new `opentelemetry-util-genai-emitters-traceloop` package and removed all core references.
+- Files touched: `util/opentelemetry-util-genai-emitters-traceloop/**`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/{emitters/configuration.py,emitters/__init__.py,config.py,handler.py,environment_variables.py}`, docs, and launch configs.
+- Follow-ups: Monitor adoption of the plug-in and remove any lingering mentions of the legacy compat emitter.
+
 ### Validation Audit (Implementation Status up to Task 12)
 Date: 2025-10-05 *(tasks 13–16 added afterwards; run a fresh audit once remaining milestones land)*
 
@@ -327,12 +328,12 @@ Audit Summary:
 - Evaluation emitters (`EvaluationMetrics`, `EvaluationEvents`, optional `EvaluationSpans`) integrated as a category inside the composite.
 - Env parsing & capture logic delegated to `build_emitter_pipeline` + `Settings`; handler no longer constructs emitters directly (it only invokes the builder).
 - Spec-based registration (`EmitterSpec`, `load_emitter_specs`) and category override logic implemented; ordering / replace modes (`replace-category`, `prepend`, `replace-same-name`, `append`) supported.
-- Traceloop still resides in core as `traceloop_compat.py` (NOT YET extracted – pending Task 13).
+- Traceloop compat emitter now lives in `opentelemetry-util-genai-emitters-traceloop` and is consumed via entry points.
 - Invocation-type filtering NOT YET implemented (pending Task 19 – no `invocation_types` evaluation in dispatch path yet).
 - Error isolation: dispatch wrapper catches and logs exceptions (metrics counters still TODO – Task 12 follow-up).
 
 Outstanding (Not Started Unless Noted):
-- Task 13–14: Traceloop extraction & removal of compat from core (planned).
+- Task 13–14: Completed (Traceloop extraction & removal of compat from core).
 - Task 15: Test suite rewrite / pruning of legacy generator assumptions (partial – some tests still reference old names; needs cleanup pass).
 - Task 16–18: Splunk evaluation aggregator & extra metrics emitter (not implemented here – separate package work pending; current Splunk package adaptation status unverified in this audit).
 - Task 19–20: Invocation type filtering & tests (not implemented).
@@ -340,10 +341,9 @@ Outstanding (Not Started Unless Noted):
 - Task 23: Final cleanup / shim removal (future).
 
 Next Immediate Actions:
-1. Extract Traceloop emitter to external package per spec (Task 13/14).
-2. Implement invocation-type filtering in composite dispatch or during spec instantiation (Task 19).
-3. Add metrics counters for emitter failures (extend Task 12 follow-up).
-4. Rewrite README (Task 21) – concise quick start + link to architecture.
+1. Implement invocation-type filtering in composite dispatch or during spec instantiation (Task 19).
+2. Add metrics counters for emitter failures (extend Task 12 follow-up).
+3. Rewrite README (Task 21) – concise quick start + link to architecture.
 
 Notes:
 - Keep CHANGELOG append-only; do not retroactively edit earlier task sections.

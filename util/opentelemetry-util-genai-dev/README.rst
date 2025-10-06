@@ -33,7 +33,7 @@ Key Environment Variables
 -------------------------
 Content & Flavor:
 
-* ``OTEL_INSTRUMENTATION_GENAI_EMITTERS`` = ``span`` | ``span_metric`` | ``span_metric_event`` (optionally add ``traceloop_compat``).
+* ``OTEL_INSTRUMENTATION_GENAI_EMITTERS`` = ``span`` | ``span_metric`` | ``span_metric_event`` (optionally add ``traceloop_compat`` after installing the Traceloop plug-in).
 * ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`` = ``NO_CONTENT`` | ``SPAN_ONLY`` | ``EVENT_ONLY`` | ``SPAN_AND_EVENT``.
 * ``OTEL_SEMCONV_STABILITY_OPT_IN`` must include ``gen_ai_latest_experimental`` to enable GenAI attributes & content modes.
 

@@ -14,13 +14,11 @@ from .evaluation import (  # noqa: F401
 )
 from .metrics import MetricsEmitter  # noqa: F401
 from .span import SpanEmitter  # noqa: F401
-from .traceloop_compat import TraceloopCompatEmitter  # noqa: F401
 
 __all__ = [
     "SpanEmitter",
     "MetricsEmitter",
     "ContentEventsEmitter",
-    "TraceloopCompatEmitter",
     "CompositeEmitter",
     "EvaluationMetricsEmitter",
     "EvaluationEventsEmitter",
