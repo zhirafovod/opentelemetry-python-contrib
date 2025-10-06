@@ -13,16 +13,20 @@ from opentelemetry.util.genai.processors.traceloop_span_processor import Tracelo
 RULE_SPEC = {
     "rules": [
         {
+            # NOTE: In Python dicts, duplicate keys are overwritten. The earlier
+            # version used two separate "rename" entries so only the last one
+            # survived. Combine them into a single mapping and optionally
+            # remove noisy attributes.
             "attribute_transformations": {
-                "rename": {"llm.provider": "ai.system.vendor"},
-                "add": {"example.rule": "chat"},
+                "rename": {
+                    "traceloop.entity.input": "gen_ai.input.messages",
+                    "traceloop.entity.output": "gen_ai.output.messages",
+                },
+                # Demonstrate removal (uncomment to test):
+                # "remove": ["debug_info"],
             },
             "name_transformations": {"chat *": "genai.chat"},
-        },
-        {
-            "attribute_transformations": {"add": {"processed.embedding": True}},
-            "name_transformations": {"*": "genai.embedding"},
-        },
+        }
     ]
 }
 os.environ["OTEL_GENAI_SPAN_TRANSFORM_RULES"] = json.dumps(RULE_SPEC)
@@ -38,7 +42,7 @@ tracer = trace.get_tracer(__name__)
 print("Creating spans ...\n")
 
 with tracer.start_as_current_span("chat gpt-4") as span:
-    span.set_attribute("llm.provider", "openai")
+    span.set_attribute("traceloop.entity.input", "some data")
     span.set_attribute("debug_info", "remove me if rule had remove")
 
 with tracer.start_as_current_span("vector encode") as span:
