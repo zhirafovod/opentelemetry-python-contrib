@@ -107,14 +107,12 @@ export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE="EVENT_ONLY"
 # Enable evaluators (example syntax—adjust to actual implemented variable names if they differ)
 export OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS="length"
 export OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION="true"     # aggregate all results per invocation
-export OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE="aggregated"          # emit one evaluation span
 ```
 Run the demo.
 
 Expect (current implementation):
 - If optional evaluator packages (e.g., `opentelemetry-util-genai-evals-nltk`) are installed, include them in `OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS` alongside `length` (e.g., `length,nltk_sentiment`). These packages manage their own dependencies such as NLTK/VADER.
 - With aggregation on: a single evaluation event containing both metrics.
-- With `OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE=aggregated` (default off): one evaluation span summarising all results (future behaviour; span mode plumbing present but spans may be suppressed if not yet wired in your branch).
 - Histogram `gen_ai.evaluation.score` receives one point per numeric result emitted by the active evaluators (length is always numeric; additional evaluators may emit numeric or error-only results depending on their dependencies).
 - Invocation span attribute `gen_ai.evaluation.executed=true` set when at least one evaluator ran.
 
@@ -137,7 +135,6 @@ Env (build on Scenario 3):
 # Deepeval metrics usually target LLMInvocation, so scope explicitly.
 export OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS="deepeval(LLMInvocation(toxicity,bias)),length"
 export OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION="true"
-export OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE="per_metric"  # one span per metric (if evaluator span emission integrated)
 ```
 Run the demo.
 

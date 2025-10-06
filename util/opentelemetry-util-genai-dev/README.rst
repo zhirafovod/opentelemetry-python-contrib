@@ -41,7 +41,6 @@ Evaluation:
 
 * ``OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS`` (list or ``none``).
 * ``OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION`` = ``true`` to emit one aggregated event per invocation.
-* ``OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE`` = ``off`` | ``aggregated`` | ``per_metric``.
 
 Artifacts / Upload:
 
@@ -67,7 +66,6 @@ Typical Scenarios
 
 * High throughput service: ``span_metric_event`` + ``EVENT_ONLY`` (spans stay small; messages move to events).
 * Migration / ecosystem bridging: add ``traceloop_compat`` while keeping semantic spans for comparison.
-* Quality lab: enable evaluation spans via ``OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE=per_metric``.
 
 Troubleshooting
 ---------------

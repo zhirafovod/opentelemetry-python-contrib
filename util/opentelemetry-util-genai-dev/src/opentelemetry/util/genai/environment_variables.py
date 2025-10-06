@@ -113,19 +113,6 @@ OTEL_INSTRUMENTATION_GENAI_EVALS_INTERVAL = (
 Polling interval (seconds) for the evaluation worker loop. Defaults to ``5.0`` seconds.
 """
 
-OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE = (
-    "OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE"
-)
-"""
-.. envvar:: OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE
-
-Controls evaluation span creation strategy. Accepted values:
-
-* ``off`` (default) - no evaluation spans
-* ``aggregated`` - single span summarizing all evaluation metrics
-* ``per_metric`` - one span per evaluation metric
-"""
-
 OTEL_INSTRUMENTATION_GENAI_EMITTERS = "OTEL_INSTRUMENTATION_GENAI_EMITTERS"
 """
 .. envvar:: OTEL_INSTRUMENTATION_GENAI_EMITTERS
@@ -175,7 +162,6 @@ __all__ = [
     "OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS",
     "OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION",
     "OTEL_INSTRUMENTATION_GENAI_EVALS_INTERVAL",
-    "OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE",
     # generator selection
     "OTEL_INSTRUMENTATION_GENAI_EMITTERS",
     "OTEL_INSTRUMENTATION_GENAI_EMITTERS_SPAN",

@@ -10,11 +10,7 @@ from ..plugins import load_emitter_specs
 from ..types import ContentCapturingMode
 from .composite import CompositeEmitter
 from .content_events import ContentEventsEmitter
-from .evaluation import (
-    EvaluationEventsEmitter,
-    EvaluationMetricsEmitter,
-    EvaluationSpansEmitter,
-)
+from .evaluation import EvaluationEventsEmitter, EvaluationMetricsEmitter
 from .metrics import MetricsEmitter
 from .span import SpanEmitter
 from .spec import CategoryOverride, EmitterFactoryContext, EmitterSpec
@@ -33,7 +29,6 @@ class CaptureControl:
     span_allowed: bool
     span_initial: bool
     events_initial: bool
-    traceloop_initial: bool
     mode: ContentCapturingMode
 
 
@@ -50,6 +45,7 @@ def build_emitter_pipeline(
 
     span_allowed = (
         settings.capture_messages_override
+        or settings.legacy_capture_request
         or not settings.enable_content_events
     )
     span_initial = span_allowed and settings.capture_messages_mode in (
@@ -64,14 +60,6 @@ def build_emitter_pipeline(
         )
     )
 
-    traceloop_initial = span_initial
-    if not traceloop_initial and settings.legacy_traceloop_capture:
-        if (
-            settings.only_traceloop_compat
-            or "traceloop_compat" in settings.extra_emitters
-        ):
-            traceloop_initial = True
-
     context = EmitterFactoryContext(
         tracer=tracer,
         meter=meter,
@@ -80,8 +68,6 @@ def build_emitter_pipeline(
         evaluation_histogram=evaluation_histogram,
         capture_span_content=span_initial,
         capture_event_content=events_initial,
-        capture_traceloop_span_content=traceloop_initial,
-        evaluation_span_mode=settings.evaluation_span_mode,
     )
 
     category_specs: Dict[str, List[EmitterSpec]] = {
@@ -120,7 +106,9 @@ def build_emitter_pipeline(
                 category=_CATEGORY_SPAN,
                 factory=lambda ctx: TraceloopCompatEmitter(
                     tracer=ctx.tracer,
-                    capture_content=ctx.capture_traceloop_span_content,
+                    capture_content=(
+                        ctx.capture_span_content or ctx.capture_event_content
+                    ),
                 ),
             )
         )
@@ -162,7 +150,10 @@ def build_emitter_pipeline(
                     category=_CATEGORY_SPAN,
                     factory=lambda ctx: TraceloopCompatEmitter(
                         tracer=ctx.tracer,
-                        capture_content=ctx.capture_traceloop_span_content,
+                        capture_content=(
+                            ctx.capture_span_content
+                            or ctx.capture_event_content
+                        ),
                     ),
                 )
             )
@@ -184,16 +175,6 @@ def build_emitter_pipeline(
             factory=lambda ctx: EvaluationEventsEmitter(ctx.event_logger),
         )
     )
-    if settings.evaluation_span_mode in {"aggregated", "per_metric"}:
-        _register(
-            EmitterSpec(
-                name="EvaluationSpans",
-                category=_CATEGORY_EVALUATION,
-                factory=lambda ctx: EvaluationSpansEmitter(
-                    tracer=ctx.tracer, span_mode=ctx.evaluation_span_mode
-                ),
-            )
-        )
 
     entrypoint_names = [
         name for name in settings.extra_emitters if name != "traceloop_compat"
@@ -240,7 +221,6 @@ def build_emitter_pipeline(
         span_allowed=span_allowed,
         span_initial=span_initial,
         events_initial=events_initial,
-        traceloop_initial=traceloop_initial,
         mode=settings.capture_messages_mode,
     )
     return composite, control

@@ -36,8 +36,6 @@ def test_splunk_emitters_specs() -> None:
         evaluation_histogram=None,
         capture_span_content=False,
         capture_event_content=True,
-        capture_traceloop_span_content=False,
-        evaluation_span_mode="off",
     )
     emitter = spec.factory(context)
     assert isinstance(emitter, SplunkConversationEventsEmitter)
@@ -54,8 +52,6 @@ def test_conversation_event_emission() -> None:
         evaluation_histogram=None,
         capture_span_content=False,
         capture_event_content=True,
-        capture_traceloop_span_content=False,
-        evaluation_span_mode="off",
     )
     emitter = spec.factory(context)
     invocation = LLMInvocation(request_model="gpt-test")

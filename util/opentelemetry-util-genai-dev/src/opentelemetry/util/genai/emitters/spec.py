@@ -17,8 +17,6 @@ class EmitterFactoryContext:
     evaluation_histogram: Any
     capture_span_content: bool
     capture_event_content: bool
-    capture_traceloop_span_content: bool
-    evaluation_span_mode: str
     extras: Mapping[str, Any] = field(default_factory=dict)
 
 

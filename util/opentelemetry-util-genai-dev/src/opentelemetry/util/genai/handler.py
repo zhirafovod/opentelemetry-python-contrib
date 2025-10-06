@@ -79,10 +79,7 @@ from opentelemetry.util.genai.version import __version__
 
 from .callbacks import CompletionCallback
 from .config import parse_env
-from .environment_variables import (
-    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
-    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES,
-)
+from .environment_variables import OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -155,16 +152,11 @@ class TelemetryHandler:
             )
             control = getattr(self, "_capture_control", None)
             span_capture_allowed = True
-            traceloop_default = False
             if control is not None:
                 span_capture_allowed = control.span_allowed
-                traceloop_default = control.traceloop_initial
             if os.environ.get(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES):
                 span_capture_allowed = True
             # Respect the content capture mode for all generator kinds
-            traceloop_requested = os.environ.get(
-                OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, ""
-            ).strip().lower() in ("true", "1", "yes")
             new_value_events = mode in (
                 ContentCapturingMode.EVENT_ONLY,
                 ContentCapturingMode.SPAN_AND_EVENT,
@@ -180,11 +172,11 @@ class TelemetryHandler:
                     em, "set_capture_content"
                 ):
                     try:
-                        desired = new_value_span
-                        if role == "span" and not span_capture_allowed:
-                            desired = False
-                        if role == "traceloop_compat" and not desired:
-                            desired = traceloop_default or traceloop_requested
+                        desired_span = new_value_span and span_capture_allowed
+                        if role == "traceloop_compat":
+                            desired = desired_span or new_value_events
+                        else:
+                            desired = desired_span
                         em.set_capture_content(desired)  # type: ignore[attr-defined]
                     except Exception:
                         pass

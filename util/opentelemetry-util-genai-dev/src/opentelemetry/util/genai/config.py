@@ -14,7 +14,6 @@ from .environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_EMITTERS_EVALUATION,
     OTEL_INSTRUMENTATION_GENAI_EMITTERS_METRICS,
     OTEL_INSTRUMENTATION_GENAI_EMITTERS_SPAN,
-    OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE,
 )
 from .types import ContentCapturingMode
 from .utils import get_content_capturing_mode
@@ -32,10 +31,9 @@ class Settings:
     extra_emitters: list[str]
     only_traceloop_compat: bool
     raw_tokens: list[str]
-    evaluation_span_mode: str
     capture_messages_mode: ContentCapturingMode
     capture_messages_override: bool
-    legacy_traceloop_capture: bool
+    legacy_capture_request: bool
     category_overrides: Dict[str, CategoryOverride]
 
 
@@ -81,21 +79,12 @@ def parse_env() -> Settings:
     )
     capture_mode = get_content_capturing_mode()
 
+    # Legacy compat flag retained for handler refresh to honour previous
+    # message capture overrides tied to CAPTURE_MESSAGE_CONTENT
     legacy_flag = os.environ.get(
         OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT, ""
     ).strip()
-    legacy_traceloop_capture = legacy_flag.lower() in {"true", "1", "yes"}
-
-    raw_eval_span_mode = (
-        os.environ.get(OTEL_INSTRUMENTATION_GENAI_EVALS_SPAN_MODE, "off")
-        .strip()
-        .lower()
-    )
-    evaluation_span_mode = (
-        raw_eval_span_mode
-        if raw_eval_span_mode in {"off", "aggregated", "per_metric"}
-        else "off"
-    )
+    legacy_capture_request = legacy_flag.lower() in {"true", "1", "yes"}
 
     overrides: Dict[str, CategoryOverride] = {}
     override_env_map = {
@@ -122,10 +111,9 @@ def parse_env() -> Settings:
         extra_emitters=extra_emitters,
         only_traceloop_compat=only_traceloop_compat,
         raw_tokens=tokens,
-        evaluation_span_mode=evaluation_span_mode,
         capture_messages_mode=capture_mode,
         capture_messages_override=capture_messages_override,
-        legacy_traceloop_capture=legacy_traceloop_capture,
+        legacy_capture_request=legacy_capture_request,
         category_overrides=overrides,
     )
 

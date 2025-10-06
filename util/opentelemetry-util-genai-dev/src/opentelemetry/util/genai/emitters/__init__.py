@@ -11,7 +11,6 @@ from .content_events import ContentEventsEmitter  # noqa: F401
 from .evaluation import (  # noqa: F401
     EvaluationEventsEmitter,
     EvaluationMetricsEmitter,
-    EvaluationSpansEmitter,
 )
 from .metrics import MetricsEmitter  # noqa: F401
 from .span import SpanEmitter  # noqa: F401
@@ -25,5 +24,4 @@ __all__ = [
     "CompositeEmitter",
     "EvaluationMetricsEmitter",
     "EvaluationEventsEmitter",
-    "EvaluationSpansEmitter",
 ]
