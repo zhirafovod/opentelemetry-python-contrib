@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Mapping as MappingABC
 from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass
@@ -52,6 +53,14 @@ _DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# Disable Deepeval's internal telemetry (Posthog/New Relic) by default so that
+# it does not emit extra spans or events when running inside the GenAI
+# instrumentation stack. Users can re-enable it by explicitly setting
+# ``DEEPEVAL_TELEMETRY_OPT_OUT`` to ``0`` before importing this module.
+if os.environ.get("DEEPEVAL_TELEMETRY_OPT_OUT") is None:
+    os.environ["DEEPEVAL_TELEMETRY_OPT_OUT"] = "1"
 
 
 @dataclass(frozen=True)

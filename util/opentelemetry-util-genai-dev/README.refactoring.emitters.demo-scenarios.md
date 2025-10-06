@@ -129,6 +129,11 @@ Install (plus any deepeval model-specific extras you require):
 pip install deepeval
 ```
 
+The Deepeval plug-in included in this repo automatically opts Deepeval out of
+its internal telemetry so the demo traces remain focused on application spans.
+Set ``DEEPEVAL_TELEMETRY_OPT_OUT=0`` before launch if you need to re-enable the
+vendor telemetry.
+
 Env (build on Scenario 3):
 ```bash
 # Syntax: evaluatorName(TypeName(metricA,metricB))[,nextEvaluator]
