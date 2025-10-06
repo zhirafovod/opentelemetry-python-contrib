@@ -21,6 +21,24 @@ from opentelemetry.util.genai.emitters.utils import (
 from opentelemetry.util.genai.interfaces import EmitterMeta
 from opentelemetry.util.genai.types import Error, LLMInvocation
 
+_TRACELOOP_PREFIX = "traceloop."
+_TRACELOOP_SPECIAL_KEYS: dict[str, str] = {
+    "span.kind": "traceloop.span.kind",
+    "entity.input": "traceloop.entity.input",
+    "entity.output": "traceloop.entity.output",
+    "workflow.name": "traceloop.workflow.name",
+    "entity.name": "traceloop.entity.name",
+    "entity.path": "traceloop.entity.path",
+    "callback.name": "traceloop.callback.name",
+    "callback.id": "traceloop.callback.id",
+}
+
+
+def _to_traceloop_key(key: str) -> str:
+    if key.startswith(_TRACELOOP_PREFIX):
+        return key
+    return _TRACELOOP_SPECIAL_KEYS.get(key, f"{_TRACELOOP_PREFIX}{key}")
+
 
 class TraceloopCompatEmitter(EmitterMeta):
     """Emitter that recreates the legacy Traceloop span format for LLM calls."""
@@ -60,21 +78,30 @@ class TraceloopCompatEmitter(EmitterMeta):
         invocation.__dict__["traceloop_span"] = span
         invocation.__dict__["traceloop_cm"] = cm
 
-        for key, value in invocation.attributes.items():
-            if not key.startswith("gen_ai."):
-                try:
-                    span.set_attribute(key, value)
-                except Exception:  # pragma: no cover
-                    pass
+        extras = invocation.attributes
+        if "span.kind" not in extras:
+            extras["span.kind"] = "llm"
+        # Maintain legacy prefixed entry for downstream compatibility
+        extras.setdefault("traceloop.span.kind", extras.get("span.kind"))
+
+        for key, value in list(extras.items()):
+            if key.startswith("gen_ai."):
+                continue
+            traceloop_key = _to_traceloop_key(key)
+            try:
+                span.set_attribute(traceloop_key, value)
+            except Exception:  # pragma: no cover
+                pass
+            extras.setdefault(traceloop_key, value)
         self._apply_semconv_start(invocation, span)
         if self._capture_content and invocation.input_messages:
             serialized = _serialize_messages(invocation.input_messages)
             if serialized is not None:
+                traceloop_key = _TRACELOOP_SPECIAL_KEYS["entity.input"]
                 try:
-                    span.set_attribute("traceloop.entity.input", serialized)
-                    invocation.attributes["traceloop.entity.input"] = (
-                        serialized
-                    )
+                    span.set_attribute(traceloop_key, serialized)
+                    extras[traceloop_key] = serialized
+                    extras.setdefault("entity.input", serialized)
                 except Exception:  # pragma: no cover
                     pass
 
@@ -87,9 +114,11 @@ class TraceloopCompatEmitter(EmitterMeta):
             serialized = _serialize_messages(invocation.output_messages)
             if serialized is not None:
                 try:
-                    span.set_attribute("traceloop.entity.output", serialized)
-                    invocation.attributes["traceloop.entity.output"] = (
-                        serialized
+                    traceloop_key = _TRACELOOP_SPECIAL_KEYS["entity.output"]
+                    span.set_attribute(traceloop_key, serialized)
+                    invocation.attributes[traceloop_key] = serialized
+                    invocation.attributes.setdefault(
+                        "entity.output", serialized
                     )
                 except Exception:  # pragma: no cover
                     pass

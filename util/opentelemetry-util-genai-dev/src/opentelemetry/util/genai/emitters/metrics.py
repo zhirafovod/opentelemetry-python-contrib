@@ -3,9 +3,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from opentelemetry.metrics import Histogram, Meter, get_meter
-from opentelemetry.semconv._incubating.attributes import (
-    gen_ai_attributes as GenAI,
-)
 
 from ..attributes import GEN_AI_AGENT_ID, GEN_AI_AGENT_NAME
 from ..instruments import Instruments
@@ -70,9 +67,9 @@ class MetricsEmitter(EmitterMeta):
             metric_attrs = _get_metric_attributes(
                 invocation.request_model,
                 invocation.response_model_name,
-                GenAI.GenAiOperationNameValues.CHAT.value,
+                invocation.operation,
                 invocation.provider,
-                invocation.attributes.get("framework"),
+                invocation.framework,
             )
             # Add agent context if available
             if invocation.agent_name:
@@ -148,9 +145,9 @@ class MetricsEmitter(EmitterMeta):
             metric_attrs = _get_metric_attributes(
                 invocation.request_model,
                 invocation.response_model_name,
-                GenAI.GenAiOperationNameValues.CHAT.value,
+                invocation.operation,
                 invocation.provider,
-                invocation.attributes.get("framework"),
+                invocation.framework,
             )
             # Add agent context if available
             if invocation.agent_name:
@@ -241,7 +238,7 @@ class MetricsEmitter(EmitterMeta):
             return
         duration = agent.end_time - agent.start_time
         metric_attrs = {
-            "gen_ai.operation.name": f"agent.{agent.operation}",
+            "gen_ai.operation.name": agent.operation,
             "gen_ai.agent.name": agent.name,
             "gen_ai.agent.id": str(agent.run_id),
         }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from types import MethodType
 from typing import Any, Dict, Iterable, List, Sequence
 
 from ..config import Settings
@@ -201,6 +202,29 @@ def _instantiate_category(
     for spec in specs:
         try:
             emitter = spec.factory(context)
+            if spec.invocation_types:
+                allowed = {name for name in spec.invocation_types}
+                original = getattr(emitter, "handles", None)
+                orig_func = getattr(original, "__func__", None)
+
+                def _filtered_handles(
+                    self, obj, _allowed=allowed, _orig=orig_func
+                ):
+                    if obj is None:
+                        if _orig is not None:
+                            return _orig(self, obj)
+                        return True
+                    if type(obj).__name__ not in _allowed:
+                        return False
+                    if _orig is not None:
+                        return _orig(self, obj)
+                    return True
+
+                setattr(
+                    emitter,
+                    "handles",
+                    MethodType(_filtered_handles, emitter),
+                )
             instances.append(emitter)
         except Exception:  # pragma: no cover - defensive
             _logger.exception("Failed to instantiate emitter %s", spec.name)
