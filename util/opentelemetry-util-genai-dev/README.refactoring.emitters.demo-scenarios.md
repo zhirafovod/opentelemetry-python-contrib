@@ -110,9 +110,8 @@ export OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION="true"     # aggrega
 ```
 Run the demo.
 
-Expect (current implementation):
+- Each evaluation result produces its own `gen_ai.evaluation` event; the builtin length evaluator always yields a numeric score.
 - If optional evaluator packages (e.g., `opentelemetry-util-genai-evals-nltk`) are installed, include them in `OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS` alongside `length` (e.g., `length,nltk_sentiment`). These packages manage their own dependencies such as NLTK/VADER.
-- With aggregation on: a single evaluation event containing both metrics.
 - Histogram `gen_ai.evaluation.score` receives one point per numeric result emitted by the active evaluators (length is always numeric; additional evaluators may emit numeric or error-only results depending on their dependencies).
 - Invocation span attribute `gen_ai.evaluation.executed=true` set when at least one evaluator ran.
 
@@ -144,10 +143,9 @@ export OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION="true"
 Run the demo.
 
 Expect (once adapter implemented):
-- Additional metrics: `toxicity`, `bias` alongside builtin `length`.
-- Per-metric spans if `per_metric` span mode fully wired; otherwise only events & histogram points.
+- Additional per-result events for metrics such as `toxicity`, `bias`, and the builtin `length`.
 - Histogram `gen_ai.evaluation.score` includes new metric points (assuming numeric scores).
-- Errors (e.g., model not loaded) appear as evaluation events with `error` field instead of a numeric score.
+- Errors (e.g., model not loaded) appear as evaluation events with the `error` field populated instead of a numeric score.
 
 Troubleshooting:
 - If only `length` appears: Deepeval adapter entry point not present; verify `pip show` for adapter package.
@@ -239,10 +237,11 @@ Troubleshooting:
 |----------|--------------|----------------|-------------------|------------------|--------------|---------------|
 | 1 Baseline | Full messages | No | No | No | No | No |
 | 2 Events   | Minimal | Yes | No | No | No | No |
-| 3 Builtin Eval | Minimal | Yes | Length + Sentiment (aggregated or per-metric) | Aggregated span (future/conditional) | No | No |
-| 4 Deepeval | Minimal | Yes | Toxicity/Bias/Length (future) | Per metric (future/conditional) | No | No |
-| 5 Traceloop | Minimal | Yes | As prior scenario | As prior scenario | Yes | No |
-| 6 Splunk | Minimal | Yes | Single vendor aggregated event | Vendor behavior (agg/per) | Optional (unchanged) | Yes (vendor) |
+| 3 Builtin Eval | Minimal | Yes | One event per builtin result | No | No | No |
+| 4 Deepeval | Minimal | Yes | One event per Deepeval result | No | No | No |
+| 5 NLTK Plug-in | Minimal | Yes | One event per builtin + NLTK result | No | No | No |
+| 6 Traceloop | Minimal | Yes | Matches prior scenario | No | Yes | No |
+| 7 Splunk | Minimal | Yes | Single vendor aggregated event | No | Optional (unchanged) | Yes (vendor) |
 
 ---
 ## Verification Scripts (Optional Quick Checks)
@@ -260,8 +259,7 @@ These can be adapted to query your backend (pseudo examples):
 ## Notes on Implementation Gaps
 - Invocation type filtering (EmitterSpec.invocation_types) may not yet be enforced; scenarios assume future alignment.
 - Traceloop & Splunk external packages require their own entry points; if not published, scenario serves as forward-looking example.
-- Deepeval scenario is forward-looking until an adapter provides the evaluator entry point.
-- Evaluation span emission is partially plumbed; depending on branch you may not yet see spans even if span mode env var is set.
+- Deepeval scenario is forward-looking until an adapter provides the evaluator entry point. The included plug-in disables Deepeval's internal telemetry by default; set ``DEEPEVAL_TELEMETRY_OPT_OUT=0`` to re-enable vendor spans.
 - Adjust environment variable names if subsequent refactor tasks rename or consolidate evaluation toggles.
 
 ### Current Built-in Metric Instruments

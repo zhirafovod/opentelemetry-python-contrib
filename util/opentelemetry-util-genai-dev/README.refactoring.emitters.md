@@ -307,8 +307,18 @@ If blocked, append a BLOCKED section with reason and proposed resolution.
 - Files touched: `util/opentelemetry-util-genai-evals-nltk/**`, `util/opentelemetry-util-genai-dev/tests/test_evaluators.py`.
 - Follow-ups: Consider bundling VADER lexicon download guidance or automation post-install.
 
+### Task 15: Simplify emitter context & evaluation emission
+- Removed Traceloop-specific and span-mode fields from `EmitterFactoryContext`, aligned capture logic, and switched builtin evaluation emission to per-result events.
+- Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/{config.py,emitters/spec.py,emitters/configuration.py,emitters/evaluation.py,emitters/__init__.py,handler.py,environment_variables.py}`, `util/opentelemetry-util-genai-emitters-splunk/tests/test_splunk_emitters.py`, `.vscode/launch.json`, `util/opentelemetry-util-genai-dev/README.refactoring.emitters.demo-scenarios.md`.
+- Follow-ups: Add coverage ensuring Traceloop emitter respects combined capture flags and document per-result evaluation semantics in core README.
+
+### Task 16: Default Deepeval telemetry opt-out & docs refresh
+- Opted Deepeval out of its internal telemetry by default within the evaluator plug-in and refreshed demo scenarios / launch configs accordingly.
+- Files touched: `util/opentelemetry-util-genai-evals-deepeval/src/opentelemetry/util/evaluator/deepeval.py`, `util/opentelemetry-util-genai-dev/README.refactoring.emitters.demo-scenarios.md`, `.vscode/launch.json`.
+- Follow-ups: When publishing the Deepeval adapter, highlight the opt-out behavior in release notes.
+
 ### Validation Audit (Implementation Status up to Task 12)
-Date: 2025-10-05
+Date: 2025-10-05 *(tasks 13–16 added afterwards; run a fresh audit once remaining milestones land)*
 
 Audit Summary:
 - Tasks 1–12 are PRESENT in the codebase and align with the target architecture draft.
