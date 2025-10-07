@@ -27,8 +27,11 @@ from opentelemetry.context import Context
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 from opentelemetry.trace import Span
 
-from .span_transformer import transform_existing_span_to_telemetry
-from .traceloop_span_generator import TraceloopSpanGenerator
+from opentelemetry.util.genai.types import LLMInvocation
+from opentelemetry.util.genai.handler import (
+    get_telemetry_handler,
+    TelemetryHandler,
+)
 
 _ENV_RULES = "OTEL_GENAI_SPAN_TRANSFORM_RULES"
 
@@ -123,9 +126,10 @@ class TraceloopSpanProcessor(SpanProcessor):
         name_transformations: Optional[Dict[str, str]] = None,
         traceloop_attributes: Optional[Dict[str, Any]] = None,
         span_filter: Optional[Callable[[ReadableSpan], bool]] = None,
-        generator: Optional[TraceloopSpanGenerator] = None,
         rules: Optional[List[TransformationRule]] = None,
         load_env_rules: bool = True,
+    telemetry_handler: Optional[TelemetryHandler] = None,
+        # Legacy synthetic span duplication removed – always emit via handler
     ):
         """
         Initialize the Traceloop span processor.
@@ -135,18 +139,15 @@ class TraceloopSpanProcessor(SpanProcessor):
             name_transformations: Rules for transforming span names
             traceloop_attributes: Additional Traceloop-specific attributes to add
             span_filter: Optional filter function to determine which spans to transform
-            generator: Optional custom TraceloopSpanGenerator
         """
         self.attribute_transformations = attribute_transformations or {}
         self.name_transformations = name_transformations or {}
         self.traceloop_attributes = traceloop_attributes or {}
         self.span_filter = span_filter or self._default_span_filter
-        self.generator = generator or TraceloopSpanGenerator(
-            capture_content=True
-        )
         # Load rule set (env + explicit). Explicit rules first for precedence.
         env_rules = _load_rules_from_env() if load_env_rules else []
         self.rules: List[TransformationRule] = list(rules or []) + env_rules
+        self.telemetry_handler = telemetry_handler
         if self.rules:
             logging.getLogger(__name__).debug(
                 "TraceloopSpanProcessor loaded %d transformation rules (explicit=%d env=%d)",
@@ -224,22 +225,31 @@ class TraceloopSpanProcessor(SpanProcessor):
                     logging.warning("Rule match error ignored: %s", match_err)
 
             sentinel = {"_traceloop_processed": True}
+            # Decide which transformation config to apply
             if applied_rule is not None:
-                transform_existing_span_to_telemetry(
-                    existing_span=span,
-                    attribute_transformations=applied_rule.attribute_transformations,
-                    name_transformations=applied_rule.name_transformations,
-                    traceloop_attributes={**applied_rule.traceloop_attributes, **sentinel},
-                    generator=self.generator,
-                )
+                attr_tx = applied_rule.attribute_transformations
+                name_tx = applied_rule.name_transformations
+                extra_tl_attrs = {**applied_rule.traceloop_attributes, **sentinel}
             else:
-                # Fallback to legacy single-set behavior
-                transform_existing_span_to_telemetry(
-                    existing_span=span,
-                    attribute_transformations=self.attribute_transformations,
-                    name_transformations=self.name_transformations,
-                    traceloop_attributes={**self.traceloop_attributes, **sentinel},
-                    generator=self.generator,
+                attr_tx = self.attribute_transformations
+                name_tx = self.name_transformations
+                extra_tl_attrs = {**self.traceloop_attributes, **sentinel}
+
+            # Always emit via TelemetryHandler
+            invocation = self._build_invocation(
+                span,
+                attribute_transformations=attr_tx,
+                name_transformations=name_tx,
+                traceloop_attributes=extra_tl_attrs,
+            )
+            invocation.attributes.setdefault("_traceloop_processed", True)
+            handler = self.telemetry_handler or get_telemetry_handler()
+            try:
+                handler.start_llm(invocation)
+                handler.stop_llm(invocation)
+            except Exception as emit_err:  # pragma: no cover - defensive
+                logging.getLogger(__name__).warning(
+                    "Telemetry handler emission failed: %s", emit_err
                 )
 
         except Exception as e:
@@ -257,3 +267,79 @@ class TraceloopSpanProcessor(SpanProcessor):
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         """Force flush any buffered spans."""
         return True
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _apply_attribute_transformations(
+        self, base: Dict[str, Any], transformations: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        if not transformations:
+            return base
+        remove_keys = transformations.get("remove") or []
+        for k in remove_keys:
+            base.pop(k, None)
+        rename_map = transformations.get("rename") or {}
+        for old, new in rename_map.items():
+            if old in base:
+                base[new] = base.pop(old)
+        add_map = transformations.get("add") or {}
+        for k, v in add_map.items():
+            base[k] = v
+        return base
+
+    def _derive_new_name(
+        self, original_name: str, name_transformations: Optional[Dict[str, str]]
+    ) -> Optional[str]:
+        if not name_transformations:
+            return None
+        import fnmatch
+
+        for pattern, new_name in name_transformations.items():
+            try:
+                if fnmatch.fnmatch(original_name, pattern):
+                    return new_name
+            except Exception:
+                continue
+        return None
+
+    def _build_invocation(
+        self,
+        existing_span: ReadableSpan,
+        *,
+        attribute_transformations: Optional[Dict[str, Any]] = None,
+        name_transformations: Optional[Dict[str, str]] = None,
+        traceloop_attributes: Optional[Dict[str, Any]] = None,
+    ) -> LLMInvocation:
+        base_attrs: Dict[str, Any] = (
+            dict(existing_span.attributes) if existing_span.attributes else {}
+        )
+        base_attrs = self._apply_attribute_transformations(
+            base_attrs, attribute_transformations
+        )
+        if traceloop_attributes:
+            base_attrs.update(traceloop_attributes)
+        new_name = self._derive_new_name(
+            existing_span.name, name_transformations
+        )
+        if new_name:
+            # Provide override for SpanEmitter (we extended it to honor this)
+            base_attrs.setdefault("gen_ai.override.span_name", new_name)
+        request_model = (
+            base_attrs.get("gen_ai.request.model")
+            or base_attrs.get("llm.request.model")
+            or base_attrs.get("ai.model.name")
+            or "unknown"
+        )
+        invocation = LLMInvocation(
+            request_model=str(request_model),
+            attributes=base_attrs,
+            messages=[],
+        )
+        # Mark operation heuristically from original span name
+        lowered = existing_span.name.lower()
+        if lowered.startswith("embed"):
+            invocation.operation = "embedding"  # type: ignore[attr-defined]
+        elif lowered.startswith("chat"):
+            invocation.operation = "chat"  # type: ignore[attr-defined]
+        return invocation

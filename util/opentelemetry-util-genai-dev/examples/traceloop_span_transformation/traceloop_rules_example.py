@@ -6,9 +6,20 @@ import json
 import os
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+from opentelemetry.sdk.trace.export import (
+    SimpleSpanProcessor,
+    ConsoleSpanExporter,
+)
 
-from opentelemetry.util.genai.processors.traceloop_span_processor import TraceloopSpanProcessor
+from opentelemetry.util.genai.processors.traceloop_span_processor import (
+    TraceloopSpanProcessor,
+)
+"""Example: Traceloop span transformation via handler (implicit handler).
+
+The TraceloopSpanProcessor now emits via TelemetryHandler by default. You do not
+need to instantiate a TelemetryHandler manually unless you want custom provider
+or meter wiring. This example relies on the global singleton handler.
+"""
 
 RULE_SPEC = {
     "rules": [
@@ -31,19 +42,21 @@ RULE_SPEC = {
 }
 os.environ["OTEL_GENAI_SPAN_TRANSFORM_RULES"] = json.dumps(RULE_SPEC)
 
-# Set up tracing
-provider = TracerProvider()
-provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
-# Add the Traceloop processor
-provider.add_span_processor(TraceloopSpanProcessor())
-trace.set_tracer_provider(provider)
-tracer = trace.get_tracer(__name__)
+def run_example():
+    # Set up tracing provider and exporter
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+    trace.set_tracer_provider(provider)
+    tracer = trace.get_tracer(__name__)
 
-print("Creating spans ...\n")
+    # Add processor (handler emission is default; no explicit TelemetryHandler needed)
+    provider.add_span_processor(TraceloopSpanProcessor())
 
-with tracer.start_as_current_span("chat gpt-4") as span:
-    span.set_attribute("traceloop.entity.input", "some data")
-    span.set_attribute("debug_info", "remove me if rule had remove")
+    print("\n== Default handler emission mode ==\n")
+    with tracer.start_as_current_span("chat gpt-4") as span:
+        span.set_attribute("traceloop.entity.input", "some data")
+        span.set_attribute("debug_info", "remove me if rule had remove")
 
-with tracer.start_as_current_span("vector encode") as span:
-    span.set_attribute("custom.kind", "embedding")
+
+if __name__ == "main__" or __name__ == "__main__":  # dual support
+    run_example()

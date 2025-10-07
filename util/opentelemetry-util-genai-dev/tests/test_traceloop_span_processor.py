@@ -33,9 +33,8 @@ from opentelemetry.util.genai.processors.traceloop_span_processor import (
     TraceloopSpanProcessor,
     TransformationRule,
 )
-from opentelemetry.util.genai.processors.traceloop_span_generator import (
-    TraceloopSpanGenerator,
-)
+
+from opentelemetry.util.genai.handler import TelemetryHandler
 
 
 @pytest.fixture
@@ -56,17 +55,22 @@ def tracer(tracer_provider, in_memory_exporter):
     return tracer_provider.get_tracer(__name__)
 
 
+@pytest.fixture
+def telemetry_handler(tracer_provider):
+    # Bind handler to the per-test tracer provider so emitted spans flow to test exporter
+    return TelemetryHandler(tracer_provider=tracer_provider)
+
+
 def _find_transformed_spans(spans: List[ReadableSpan]):
     # Heuristic: transformed spans have the sentinel attribute
     return [s for s in spans if s.attributes.get("_traceloop_processed")]
 
 
-def test_fallback_single_rule(tracer_provider, tracer, in_memory_exporter):
-    # Rename an existing attribute instead of adding a new one.
+def test_fallback_single_rule(tracer_provider, tracer, in_memory_exporter, telemetry_handler):
     processor = TraceloopSpanProcessor(
         attribute_transformations={"rename": {"llm.provider": "service.name"}},
         name_transformations={"chat *": "genai.chat"},
-        generator=TraceloopSpanGenerator(tracer=tracer),
+        telemetry_handler=telemetry_handler,
     )
     tracer_provider.add_span_processor(processor)
 
@@ -75,8 +79,7 @@ def test_fallback_single_rule(tracer_provider, tracer, in_memory_exporter):
 
     spans = in_memory_exporter.get_finished_spans()
     transformed = _find_transformed_spans(spans)
-    # Original + transformed
-    assert len(transformed) == 1
+    assert len(transformed) == 1  # only handler-emitted span carries sentinel
     t = transformed[0]
     assert t.name == "genai.chat"
     # Value preserved from original attribute
@@ -84,7 +87,7 @@ def test_fallback_single_rule(tracer_provider, tracer, in_memory_exporter):
     assert t.attributes["_traceloop_processed"] is True
 
 
-def test_rule_precedence(tracer_provider, tracer, in_memory_exporter):
+def test_rule_precedence(tracer_provider, tracer, in_memory_exporter, telemetry_handler):
     rules = [
         TransformationRule(
             match_name="chat *",
@@ -100,7 +103,7 @@ def test_rule_precedence(tracer_provider, tracer, in_memory_exporter):
     processor = TraceloopSpanProcessor(
         rules=rules,
         load_env_rules=False,
-        generator=TraceloopSpanGenerator(tracer=tracer),
+        telemetry_handler=telemetry_handler,
     )
     tracer_provider.add_span_processor(processor)
 
@@ -116,7 +119,7 @@ def test_rule_precedence(tracer_provider, tracer, in_memory_exporter):
     assert "second.marker" not in transformed[0].attributes
 
 
-def test_env_rule_overrides(tracer_provider, tracer, in_memory_exporter, monkeypatch):
+def test_env_rule_overrides(tracer_provider, tracer, in_memory_exporter, monkeypatch, telemetry_handler):
     env_spec = {
         "rules": [
             {
@@ -131,7 +134,7 @@ def test_env_rule_overrides(tracer_provider, tracer, in_memory_exporter, monkeyp
     processor = TraceloopSpanProcessor(
         attribute_transformations={"rename": {"marker": "fallback.marker"}},
         name_transformations={"chat *": "fallback.chat"},
-        generator=TraceloopSpanGenerator(tracer=tracer),
+        telemetry_handler=telemetry_handler,
     )
     tracer_provider.add_span_processor(processor)
 
@@ -148,11 +151,11 @@ def test_env_rule_overrides(tracer_provider, tracer, in_memory_exporter, monkeyp
     assert "fallback.marker" not in span.attributes
 
 
-def test_recursion_guard(tracer_provider, tracer, in_memory_exporter):
+def test_recursion_guard(tracer_provider, tracer, in_memory_exporter, telemetry_handler):
     # Span already marked as processed should not be processed again
     processor = TraceloopSpanProcessor(
         attribute_transformations={"rename": {"foo": "service.name"}},
-        generator=TraceloopSpanGenerator(tracer=tracer),
+        telemetry_handler=telemetry_handler,
     )
     tracer_provider.add_span_processor(processor)
 
@@ -167,10 +170,10 @@ def test_recursion_guard(tracer_provider, tracer, in_memory_exporter):
     assert transformed[0].name == "chat something"
 
 
-def test_non_matching_span_not_transformed(tracer_provider, tracer, in_memory_exporter):
+def test_non_matching_span_not_transformed(tracer_provider, tracer, in_memory_exporter, telemetry_handler):
     processor = TraceloopSpanProcessor(
         attribute_transformations={"rename": {"some.attr": "unused"}},
-        generator=TraceloopSpanGenerator(tracer=tracer),
+        telemetry_handler=telemetry_handler,
     )
     tracer_provider.add_span_processor(processor)
 
@@ -180,3 +183,20 @@ def test_non_matching_span_not_transformed(tracer_provider, tracer, in_memory_ex
     spans = in_memory_exporter.get_finished_spans()
     transformed = _find_transformed_spans(spans)
     assert not transformed
+
+
+def test_handler_emission_default(tracer_provider, tracer, in_memory_exporter, telemetry_handler):
+    processor = TraceloopSpanProcessor(
+        attribute_transformations={"rename": {"orig.attr": "renamed.attr"}},
+        name_transformations={"chat *": "genai.chat"},
+        telemetry_handler=telemetry_handler,
+    )
+    tracer_provider.add_span_processor(processor)
+    with tracer.start_as_current_span("chat model-x") as span:
+        span.set_attribute("orig.attr", 42)
+    spans = in_memory_exporter.get_finished_spans()
+    telemetry_spans = [s for s in spans if s.name == "genai.chat"]
+    assert telemetry_spans, "Expected telemetry span emitted via handler (default mode)"
+    tel = telemetry_spans[0]
+    assert tel.attributes.get("renamed.attr") == 42
+    assert tel.attributes.get("_traceloop_processed") is True

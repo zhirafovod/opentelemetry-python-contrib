@@ -254,10 +254,16 @@ class SpanEmitter(EmitterMeta):
         elif isinstance(invocation, EmbeddingInvocation):
             self._start_embedding(invocation)
         else:
-            # Use operation field for span name (defaults to "chat")
-            operation = getattr(invocation, "operation", "chat")
-            model_name = invocation.request_model
-            span_name = f"{operation} {model_name}"
+            # Use override if processor supplied one; else operation+model
+            override = getattr(invocation, "attributes", {}).get(
+                "gen_ai.override.span_name"
+            )
+            if override:
+                span_name = str(override)
+            else:
+                operation = getattr(invocation, "operation", "chat")
+                model_name = invocation.request_model
+                span_name = f"{operation} {model_name}"
             cm = self._tracer.start_as_current_span(
                 span_name, kind=SpanKind.CLIENT, end_on_exit=False
             )
