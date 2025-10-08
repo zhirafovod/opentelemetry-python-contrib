@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from types import MethodType
 from typing import Any, Dict, Iterable, List, Sequence
@@ -98,6 +99,25 @@ def build_emitter_pipeline(
         else:
             target.append(spec)
         spec_registry[spec.name] = spec
+
+    if os.getenv("OTEL_GENAI_ENABLE_TRACELOOP_TRANSLATOR"):
+        try: 
+            from .traceloop_translator import (
+                TraceloopTranslatorEmitter,  # type: ignore
+            )
+
+            _register(
+                EmitterSpec(
+                    name="TraceloopTranslator",
+                    category=_CATEGORY_SPAN,
+                    factory=lambda ctx: TraceloopTranslatorEmitter(),
+                    mode="prepend",  # ensure it runs before semantic span emitter
+                )
+            )
+        except Exception:  # pragma: no cover - defensive
+            _logger.exception(
+                "Failed to initialize TraceloopTranslator emitter despite flag set"
+            )
 
     if settings.enable_span and not settings.only_traceloop_compat:
         _register(

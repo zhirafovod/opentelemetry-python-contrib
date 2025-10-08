@@ -2,8 +2,34 @@
 
 from __future__ import annotations
 
-import json
-import os
+"""Example: Emitting Traceloop-compatible spans and translating legacy attributes.
+
+This example shows how to enable the external Traceloop compatibility emitter
+(`traceloop_compat`) alongside standard semantic convention spans. The legacy
+TraceloopSpanProcessor & transformation rules have been removed.
+
+Prerequisites:
+    pip install opentelemetry-util-genai-emitters-traceloop
+
+Environment (basic – compat only):
+    export OTEL_INSTRUMENTATION_GENAI_EMITTERS=traceloop_compat
+
+Environment (semantic + compat + translator promotion – simple flag):
+        export OTEL_GENAI_ENABLE_TRACELOOP_TRANSLATOR=1
+        export OTEL_INSTRUMENTATION_GENAI_EMITTERS=span,traceloop_compat
+
+Alternative (explicit token if registered via entry point):
+        export OTEL_INSTRUMENTATION_GENAI_EMITTERS=span,traceloop_translator,traceloop_compat
+    (If ordering needs enforcement you can use category override, e.g.
+        export OTEL_INSTRUMENTATION_GENAI_EMITTERS_SPAN=prepend:TraceloopTranslator )
+
+Optional: capture message content (both span + event):
+    export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES=both
+
+Run this example to see two spans per invocation: the semconv span and the
+Traceloop-compatible span.
+"""
+
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
@@ -11,52 +37,51 @@ from opentelemetry.sdk.trace.export import (
     ConsoleSpanExporter,
 )
 
-from opentelemetry.util.genai.processors.traceloop_span_processor import (
-    TraceloopSpanProcessor,
+from opentelemetry.util.genai.handler import get_telemetry_handler
+from opentelemetry.util.genai.types import (
+    LLMInvocation,
+    InputMessage,
+    OutputMessage,
+    Text,
 )
-"""Example: Traceloop span transformation via handler (implicit handler).
 
-The TraceloopSpanProcessor now emits via TelemetryHandler by default. You do not
-need to instantiate a TelemetryHandler manually unless you want custom provider
-or meter wiring. This example relies on the global singleton handler.
-"""
-
-RULE_SPEC = {
-    "rules": [
-        {
-            # NOTE: In Python dicts, duplicate keys are overwritten. The earlier
-            # version used two separate "rename" entries so only the last one
-            # survived. Combine them into a single mapping and optionally
-            # remove noisy attributes.
-            "attribute_transformations": {
-                "rename": {
-                    "traceloop.entity.input": "gen_ai.input.messages",
-                    "traceloop.entity.output": "gen_ai.output.messages",
-                },
-                # Demonstrate removal (uncomment to test):
-                # "remove": ["debug_info"],
-            },
-            "name_transformations": {"chat *": "genai.chat"},
-        }
-    ]
-}
-os.environ["OTEL_GENAI_SPAN_TRANSFORM_RULES"] = json.dumps(RULE_SPEC)
 
 def run_example():
-    # Set up tracing provider and exporter
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
     trace.set_tracer_provider(provider)
-    tracer = trace.get_tracer(__name__)
 
-    # Add processor (handler emission is default; no explicit TelemetryHandler needed)
-    provider.add_span_processor(TraceloopSpanProcessor())
+    # Build a telemetry handler (singleton) – emitters are chosen via env vars
+    handler = get_telemetry_handler(tracer_provider=provider)
 
-    print("\n== Default handler emission mode ==\n")
-    with tracer.start_as_current_span("chat gpt-4") as span:
-        span.set_attribute("traceloop.entity.input", "some data")
-        span.set_attribute("debug_info", "remove me if rule had remove")
+    # Include a few illustrative Traceloop-style attributes.
+    # These will be mapped/prefixed automatically by the Traceloop compat emitter.
+    invocation = LLMInvocation(
+        request_model="gpt-4",
+        input_messages=[InputMessage(role="user", parts=[Text("Hello")])],
+        attributes={
+            "custom.attribute": "value",  # arbitrary user attribute
+            "traceloop.entity.name": "ChatLLM",
+            "traceloop.workflow.name": "main_flow",
+            "traceloop.entity.path": "root/branch/leaf",
+            "traceloop.entity.input": "Hi"
+        },
+    )
+
+    handler.start_llm(invocation)
+    # Simulate model output
+    invocation.output_messages = [
+        OutputMessage(
+            role="assistant", parts=[Text("Hi there!")], finish_reason="stop"
+        )
+    ]
+    handler.stop_llm(invocation)
+
+    print("\nInvocation complete. Check exporter output above for:"
+        "\n  * SemanticConvention span containing promoted gen_ai.* keys"
+        "\n  * Traceloop compat span (legacy format)"
+        "\nIf translator emitter enabled, attributes like gen_ai.agent.name should be present.\n")
 
 
-if __name__ == "main__" or __name__ == "__main__":  # dual support
+if __name__ == "__main__":
     run_example()
