@@ -2,34 +2,6 @@
 
 from __future__ import annotations
 
-"""Example: Emitting Traceloop-compatible spans and translating legacy attributes.
-
-This example shows how to enable the external Traceloop compatibility emitter
-(`traceloop_compat`) alongside standard semantic convention spans. The legacy
-TraceloopSpanProcessor & transformation rules have been removed.
-
-Prerequisites:
-    pip install opentelemetry-util-genai-emitters-traceloop
-
-Environment (basic – compat only):
-    export OTEL_INSTRUMENTATION_GENAI_EMITTERS=traceloop_compat
-
-Environment (semantic + compat + translator promotion – simple flag):
-        export OTEL_GENAI_ENABLE_TRACELOOP_TRANSLATOR=1
-        export OTEL_INSTRUMENTATION_GENAI_EMITTERS=span,traceloop_compat
-
-Alternative (explicit token if registered via entry point):
-        export OTEL_INSTRUMENTATION_GENAI_EMITTERS=span,traceloop_translator,traceloop_compat
-    (If ordering needs enforcement you can use category override, e.g.
-        export OTEL_INSTRUMENTATION_GENAI_EMITTERS_SPAN=prepend:TraceloopTranslator )
-
-Optional: capture message content (both span + event):
-    export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES=both
-
-Run this example to see two spans per invocation: the semconv span and the
-Traceloop-compatible span.
-"""
-
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
