@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence, Union
 
 from ..interfaces import EmitterMeta, EmitterProtocol
 from ..types import Error, EvaluationResult
@@ -64,7 +64,7 @@ class CompositeEmitter(EmitterMeta):
     def on_evaluation_results(
         self,
         results: Sequence[EvaluationResult],
-        obj: Any | None = None,
+        obj: Union[Any, None] = None,
     ) -> None:  # type: ignore[override]
         if not results:
             return
@@ -108,8 +108,8 @@ class CompositeEmitter(EmitterMeta):
         categories: Sequence[str],
         method_name: str,
         *,
-        obj: Any | None = None,
-        error: Error | None = None,
+        obj: Union[Any, None] = None,
+        error: Union[Error, None] = None,
         results: Sequence[EvaluationResult] | None = None,
     ) -> None:
         for category in categories:

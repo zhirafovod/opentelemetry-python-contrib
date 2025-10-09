@@ -17,7 +17,7 @@ from __future__ import annotations
 import inspect
 import logging
 from dataclasses import dataclass
-from typing import Callable, Dict, Mapping, Sequence
+from typing import Callable, Dict, Mapping, Sequence, Union
 
 from opentelemetry.util._importlib_metadata import (
     entry_points,
@@ -46,7 +46,7 @@ def _call_with_optional_params(
     target: EvaluatorFactory,
     *,
     metrics: Sequence[str] | None = None,
-    invocation_type: str | None = None,
+    invocation_type: Union[str, None] = None,
     options: Mapping[str, str] | None = None,
 ) -> Evaluator:
     """Call a factory/constructor handling optional ``metrics`` gracefully."""
@@ -169,7 +169,7 @@ def _load_entry_points() -> None:
                 "Failed to load evaluator entry point '%s': %s", ep.name, exc
             )
             continue
-        registration: EvaluatorRegistration | None = None
+        registration: Union[EvaluatorRegistration, None] = None
         if isinstance(target, EvaluatorRegistration):
             registration = target
         elif hasattr(target, "factory") and hasattr(target, "default_metrics"):
@@ -206,7 +206,7 @@ def get_evaluator(
     name: str,
     metrics: Sequence[str] | None = None,
     *,
-    invocation_type: str | None = None,
+    invocation_type: Union[str, None] = None,
     options: Mapping[str, str] | None = None,
 ) -> Evaluator:
     _load_entry_points()

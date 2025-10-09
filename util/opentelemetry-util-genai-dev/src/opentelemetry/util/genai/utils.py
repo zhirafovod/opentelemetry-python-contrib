@@ -14,6 +14,7 @@
 
 import logging
 import os
+from typing import Union
 
 from opentelemetry.instrumentation._semconv import (
     _OpenTelemetrySemanticConventionStability,
@@ -101,7 +102,7 @@ def get_content_capturing_mode() -> (
     primary = (capture_message_content or "").strip()
     secondary = (capture_message_content_mode or "").strip()
 
-    def _convert(tok: str) -> ContentCapturingMode | None:
+    def _convert(tok: str) -> Union[ContentCapturingMode, None]:
         if not tok:
             return None
         u = tok.upper()
