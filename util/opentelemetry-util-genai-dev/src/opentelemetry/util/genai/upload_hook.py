@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 from os import environ
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable, Union
 
 from opentelemetry._logs import LogRecord
 from opentelemetry.trace import Span
@@ -72,8 +72,8 @@ class UploadHook(Protocol):
         inputs: list[types.InputMessage],
         outputs: list[types.OutputMessage],
         system_instruction: list[types.MessagePart],
-        span: Span | None = None,
-        log_record: LogRecord | None = None,
+        span: Union[Span, None] = None,
+        log_record: Union[LogRecord, None] = None,
     ) -> None: ...
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json  # noqa: F401 (kept for backward compatibility if external code relies on this module re-exporting json)
 from dataclasses import asdict  # noqa: F401
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from opentelemetry import trace
 from opentelemetry.semconv._incubating.attributes import (
@@ -202,7 +202,7 @@ class SpanEmitter(EmitterMeta):
         # Agent context (already covered by semconv metadata on base fields)
 
     def _apply_finish_attrs(
-        self, invocation: LLMInvocation | EmbeddingInvocation
+        self, invocation: Union[LLMInvocation, EmbeddingInvocation]
     ):
         span = getattr(invocation, "span", None)
         if span is None:
@@ -255,7 +255,7 @@ class SpanEmitter(EmitterMeta):
 
     # ---- lifecycle -------------------------------------------------------
     def on_start(
-        self, invocation: LLMInvocation | EmbeddingInvocation
+        self, invocation: Union[LLMInvocation, EmbeddingInvocation]
     ) -> None:  # type: ignore[override]
         # Handle new agentic types
         if isinstance(invocation, Workflow):
@@ -289,7 +289,7 @@ class SpanEmitter(EmitterMeta):
             invocation.context_token = cm  # type: ignore[assignment]
             self._apply_start_attrs(invocation)
 
-    def on_end(self, invocation: LLMInvocation | EmbeddingInvocation) -> None:  # type: ignore[override]
+    def on_end(self, invocation: Union[LLMInvocation, EmbeddingInvocation]) -> None:  # type: ignore[override]
         if isinstance(invocation, Workflow):
             self._finish_workflow(invocation)
         elif isinstance(invocation, AgentInvocation):
@@ -312,7 +312,7 @@ class SpanEmitter(EmitterMeta):
             span.end()
 
     def on_error(
-        self, error: Error, invocation: LLMInvocation | EmbeddingInvocation
+        self, error: Error, invocation: Union[LLMInvocation, EmbeddingInvocation]
     ) -> None:  # type: ignore[override]
         if isinstance(invocation, Workflow):
             self._error_workflow(error, invocation)

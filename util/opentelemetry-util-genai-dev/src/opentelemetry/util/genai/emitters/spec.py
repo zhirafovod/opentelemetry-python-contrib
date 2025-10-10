@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, Union
 
 from ..interfaces import EmitterProtocol
 
@@ -30,7 +30,7 @@ class EmitterSpec:
     mode: str = "append"
     after: Sequence[str] = field(default_factory=tuple)
     before: Sequence[str] = field(default_factory=tuple)
-    invocation_types: Sequence[str] | None = None
+    invocation_types: Union[Sequence[str], None] = None
 
 
 @dataclass(frozen=True)

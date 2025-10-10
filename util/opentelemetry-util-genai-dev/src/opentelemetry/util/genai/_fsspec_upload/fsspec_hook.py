@@ -22,7 +22,7 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from functools import partial
-from typing import Any, Callable, Literal, TextIO, cast
+from typing import Any, Callable, Literal, TextIO, cast, Union
 from uuid import uuid4
 
 import fsspec
@@ -147,8 +147,8 @@ class FsspecUploadHook(UploadHook):
         inputs: list[types.InputMessage],
         outputs: list[types.OutputMessage],
         system_instruction: list[types.MessagePart],
-        span: Span | None = None,
-        log_record: LogRecord | None = None,
+        span: Union[Span, None] = None,
+        log_record: Union[LogRecord, None] = None,
         **kwargs: Any,
     ) -> None:
         completion = Completion(
