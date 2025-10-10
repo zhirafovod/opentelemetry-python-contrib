@@ -56,7 +56,7 @@ _SEMCONV_GEN_AI_KEYS: set[str] = {
 
 
 def filter_semconv_gen_ai_attributes(
-    attributes: Mapping[str, Any] | None,
+    attributes: Union[Mapping[str, Any], None],
     *,
     extras: Iterable[str] = (),
 ) -> dict[str, Any]:

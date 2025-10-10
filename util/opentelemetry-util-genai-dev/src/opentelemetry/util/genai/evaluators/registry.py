@@ -45,9 +45,9 @@ _ENTRY_POINTS_LOADED = False
 def _call_with_optional_params(
     target: EvaluatorFactory,
     *,
-    metrics: Sequence[str] | None = None,
+    metrics: Union[Sequence[str], None] = None,
     invocation_type: Union[str, None] = None,
-    options: Mapping[str, str] | None = None,
+    options: Union[Mapping[str, str], None] = None,
 ) -> Evaluator:
     """Call a factory/constructor handling optional ``metrics`` gracefully."""
 
@@ -204,10 +204,10 @@ def _load_entry_points() -> None:
 
 def get_evaluator(
     name: str,
-    metrics: Sequence[str] | None = None,
+    metrics: Union[Sequence[str], None] = None,
     *,
     invocation_type: Union[str, None] = None,
-    options: Mapping[str, str] | None = None,
+    options: Union[Mapping[str, str], None] = None,
 ) -> Evaluator:
     _load_entry_points()
     key = name.lower()

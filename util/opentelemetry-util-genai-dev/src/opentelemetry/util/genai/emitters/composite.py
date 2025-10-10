@@ -37,10 +37,10 @@ class CompositeEmitter(EmitterMeta):
     def __init__(
         self,
         *,
-        span_emitters: Iterable[EmitterProtocol] | None = None,
-        metrics_emitters: Iterable[EmitterProtocol] | None = None,
-        content_event_emitters: Iterable[EmitterProtocol] | None = None,
-        evaluation_emitters: Iterable[EmitterProtocol] | None = None,
+        span_emitters: Union[Iterable[EmitterProtocol], None] = None,
+        metrics_emitters: Union[Iterable[EmitterProtocol], None] = None,
+        content_event_emitters: Union[Iterable[EmitterProtocol], None] = None,
+        evaluation_emitters: Union[Iterable[EmitterProtocol], None] = None,
     ) -> None:
         self._categories: dict[str, list[EmitterProtocol]] = {
             "span": list(span_emitters or []),
@@ -79,7 +79,7 @@ class CompositeEmitter(EmitterMeta):
     # Introspection helpers used during configuration refresh
 
     def iter_emitters(
-        self, categories: Sequence[str] | None = None
+        self, categories: Union[Sequence[str], None] = None
     ) -> Iterator[EmitterProtocol]:
         names = categories or (
             "span",
@@ -110,7 +110,7 @@ class CompositeEmitter(EmitterMeta):
         *,
         obj: Union[Any, None] = None,
         error: Union[Error, None] = None,
-        results: Sequence[EvaluationResult] | None = None,
+        results: Union[Sequence[EvaluationResult], None] = None,
     ) -> None:
         for category in categories:
             emitters = self._categories.get(category)

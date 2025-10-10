@@ -35,10 +35,10 @@ class Evaluator(ABC):
 
     def __init__(
         self,
-        metrics: Iterable[str] | None = None,
+        metrics: Union[Iterable[str], None] = None,
         *,
         invocation_type: Union[str, None] = None,
-        options: Mapping[str, str] | None = None,
+        options: Union[Mapping[str, str], None] = None,
     ) -> None:
         default_metrics = (
             self.default_metrics_for(invocation_type)
