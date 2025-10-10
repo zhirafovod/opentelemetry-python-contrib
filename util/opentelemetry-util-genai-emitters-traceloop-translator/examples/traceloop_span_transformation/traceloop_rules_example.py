@@ -17,7 +17,6 @@ from opentelemetry.util.genai.types import (
     Text,
 )
 
-
 def run_example():
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
@@ -36,7 +35,7 @@ def run_example():
             "traceloop.entity.name": "ChatLLM",
             "traceloop.workflow.name": "main_flow",
             "traceloop.entity.path": "root/branch/leaf",
-            "traceloop.entity.input": "Hi"
+            "traceloop.entity.input": "'{\"inputs\": {\"messages\": [{\"lc\": 1, \"type\": \"constructor\", \"text\": \"Hi\"}]}}'"
         },
     )
 
@@ -48,11 +47,6 @@ def run_example():
         )
     ]
     handler.stop_llm(invocation)
-
-    print("\nInvocation complete. Check exporter output above for:"
-        "\n  * SemanticConvention span containing promoted gen_ai.* keys"
-        "\n  * Traceloop compat span (legacy format)"
-        "\nIf translator emitter enabled, attributes like gen_ai.agent.name should be present.\n")
 
 
 if __name__ == "__main__":
