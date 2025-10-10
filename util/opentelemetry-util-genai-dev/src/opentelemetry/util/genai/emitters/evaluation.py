@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Sequence, Union
+import logging
 
 from opentelemetry import _events as _otel_events
 
@@ -56,6 +57,7 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
     """
 
     role = "evaluation_metrics"
+    name = "EvaluationMetrics"
 
     def __init__(
         self, histogram_factory
@@ -105,6 +107,17 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
             except Exception:  # pragma: no cover - defensive
                 histogram = None
             if histogram is None:
+                # Log once per metric name if histogram factory did not provide an instrument.
+                try:
+                    _once_key = f"_genai_eval_hist_missing_{canonical}"
+                    if not getattr(self, _once_key, False):
+                        logging.getLogger(__name__).debug(
+                            "EvaluationMetricsEmitter: no histogram for canonical metric '%s' (factory returned None)",
+                            canonical,
+                        )
+                        setattr(self, _once_key, True)
+                except Exception:
+                    pass
                 continue
             attrs: Dict[str, Any] = {
                 GEN_AI_OPERATION_NAME: "evaluation",
@@ -141,8 +154,20 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                 attrs[GEN_AI_PROVIDER_NAME] = provider
             if res.label is not None:
                 attrs[GEN_AI_EVALUATION_SCORE_LABEL] = res.label
-            if res.explanation:
-                attrs["gen_ai.evaluation.score.reasoning"] = res.explanation
+            # Derive boolean gen_ai.evaluation.passed
+            passed = None
+            if res.label:
+                lbl = str(res.label).lower()
+                if any(k in lbl for k in ("pass", "success", "ok", "true")):
+                    passed = True
+                elif any(k in lbl for k in ("fail", "error", "false")):
+                    passed = False
+            # NOTE: We deliberately do NOT infer pass/fail purely from numeric score
+            # without an accompanying categorical label to avoid accidental cardinality
+            # or semantic ambiguities across evaluators. Future extension could allow
+            # opt-in heuristic score->pass mapping.
+            if passed is not None:
+                attrs["gen_ai.evaluation.passed"] = passed
             attrs["gen_ai.evaluation.score.units"] = "score"
             if res.error is not None:
                 attrs["error.type"] = res.error.type.__qualname__
@@ -156,6 +181,7 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
     """Emits one event per evaluation result."""
 
     role = "evaluation_events"
+    name = "EvaluationEvents"
 
     def __init__(
         self, event_logger, *, emit_legacy_event: bool = False
@@ -244,10 +270,16 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
                 base_attrs[GEN_AI_EVALUATION_SCORE_VALUE] = res.score
             if res.label is not None:
                 base_attrs[GEN_AI_EVALUATION_SCORE_LABEL] = res.label
-            if res.explanation:
-                base_attrs["gen_ai.evaluation.score.reasoning"] = (
-                    res.explanation
-                )
+            passed = None
+            if res.label:
+                lbl = str(res.label).lower()
+                if any(k in lbl for k in ("pass", "success", "ok", "true")):
+                    passed = True
+                elif any(k in lbl for k in ("fail", "error", "false")):
+                    passed = False
+            # Do not infer pass/fail solely from numeric score (see metrics emitter note)
+            if passed is not None:
+                base_attrs["gen_ai.evaluation.passed"] = passed
             if isinstance(res.score, (int, float)):
                 base_attrs["gen_ai.evaluation.score.units"] = "score"
             if res.error is not None:
