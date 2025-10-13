@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from opentelemetry import _events as _otel_events
 
@@ -47,6 +47,35 @@ class _EvaluationEmitterBase(EmitterMeta):
         return None
 
 
+def _canonicalize_metric_name(raw_name: str) -> Optional[str]:
+    """Map raw evaluator metric names (possibly noisy) to canonical names.
+
+    Handles legacy / provider-specific variants and formatting differences:
+    - answer relevancy / answer_relevancy / answer relevance -> relevance
+    - faithfulness -> hallucination (legacy synonym)
+    - hallucination [geval] / hallucination_geval / hallucination-* -> hallucination
+    - direct passthrough for: hallucination, sentiment, toxicity, bias
+    Returns None if the metric is unsupported (ignored by emitters).
+    """
+    if not raw_name:
+        return None
+    lowered = raw_name.strip().lower()
+    # Fast path exact matches first
+    if lowered in {"bias", "toxicity", "sentiment", "hallucination"}:
+        return lowered
+    if lowered == "faithfulness":
+        return "hallucination"
+    # Normalize punctuation/whitespace to underscores for pattern matching
+    import re as _re  # local import to avoid global cost
+
+    normalized = _re.sub(r"[^a-z0-9]+", "_", lowered).strip("_")
+    if normalized in {"answer_relevancy", "answer_relevance", "relevance"}:
+        return "relevance"
+    if normalized.startswith("hallucination"):
+        return "hallucination"
+    return None
+
+
 class EvaluationMetricsEmitter(_EvaluationEmitterBase):
     """Records evaluation scores to metric-specific histograms.
 
@@ -84,18 +113,11 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
         if invocation is None:
             return
         for res in results:
-            raw_name = getattr(res, "metric_name", "") or ""
-            lowered = raw_name.lower()
-            if lowered == "answer_relevancy":
-                canonical = "relevance"
-            elif lowered == "faithfulness":
-                canonical = "hallucination"
-            elif lowered == "sentiment":
-                canonical = "sentiment"
-            elif lowered in {"toxicity", "bias"}:
-                canonical = lowered
-            else:
-                continue  # unsupported metric
+            canonical = _canonicalize_metric_name(
+                getattr(res, "metric_name", "") or ""
+            )
+            if canonical is None:
+                continue
             if not isinstance(res.score, (int, float)):
                 continue
             try:
@@ -224,17 +246,10 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
         )
 
         for res in results:
-            raw_name = getattr(res, "metric_name", "") or ""
-            lowered = raw_name.lower()
-            if lowered == "answer_relevancy":
-                canonical = "relevance"
-            elif lowered == "faithfulness":
-                canonical = "hallucination"
-            elif lowered == "sentiment":
-                canonical = "sentiment"
-            elif lowered in {"toxicity", "bias"}:
-                canonical = lowered
-            else:
+            canonical = _canonicalize_metric_name(
+                getattr(res, "metric_name", "") or ""
+            )
+            if canonical is None:
                 continue
             base_attrs: Dict[str, Any] = {
                 GEN_AI_OPERATION_NAME: "evaluation",

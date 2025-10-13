@@ -76,6 +76,11 @@ _METRIC_REGISTRY: Mapping[str, str] = {
     "bias": "BiasMetric",
     "toxicity": "ToxicityMetric",
     "answer_relevancy": "AnswerRelevancyMetric",
+    # Synonyms for answer relevancy accepted in user configuration; all map to
+    # the same underlying Deepeval metric class. Emission canonicalization
+    # later will normalize variants (answer relevancy / answer_relevancy / answer relevance)
+    "answer_relevance": "AnswerRelevancyMetric",
+    "relevance": "AnswerRelevancyMetric",
     "faithfulness": "FaithfulnessMetric",
     "hallucination": "__custom_hallucination__",  # custom GEval metric
 }
@@ -205,8 +210,15 @@ class DeepevalEvaluator(Evaluator):
     def _build_metric_specs(self) -> Sequence[_MetricSpec]:
         specs: list[_MetricSpec] = []
         registry = _METRIC_REGISTRY
+        import re as _re
+
         for name in self.metrics:
-            key = (name or "").strip().lower()
+            raw = (name or "").strip().lower()
+            # Normalize any spaces / punctuation to underscores so that
+            # variants like "answer relevancy" or "answer-relevance" resolve
+            # to the canonical registry key "answer_relevancy".
+            normalized = _re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+            key = normalized
             options = self.options.get(name, {})
             if key not in registry:
                 specs.append(
