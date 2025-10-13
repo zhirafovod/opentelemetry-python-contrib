@@ -1,0 +1,31 @@
+opentelemetry-api>=1.31.0
+opentelemetry-sdk>=1.31.0
+opentelemetry-semantic-conventions>=0.57b0
+
+# GenAI utilities (local editable install recommended if developing):
+# You can instead run: pip install -e util/opentelemetry-util-genai
+opentelemetry-util-genai-dev >=0.1.0  local path editable preferred
+
+# Traceloop translator emitter (provides translation of traceloop.* attrs)
+opentelemetry-util-genai-emitters-traceloop-translator>=0.1.0
+
+# (Optional) LangGraph stack for the live single-agent example
+langchain>=0.3.0
+langchain-openai>=0.2.0
+langgraph>=0.2.0
+openai>=1.0.0
+
+opentelemetry-exporter-richconsole>=0.0.1
+
+python-dotenv>=1.0.0
+# Notes:
+# 1. If working from a clone of opentelemetry-python-contrib, prefer editable installs:
+#       pip install -e util/opentelemetry-util-genai \
+#                   -e util/opentelemetry-util-genai-dev \
+#                   -e util/opentelemetry-util-genai-emitters-traceloop-translator
+#    (the -dev variant hosts examples; the base package supplies runtime code.)
+# 2. Set environment flags before running the demo:
+#       export OTEL_GENAI_ENABLE_TRACELOOP_TRANSLATOR=1
+#       export OTEL_INSTRUMENTATION_GENAI_EMITTERS=span
+#       python util/opentelemetry-util-genai-dev/examples/langgraph_single_agent_traceloop_demo.py
+# 3. Provide OPENAI_API_KEY for real model calls, else the script falls back to stub.

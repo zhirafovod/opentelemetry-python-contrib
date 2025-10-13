@@ -64,3 +64,6 @@ target
 
 # deepeval
 .deepeval
+
+
+.env

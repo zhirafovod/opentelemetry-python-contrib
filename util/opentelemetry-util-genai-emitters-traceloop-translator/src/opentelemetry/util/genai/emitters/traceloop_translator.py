@@ -74,6 +74,10 @@ class TraceloopTranslatorEmitter(EmitterMeta):
         return isinstance(obj, LLMInvocation)
 
     def on_start(self, invocation: LLMInvocation) -> None:
+        self._translate_attributes(invocation)
+
+    def _translate_attributes(self, invocation: LLMInvocation) -> None:
+        """Translate traceloop.* attributes to gen_ai.* equivalents."""
         attrs = getattr(invocation, "attributes", None)
         if not attrs:
             return
@@ -126,8 +130,9 @@ class TraceloopTranslatorEmitter(EmitterMeta):
             elif span_kind in ("workflow", "agent", "chain"):
                 attrs.setdefault("gen_ai.operation.name", "invoke_agent")
 
-    def on_end(self, invocation: LLMInvocation) -> None:  # pragma: no cover
-        return
+    def on_end(self, invocation: LLMInvocation) -> None:
+        """Also translate attributes at end, in case new ones were added after start."""
+        self._translate_attributes(invocation)
 
     def on_error(self, error, invocation: LLMInvocation) -> None:  # pragma: no cover
         return
