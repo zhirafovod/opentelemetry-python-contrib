@@ -62,10 +62,22 @@ def test_registration_factory_emits_scores():
 
 
 def test_evaluator_reports_missing_dependency():
+    # Simulate missing dependency / analyzer even if nltk package is installed.
+    # We inject a stub 'nltk' and 'nltk.sentiment' module without SentimentIntensityAnalyzer
+    # so that the evaluator import path raises AttributeError caught as missing dependency.
     sys.modules.pop("nltk", None)
     sys.modules.pop("nltk.sentiment", None)
-    evaluator = NLTKSentimentEvaluator()
-    results = evaluator.evaluate_llm(_build_invocation("Needs nltk"))
-    assert results
-    assert results[0].error is not None
-    assert results[0].score is None
+    stub_root = types.ModuleType("nltk")
+    stub_sentiment = types.ModuleType("nltk.sentiment")
+    # Intentionally do NOT define SentimentIntensityAnalyzer
+    sys.modules["nltk"] = stub_root
+    sys.modules["nltk.sentiment"] = stub_sentiment
+    try:
+        evaluator = NLTKSentimentEvaluator()
+        results = evaluator.evaluate_llm(_build_invocation("Needs nltk"))
+        assert results
+        assert results[0].error is not None
+        assert results[0].score is None
+    finally:  # cleanup to not affect other tests
+        sys.modules.pop("nltk", None)
+        sys.modules.pop("nltk.sentiment", None)

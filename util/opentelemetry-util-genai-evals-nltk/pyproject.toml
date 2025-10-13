@@ -32,7 +32,9 @@ dependencies = [
 ]
 
 [project.entry-points."opentelemetry_util_genai_evaluators"]
-nltk_sentiment = "opentelemetry.util.evaluator.nltk:registration"
+# Expose the EvaluatorRegistration object directly so the new registry loader
+# recognises default metrics (legacy pattern pointed at a function returning registration).
+nltk_sentiment = "opentelemetry.util.evaluator.nltk:_REGISTRATION"
 
 [project.optional-dependencies]
 test = ["pytest>=7.0.0"]
