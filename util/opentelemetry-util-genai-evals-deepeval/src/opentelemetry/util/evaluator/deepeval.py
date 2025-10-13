@@ -390,7 +390,7 @@ class DeepevalEvaluator(Evaluator):
         model_override = options.get("model") if options else None
         threshold = options.get("threshold") if options else None
         kwargs: dict[str, Any] = {
-            "name": "sentiment",
+            "name": "sentiment [geval]",
             "criteria": criteria,
             "evaluation_params": params,
             "threshold": threshold
@@ -481,7 +481,17 @@ class DeepevalEvaluator(Evaluator):
             metrics_data = getattr(test, "metrics_data", []) or []
             for metric in metrics_data:
                 name = getattr(metric, "name", "deepeval")
-                score = getattr(metric, "score", None)
+                raw_score = getattr(metric, "score", None)
+                score: float | None
+                if isinstance(raw_score, (int, float)):
+                    score = float(raw_score)
+                elif isinstance(raw_score, str):
+                    try:
+                        score = float(raw_score.strip())
+                    except Exception:  # pragma: no cover - defensive
+                        score = None
+                else:
+                    score = None
                 reason = getattr(metric, "reason", None)
                 success = getattr(metric, "success", None)
                 threshold = getattr(metric, "threshold", None)
@@ -519,25 +529,43 @@ class DeepevalEvaluator(Evaluator):
                     label = "pass"
                 elif success is False:
                     label = "fail"
+                # Custom sentiment transformation: maintain original compound, map recorded score to [0,1]
+                if (
+                    name in {"sentiment", "sentiment [geval]"}
+                    and score is not None
+                ):
+                    try:
+                        compound = max(-1.0, min(1.0, score))
+                        mapped = (compound + 1.0) / 2.0  # [0,1]
+                        score = mapped
+                        attributes.setdefault(
+                            "deepeval.sentiment.compound", round(compound, 6)
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        pass
                 results.append(
                     EvaluationResult(
                         metric_name=name,
-                        score=score
-                        if isinstance(score, (int, float))
-                        else None,
+                        score=score,
                         label=label,
                         explanation=reason,
                         error=error,
                         attributes=attributes,
                     )
                 )
-                # Post-process custom sentiment to derive distribution
-                if name == "sentiment" and isinstance(score, (int, float)):
+                # Post-process custom sentiment distribution (after mapping)
+                if name in {"sentiment", "sentiment [geval]"} and isinstance(
+                    score, (int, float)
+                ):
                     # Score expected in [-1,1]; clamp then transform.
                     try:
-                        clamped = max(-1.0, min(1.0, float(score)))
-                        # Map to [0,1] positive strength
-                        pos_strength = (clamped + 1) / 2.0
+                        # Retrieve compound (may have been set above)
+                        compound_val = attributes.get(
+                            "deepeval.sentiment.compound", (score * 2.0) - 1.0
+                        )
+                        clamped = max(-1.0, min(1.0, float(compound_val)))
+                        # Positive strength now is score itself (mapped)
+                        pos_strength = float(score)
                         neg_strength = 1 - pos_strength
                         # Heuristic neutral: proximity to midpoint
                         neu_strength = 1 - abs(clamped)

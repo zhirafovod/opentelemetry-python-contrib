@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, Optional, Sequence
 
 from opentelemetry import _events as _otel_events
@@ -73,7 +74,27 @@ def _canonicalize_metric_name(raw_name: str) -> Optional[str]:
         return "relevance"
     if normalized.startswith("hallucination"):
         return "hallucination"
+    if normalized.startswith("sentiment"):
+        # Allow variants like sentiment_geval, sentiment[geval], sentiment-geval
+        return "sentiment"
     return None
+
+
+# Debug logging configuration:
+#   OTEL_GENAI_EVAL_DEBUG_SKIPS=1|true|yes  -> one-time logs when a measurement is skipped (already implemented)
+#   OTEL_GENAI_EVAL_DEBUG_EACH=1|true|yes   -> verbose log line for every evaluation result processed (attempted measurement)
+_EVAL_DEBUG_SKIPS = os.getenv("OTEL_GENAI_EVAL_DEBUG_SKIPS", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_EVAL_DEBUG_EACH = os.getenv("OTEL_GENAI_EVAL_DEBUG_EACH", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 class EvaluationMetricsEmitter(_EvaluationEmitterBase):
@@ -111,14 +132,65 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
     ) -> None:
         invocation = obj if isinstance(obj, GenAI) else None
         if invocation is None:
+            if _EVAL_DEBUG_SKIPS:
+                logging.getLogger(__name__).debug(
+                    "EvaluationMetricsEmitter: skipping all results (no GenAI invocation provided)"
+                )
             return
+        # Per-emitter set of (reason, key) we have already logged to avoid noise.
+        if not hasattr(self, "_logged_skip_keys"):
+            self._logged_skip_keys = set()  # type: ignore[attr-defined]
+
+        def _log_skip(
+            reason: str,
+            metric_raw: Any,
+            extra: Optional[Dict[str, Any]] = None,
+        ):
+            if not _EVAL_DEBUG_SKIPS:
+                return
+            key = (reason, str(metric_raw))
+            try:
+                if key in self._logged_skip_keys:  # type: ignore[attr-defined]
+                    return
+                self._logged_skip_keys.add(key)  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - defensive
+                pass
+            msg = f"EvaluationMetricsEmitter: skipped metric '{metric_raw}' reason={reason}"
+            if extra:
+                try:
+                    msg += " " + " ".join(
+                        f"{k}={v!r}" for k, v in extra.items() if v is not None
+                    )
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            logging.getLogger(__name__).debug(msg)
+
         for res in results:
             canonical = _canonicalize_metric_name(
                 getattr(res, "metric_name", "") or ""
             )
+            raw_name = getattr(res, "metric_name", None)
+            if _EVAL_DEBUG_EACH:
+                logging.getLogger(__name__).debug(
+                    "EvaluationMetricsEmitter: processing metric raw=%r canonical=%r score=%r type=%s label=%r",
+                    raw_name,
+                    canonical,
+                    getattr(res, "score", None),
+                    type(getattr(res, "score", None)).__name__,
+                    getattr(res, "label", None),
+                )
             if canonical is None:
+                _log_skip("unsupported_metric_name", raw_name)
                 continue
             if not isinstance(res.score, (int, float)):
+                _log_skip(
+                    "non_numeric_score",
+                    raw_name,
+                    {
+                        "score_type": type(res.score).__name__,
+                        "score_value": getattr(res, "score", None),
+                    },
+                )
                 continue
             try:
                 histogram = (
@@ -126,8 +198,11 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                     if self._hist_factory
                     else None
                 )  # type: ignore[attr-defined]
-            except Exception:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover - defensive
                 histogram = None
+                _log_skip(
+                    "histogram_factory_error", raw_name, {"error": repr(exc)}
+                )
             if histogram is None:
                 # Log once per metric name if histogram factory did not provide an instrument.
                 try:
@@ -140,7 +215,19 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                         setattr(self, _once_key, True)
                 except Exception:
                     pass
+                _log_skip(
+                    "no_histogram_instrument",
+                    raw_name,
+                    {"canonical": canonical},
+                )
                 continue
+            elif _EVAL_DEBUG_EACH:
+                logging.getLogger(__name__).debug(
+                    "EvaluationMetricsEmitter: recording metric canonical=%r score=%r instrument=%s",
+                    canonical,
+                    getattr(res, "score", None),
+                    type(histogram).__name__,
+                )
             attrs: Dict[str, Any] = {
                 GEN_AI_OPERATION_NAME: "evaluation",
                 GEN_AI_EVALUATION_NAME: canonical,
@@ -195,7 +282,17 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                 attrs["error.type"] = res.error.type.__qualname__
             try:
                 histogram.record(res.score, attributes=attrs)  # type: ignore[attr-defined]
-            except Exception:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover - defensive
+                _log_skip(
+                    "histogram_record_error", raw_name, {"error": repr(exc)}
+                )
+                if _EVAL_DEBUG_EACH:
+                    logging.getLogger(__name__).debug(
+                        "EvaluationMetricsEmitter: record failed canonical=%r score=%r error=%r",
+                        canonical,
+                        getattr(res, "score", None),
+                        exc,
+                    )
                 pass
 
 

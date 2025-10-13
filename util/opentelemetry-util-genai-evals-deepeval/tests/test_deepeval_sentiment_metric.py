@@ -153,10 +153,10 @@ def _build_invocation():
 def test_sentiment_metric_result_attributes(monkeypatch):
     invocation = _build_invocation()
     evaluator = plugin.DeepevalEvaluator(
-        ("sentiment",), invocation_type="LLMInvocation"
+        ("sentiment [geval]",), invocation_type="LLMInvocation"
     )
 
-    # Fake deepeval result with a sentiment score 0.6 (~ slightly positive after model mapping)
+    # Fake deepeval result with a sentiment compound score 0.6 (will be mapped to (0.6+1)/2=0.8 recorded score)
     fake_result = DeeEvaluationResult(
         test_results=[
             TestResult(
@@ -164,7 +164,7 @@ def test_sentiment_metric_result_attributes(monkeypatch):
                 success=True,
                 metrics_data=[
                     MetricData(
-                        name="sentiment",
+                        name="sentiment [geval]",
                         threshold=0.0,
                         success=True,
                         score=0.6,
@@ -194,8 +194,9 @@ def test_sentiment_metric_result_attributes(monkeypatch):
     results = evaluator.evaluate(invocation)
     assert len(results) == 1
     res = results[0]
-    assert res.metric_name == "sentiment"
-    assert res.score == 0.6
+    assert res.metric_name == "sentiment [geval]"
+    # Recorded score should be mapped to [0,1]
+    assert res.score == pytest.approx((0.6 + 1) / 2, rel=1e-6)
     # Distribution attributes should be present
     assert "deepeval.sentiment.neg" in res.attributes
     assert "deepeval.sentiment.neu" in res.attributes
@@ -206,7 +207,7 @@ def test_sentiment_metric_result_attributes(monkeypatch):
     assert 0.0 <= res.attributes["deepeval.sentiment.neu"] <= 1.0
     assert 0.0 <= res.attributes["deepeval.sentiment.pos"] <= 1.0
     compound = res.attributes["deepeval.sentiment.compound"]
-    assert -1.0 <= compound <= 1.0
+    assert compound == pytest.approx(0.6, rel=1e-6)
     # Normalization check (allow tiny float drift)
     total = (
         res.attributes["deepeval.sentiment.neg"]
