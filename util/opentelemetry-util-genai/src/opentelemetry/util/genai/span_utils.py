@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 from dataclasses import asdict
-from typing import Any, Dict, List
+from typing import List
 
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAI,
@@ -34,6 +33,7 @@ from opentelemetry.util.genai.types import (
 )
 from opentelemetry.util.genai.utils import (
     ContentCapturingMode,
+    gen_ai_json_dumps,
     get_content_capturing_mode,
     is_experimental_mode,
 )
@@ -46,24 +46,24 @@ def _apply_common_span_attributes(
 
     Returns (genai_attributes) for use with metrics.
     """
-    request_model = invocation.request_model
-    provider = invocation.provider
     span.update_name(
-        f"{GenAI.GenAiOperationNameValues.CHAT.value} {request_model}"
+        f"{GenAI.GenAiOperationNameValues.CHAT.value} {invocation.request_model}".strip()
     )
     span.set_attribute(
         GenAI.GEN_AI_OPERATION_NAME, GenAI.GenAiOperationNameValues.CHAT.value
     )
-    if request_model:
-        span.set_attribute(GenAI.GEN_AI_REQUEST_MODEL, request_model)
-    if provider is not None:
-        # TODO: clean provider name to match GenAiProviderNameValues?
-        span.set_attribute(GenAI.GEN_AI_PROVIDER_NAME, provider)
-
-    finish_reasons = [gen.finish_reason for gen in invocation.output_messages]
-    if finish_reasons:
+    if invocation.request_model:
         span.set_attribute(
-            GenAI.GEN_AI_RESPONSE_FINISH_REASONS, finish_reasons
+            GenAI.GEN_AI_REQUEST_MODEL, invocation.request_model
+        )
+    if invocation.provider is not None:
+        # TODO: clean provider name to match GenAiProviderNameValues?
+        span.set_attribute(GenAI.GEN_AI_PROVIDER_NAME, invocation.provider)
+
+    if invocation.output_messages:
+        span.set_attribute(
+            GenAI.GEN_AI_RESPONSE_FINISH_REASONS,
+            [gen.finish_reason for gen in invocation.output_messages],
         )
 
     if invocation.response_model_name is not None:
@@ -72,11 +72,11 @@ def _apply_common_span_attributes(
         )
     if invocation.response_id is not None:
         span.set_attribute(GenAI.GEN_AI_RESPONSE_ID, invocation.response_id)
-    if isinstance(invocation.input_tokens, (int, float)):
+    if invocation.input_tokens is not None:
         span.set_attribute(
             GenAI.GEN_AI_USAGE_INPUT_TOKENS, invocation.input_tokens
         )
-    if isinstance(invocation.output_tokens, (int, float)):
+    if invocation.output_tokens is not None:
         span.set_attribute(
             GenAI.GEN_AI_USAGE_OUTPUT_TOKENS, invocation.output_tokens
         )
@@ -95,21 +95,15 @@ def _maybe_set_span_messages(
     if input_messages:
         span.set_attribute(
             GenAI.GEN_AI_INPUT_MESSAGES,
-            json.dumps([asdict(message) for message in input_messages]),
+            gen_ai_json_dumps([asdict(message) for message in input_messages]),
         )
     if output_messages:
         span.set_attribute(
             GenAI.GEN_AI_OUTPUT_MESSAGES,
-            json.dumps([asdict(message) for message in output_messages]),
+            gen_ai_json_dumps(
+                [asdict(message) for message in output_messages]
+            ),
         )
-
-
-def _maybe_set_span_extra_attributes(
-    span: Span,
-    attributes: Dict[str, Any],
-) -> None:
-    for key, value in attributes.items():
-        span.set_attribute(key, value)
 
 
 def _apply_finish_attributes(span: Span, invocation: LLMInvocation) -> None:
@@ -118,7 +112,7 @@ def _apply_finish_attributes(span: Span, invocation: LLMInvocation) -> None:
     _maybe_set_span_messages(
         span, invocation.input_messages, invocation.output_messages
     )
-    _maybe_set_span_extra_attributes(span, invocation.attributes)
+    span.set_attributes(invocation.attributes)
 
 
 def _apply_error_attributes(span: Span, error: Error) -> None:

@@ -58,19 +58,19 @@ Usage:
     handler.fail_llm(invocation, Error(type="...", message="..."))
 """
 
-import time
+from __future__ import annotations
+
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Iterator, Optional
 
 from opentelemetry import context as otel_context
-from opentelemetry import trace
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAI,
 )
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import (
     SpanKind,
-    Tracer,
+    TracerProvider,
     get_tracer,
     set_span_in_context,
 )
@@ -88,15 +88,13 @@ class TelemetryHandler:
     them as spans, metrics, and events.
     """
 
-    def __init__(self, **kwargs: Any):
-        tracer_provider = kwargs.get("tracer_provider")
-        tracer = get_tracer(
+    def __init__(self, tracer_provider: TracerProvider | None = None):
+        self._tracer = get_tracer(
             __name__,
             __version__,
             tracer_provider,
             schema_url=Schemas.V1_36_0.value,
         )
-        self._tracer: Tracer = tracer or trace.get_tracer(__name__)
 
     def start_llm(
         self,
@@ -116,7 +114,6 @@ class TelemetryHandler:
 
     def stop_llm(self, invocation: LLMInvocation) -> LLMInvocation:  # pylint: disable=no-self-use
         """Finalize an LLM invocation successfully and end its span."""
-        invocation.end_time = time.time()
         if invocation.context_token is None or invocation.span is None:
             # TODO: Provide feedback that this invocation was not started
             return invocation
@@ -131,7 +128,6 @@ class TelemetryHandler:
         self, invocation: LLMInvocation, error: Error
     ) -> LLMInvocation:
         """Fail an LLM invocation and end its span with error status."""
-        invocation.end_time = time.time()
         if invocation.context_token is None or invocation.span is None:
             # TODO: Provide feedback that this invocation was not started
             return invocation
@@ -167,7 +163,9 @@ class TelemetryHandler:
         self.stop_llm(invocation)
 
 
-def get_telemetry_handler(**kwargs: Any) -> TelemetryHandler:
+def get_telemetry_handler(
+    tracer_provider: TracerProvider | None = None,
+) -> TelemetryHandler:
     """
     Returns a singleton TelemetryHandler instance.
     """
@@ -175,6 +173,6 @@ def get_telemetry_handler(**kwargs: Any) -> TelemetryHandler:
         get_telemetry_handler, "_default_handler", None
     )
     if handler is None:
-        handler = TelemetryHandler(**kwargs)
+        handler = TelemetryHandler(tracer_provider=tracer_provider)
         setattr(get_telemetry_handler, "_default_handler", handler)
     return handler

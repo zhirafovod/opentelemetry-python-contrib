@@ -39,7 +39,4 @@ def upload_completion_hook() -> CompletionHook:
     if not base_path:
         return _NoOpCompletionHook()
 
-    try:
-        return UploadCompletionHook(base_path=base_path)
-    except (ImportError, RuntimeError, ValueError):
-        return _NoOpCompletionHook()
+    return UploadCompletionHook(base_path=base_path)
