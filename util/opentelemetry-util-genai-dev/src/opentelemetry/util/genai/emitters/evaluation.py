@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, Union
 
 from opentelemetry import _events as _otel_events
 
@@ -23,13 +23,13 @@ from ..interfaces import EmitterMeta
 from ..types import EvaluationResult, GenAI
 
 
-def _get_request_model(invocation: GenAI) -> str | None:
+def _get_request_model(invocation: GenAI) -> Union[str, None]:
     return getattr(invocation, "request_model", None) or getattr(
         invocation, "model", None
     )
 
 
-def _get_response_id(invocation: GenAI) -> str | None:  # best-effort
+def _get_response_id(invocation: GenAI) -> Union[str, None]:  # best-effort
     return getattr(invocation, "response_id", None)
 
 
@@ -128,7 +128,7 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
     def on_evaluation_results(  # type: ignore[override]
         self,
         results: Sequence[EvaluationResult],
-        obj: Any | None = None,
+        obj: Union[Any, None] = None,
     ) -> None:
         invocation = obj if isinstance(obj, GenAI) else None
         if invocation is None:
@@ -337,7 +337,7 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
     def on_evaluation_results(  # type: ignore[override]
         self,
         results: Sequence[EvaluationResult],
-        obj: Any | None = None,
+        obj: Union[Any, None] = None,
     ) -> None:
         if self._event_logger is None:
             return
