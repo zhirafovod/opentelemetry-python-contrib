@@ -43,6 +43,7 @@ _DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
         "answer_relevancy",
         "faithfulness",
         "hallucination",
+        "sentiment",
     ),
     "AgentInvocation": (
         "bias",
@@ -50,6 +51,7 @@ _DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
         "answer_relevancy",
         "faithfulness",
         "hallucination",
+        "sentiment",
     ),
 }
 
@@ -83,6 +85,7 @@ _METRIC_REGISTRY: Mapping[str, str] = {
     "relevance": "AnswerRelevancyMetric",
     "faithfulness": "FaithfulnessMetric",
     "hallucination": "__custom_hallucination__",  # custom GEval metric
+    "sentiment": "__custom_sentiment__",  # custom GEval sentiment metric
 }
 
 
@@ -263,6 +266,18 @@ class DeepevalEvaluator(Evaluator):
                         f"Failed to instantiate hallucination metric: {exc}"
                     ) from exc
                 continue
+            if metric_class_name == "__custom_sentiment__":
+                try:
+                    instances.append(
+                        self._build_sentiment_metric(
+                            spec.options, default_model
+                        )
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    raise RuntimeError(
+                        f"Failed to instantiate sentiment metric: {exc}"
+                    ) from exc
+                continue
             metric_cls = getattr(metrics_module, metric_class_name, None)
             if metric_cls is None:  # pragma: no cover - defensive
                 raise RuntimeError(
@@ -348,6 +363,44 @@ class DeepevalEvaluator(Evaluator):
         try:  # Preferred newer signature
             return GEval(evaluation_steps=steps, **kwargs)
         except TypeError:  # Older signature variant
+            return GEval(steps=steps, **kwargs)
+
+    def _build_sentiment_metric(
+        self, options: Mapping[str, Any], default_model: str | None
+    ) -> Any:
+        """Create a GEval-based sentiment metric approximating VADER.
+
+        The GEval prompt will ask the model to classify sentiment and produce a
+        normalized score in [-1,1]. We then map to [0,1] for histogram score while
+        deriving a pseudo VADER-style distribution (neg/neu/pos) emitted as attributes.
+        """
+        from deepeval.metrics import GEval
+        from deepeval.test_case import LLMTestCaseParams
+
+        criteria = "Determine the overall sentiment polarity of the output text: -1 very negative, 0 neutral, +1 very positive."
+        steps = [
+            "Read the text and note words/phrases indicating sentiment.",
+            "Judge if overall tone is negative, neutral, or positive.",
+            "Assign a numeric polarity in [-1,1] capturing intensity (e.g. strong positive ~0.8+).",
+        ]
+        if hasattr(LLMTestCaseParams, "ACTUAL_OUTPUT"):
+            params = [LLMTestCaseParams.ACTUAL_OUTPUT]
+        else:  # pragma: no cover - legacy fallback
+            params = [LLMTestCaseParams.INPUT_OUTPUT]
+        model_override = options.get("model") if options else None
+        threshold = options.get("threshold") if options else None
+        kwargs: dict[str, Any] = {
+            "name": "sentiment",
+            "criteria": criteria,
+            "evaluation_params": params,
+            "threshold": threshold
+            if isinstance(threshold, (int, float))
+            else 0.0,  # threshold not really used for pass/fail; keep 0
+            "model": model_override or default_model or "gpt-4o-mini",
+        }
+        try:
+            return GEval(evaluation_steps=steps, **kwargs)
+        except TypeError:  # pragma: no cover - signature variant
             return GEval(steps=steps, **kwargs)
 
     def _build_test_case(
@@ -478,6 +531,40 @@ class DeepevalEvaluator(Evaluator):
                         attributes=attributes,
                     )
                 )
+                # Post-process custom sentiment to derive distribution
+                if name == "sentiment" and isinstance(score, (int, float)):
+                    # Score expected in [-1,1]; clamp then transform.
+                    try:
+                        clamped = max(-1.0, min(1.0, float(score)))
+                        # Map to [0,1] positive strength
+                        pos_strength = (clamped + 1) / 2.0
+                        neg_strength = 1 - pos_strength
+                        # Heuristic neutral: proximity to midpoint
+                        neu_strength = 1 - abs(clamped)
+                        # Normalize (neg+neu+pos) to 1 for safety
+                        total = neg_strength + neu_strength + pos_strength
+                        if total > 0:
+                            neg_strength /= total
+                            neu_strength /= total
+                            pos_strength /= total
+                        attributes.update(
+                            {
+                                "deepeval.sentiment.neg": round(
+                                    neg_strength, 6
+                                ),
+                                "deepeval.sentiment.neu": round(
+                                    neu_strength, 6
+                                ),
+                                "deepeval.sentiment.pos": round(
+                                    pos_strength, 6
+                                ),
+                                "deepeval.sentiment.compound": round(
+                                    clamped, 6
+                                ),
+                            }
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        pass
         return results
 
     def _error_results(

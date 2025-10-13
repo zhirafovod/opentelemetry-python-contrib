@@ -1,10 +1,177 @@
+"""Tests for Deepeval evaluator (uses local stubs when dependency absent).
+
+We intentionally perform dynamic stub installation before importing the plugin
+module, which violates Ruff's E402 (module level import not at top). A file-
+level ignore is used to keep the logical setup order clear.
+"""
+
+# ruff: noqa: E402
+
 import importlib
 import sys
 from unittest.mock import patch
 
 import pytest
-from deepeval.evaluate.types import EvaluationResult as DeeEvaluationResult
-from deepeval.evaluate.types import MetricData, TestResult
+
+
+# Provide stub 'deepeval' package structure if dependency is unavailable.
+def _install_deepeval_stubs():
+    if "deepeval" in sys.modules:
+        return
+    try:
+        import importlib as _il  # noqa: F401
+
+        __import__("deepeval")  # pragma: no cover
+        return
+    except Exception:
+        pass
+    import types
+
+    root = types.ModuleType("deepeval")
+    metrics_mod = types.ModuleType("deepeval.metrics")
+    test_case_mod = types.ModuleType("deepeval.test_case")
+    eval_cfg_mod = types.ModuleType("deepeval.evaluate.configs")
+
+    class _ReqParam:
+        def __init__(self, value):
+            self.value = value
+
+    class GEval:  # minimal constructor compatibility
+        def __init__(self, **kwargs):
+            self.name = kwargs.get("name", "geval")
+            self.score = kwargs.get("score", 0.0)
+            self.threshold = kwargs.get("threshold", 0.0)
+            self.success = True
+            self.reason = None
+
+    class BiasMetric:
+        _required_params = []
+
+        def __init__(self, **kwargs):
+            self.name = "bias"
+            self.score = 0.5
+            self.success = True
+            self.threshold = kwargs.get("threshold", 0.5)
+            self.reason = "stub bias"
+
+    class ToxicityMetric(BiasMetric):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.name = "toxicity"
+            self.reason = "stub toxicity"
+
+    class AnswerRelevancyMetric(BiasMetric):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.name = "answer_relevancy"
+            self.reason = "stub answer relevancy"
+
+    class FaithfulnessMetric(BiasMetric):
+        _required_params = [_ReqParam("retrieval_context")]
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.name = "faithfulness"
+            self.reason = "stub faithfulness"
+
+    metrics_mod.GEval = GEval
+    metrics_mod.BiasMetric = BiasMetric
+    metrics_mod.ToxicityMetric = ToxicityMetric
+    metrics_mod.AnswerRelevancyMetric = AnswerRelevancyMetric
+    metrics_mod.FaithfulnessMetric = FaithfulnessMetric
+
+    class LLMTestCaseParams:
+        INPUT_OUTPUT = "io"
+        INPUT = "input"
+        ACTUAL_OUTPUT = "actual_output"
+
+    class LLMTestCase:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+            self.retrieval_context = kwargs.get("retrieval_context")
+
+    test_case_mod.LLMTestCaseParams = LLMTestCaseParams
+    test_case_mod.LLMTestCase = LLMTestCase
+
+    class AsyncConfig:
+        def __init__(self, run_async=False):
+            self.run_async = run_async
+
+    class DisplayConfig:
+        def __init__(self, show_indicator=False, print_results=False):
+            self.show_indicator = show_indicator
+            self.print_results = print_results
+
+    eval_cfg_mod.AsyncConfig = AsyncConfig
+    eval_cfg_mod.DisplayConfig = DisplayConfig
+
+    def evaluate(test_cases, metrics, async_config=None, display_config=None):
+        class _Eval:
+            test_results = []
+
+        return _Eval()
+
+    root.evaluate = evaluate
+
+    sys.modules["deepeval"] = root
+    sys.modules["deepeval.metrics"] = metrics_mod
+    sys.modules["deepeval.test_case"] = test_case_mod
+    sys.modules["deepeval.evaluate"] = root  # simplify
+    sys.modules["deepeval.evaluate.configs"] = eval_cfg_mod
+
+
+_install_deepeval_stubs()
+
+
+# Local lightweight stand-ins to avoid requiring the real 'deepeval' package
+class MetricData:  # type: ignore[override]
+    def __init__(
+        self,
+        *,
+        name: str,
+        threshold=None,
+        success=None,
+        score=None,
+        reason=None,
+        evaluation_model=None,
+        evaluation_cost=None,
+        verbose_logs=None,
+        strict_mode=None,
+        error=None,
+    ) -> None:
+        self.name = name
+        self.threshold = threshold
+        self.success = success
+        self.score = score
+        self.reason = reason
+        self.evaluation_model = evaluation_model
+        self.evaluation_cost = evaluation_cost
+        self.verbose_logs = verbose_logs
+        self.strict_mode = strict_mode
+        self.error = error
+
+
+class TestResult:  # type: ignore[override]
+    def __init__(
+        self,
+        *,
+        name: str,
+        success: bool | None,
+        metrics_data: list[MetricData],
+        conversational: bool = False,
+    ) -> None:
+        self.name = name
+        self.success = success
+        self.metrics_data = metrics_data
+        self.conversational = conversational
+
+
+class DeeEvaluationResult:  # type: ignore[override]
+    def __init__(self, *, test_results: list[TestResult], confident_link=None):
+        self.test_results = test_results
+        self.confident_link = confident_link
+
 
 from opentelemetry.util.evaluator import deepeval as plugin
 from opentelemetry.util.genai.evaluators.registry import (
@@ -57,6 +224,7 @@ def test_default_metrics_covered() -> None:
         "answer_relevancy",
         "faithfulness",
         "hallucination",
+        "sentiment",
     }
 
 
