@@ -42,12 +42,14 @@ _DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
         "toxicity",
         "answer_relevancy",
         "faithfulness",
+        "hallucination",
     ),
     "AgentInvocation": (
         "bias",
         "toxicity",
         "answer_relevancy",
         "faithfulness",
+        "hallucination",
     ),
 }
 
@@ -69,14 +71,14 @@ class _MetricSpec:
     options: Mapping[str, Any]
 
 
-def _metric_registry() -> Mapping[str, str]:
-    # Map normalized metric names to the attribute on deepeval.metrics
-    return {
-        "bias": "BiasMetric",
-        "toxicity": "ToxicityMetric",
-        "answer_relevancy": "AnswerRelevancyMetric",
-        "faithfulness": "FaithfulnessMetric",
-    }
+_METRIC_REGISTRY: Mapping[str, str] = {
+    # name -> deepeval.metrics class attribute or sentinel for custom build
+    "bias": "BiasMetric",
+    "toxicity": "ToxicityMetric",
+    "answer_relevancy": "AnswerRelevancyMetric",
+    "faithfulness": "FaithfulnessMetric",
+    "hallucination": "__custom_hallucination__",  # custom GEval metric
+}
 
 
 class DeepevalEvaluator(Evaluator):
@@ -202,7 +204,7 @@ class DeepevalEvaluator(Evaluator):
     # ---- Helpers ------------------------------------------------------
     def _build_metric_specs(self) -> Sequence[_MetricSpec]:
         specs: list[_MetricSpec] = []
-        registry = _metric_registry()
+        registry = _METRIC_REGISTRY
         for name in self.metrics:
             key = (name or "").strip().lower()
             options = self.options.get(name, {})
@@ -229,7 +231,7 @@ class DeepevalEvaluator(Evaluator):
         from importlib import import_module
 
         metrics_module = import_module("deepeval.metrics")
-        registry = _metric_registry()
+        registry = _METRIC_REGISTRY
         instances: list[Any] = []
         skipped: list[EvaluationResult] = []
         default_model = self._default_model()
@@ -237,7 +239,23 @@ class DeepevalEvaluator(Evaluator):
             if "__error__" in spec.options:
                 raise ValueError(spec.options["__error__"])
             metric_class_name = registry[spec.name]
-            metric_cls = getattr(metrics_module, metric_class_name)
+            if metric_class_name == "__custom_hallucination__":
+                try:
+                    instances.append(
+                        self._build_hallucination_metric(
+                            spec.options, default_model
+                        )
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    raise RuntimeError(
+                        f"Failed to instantiate hallucination metric: {exc}"
+                    ) from exc
+                continue
+            metric_cls = getattr(metrics_module, metric_class_name, None)
+            if metric_cls is None:  # pragma: no cover - defensive
+                raise RuntimeError(
+                    f"Deepeval metric class '{metric_class_name}' not found"
+                )
             missing = self._missing_required_params(metric_cls, test_case)
             if missing:
                 message = (
@@ -261,8 +279,8 @@ class DeepevalEvaluator(Evaluator):
                     )
                 )
                 continue
+            # spec.options already coerced into primitive values
             kwargs = dict(spec.options)
-            kwargs.setdefault("include_reason", True)
             if default_model and "model" not in kwargs:
                 kwargs["model"] = default_model
             try:
@@ -272,6 +290,53 @@ class DeepevalEvaluator(Evaluator):
                     f"Failed to instantiate Deepeval metric '{spec.name}': {exc}"
                 )
         return instances, skipped
+
+    # ---- Custom metric builders ------------------------------------
+    def _build_hallucination_metric(
+        self, options: Mapping[str, Any], default_model: str | None
+    ) -> Any:
+        """Create a GEval-based hallucination metric (input/output only).
+
+        Avoids complex dynamic getattr chains by importing the exact classes
+        we need; falls back gracefully if signature differences are detected.
+        """
+        from deepeval.metrics import (
+            GEval,  # direct import (simpler & explicit)
+        )
+        from deepeval.test_case import LLMTestCaseParams
+
+        criteria = (
+            "Assess if the output hallucinates by introducing facts, details, or claims not directly supported "
+            "or implied by the input. Score 1 for fully grounded outputs (no fabrications) and 0 for severe hallucination."  # noqa: E501
+        )
+        steps = [
+            "Review the input to extract all key facts and scope.",
+            "Scan the output for any unsubstantiated additions, contradictions, or extrapolations beyond the input.",
+            "Rate factual alignment: 1 = no hallucination, 0 = high hallucination risk.",
+        ]
+        threshold = options.get("threshold") if options else None
+        model_override = options.get("model") if options else None
+        strict_mode = options.get("strict_mode") if options else None
+        if hasattr(LLMTestCaseParams, "INPUT_OUTPUT"):
+            params = getattr(LLMTestCaseParams, "INPUT_OUTPUT")
+        else:  # pragma: no cover - legacy fallback
+            params = [LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT]
+        kwargs: dict[str, Any] = {
+            "name": "hallucination",
+            "criteria": criteria,
+            "evaluation_params": params,
+            "threshold": threshold
+            if isinstance(threshold, (int, float))
+            else 0.7,
+            "model": model_override or default_model or "gpt-4o-mini",
+        }
+        if strict_mode is not None:
+            kwargs["strict_mode"] = bool(strict_mode)
+        # Attempt primary signature (evaluation_steps), fallback to steps
+        try:  # Preferred newer signature
+            return GEval(evaluation_steps=steps, **kwargs)
+        except TypeError:  # Older signature variant
+            return GEval(steps=steps, **kwargs)
 
     def _build_test_case(
         self, invocation: GenAI, invocation_type: str

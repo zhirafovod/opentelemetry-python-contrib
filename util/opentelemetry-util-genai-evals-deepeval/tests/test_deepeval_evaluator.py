@@ -56,6 +56,7 @@ def test_default_metrics_covered() -> None:
         "toxicity",
         "answer_relevancy",
         "faithfulness",
+        "hallucination",
     }
 
 
