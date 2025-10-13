@@ -36,13 +36,13 @@ def _run_langgraph_chat(user_prompt: str) -> Dict[str, Any]:
     """
     try:
         from typing import TypedDict
-        from langchain_openai import ChatOpenAI  # type: ignore
-        from langgraph.graph import StateGraph, END  # type: ignore
+        from langchain_openai import ChatOpenAI
+        from langgraph.graph import StateGraph, END
 
         class ChatState(TypedDict):
             messages: list[dict]
 
-        llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), temperature=0.0)  # noqa: E501
+        llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), temperature=0.0)
 
         def agent(state: ChatState) -> ChatState:
             # The LangChain OpenAI wrapper returns an LC Message object; convert to dict
@@ -62,7 +62,7 @@ def _run_langgraph_chat(user_prompt: str) -> Dict[str, Any]:
         msgs = final_state["messages"]
         # Last message assumed assistant
         assistant_msg = msgs[-1]
-        resp_text = assistant_msg.content if hasattr(assistant_msg, "content") else assistant_msg.get("content")  # type: ignore[attr-defined]
+        resp_text = assistant_msg.content if hasattr(assistant_msg, "content") else assistant_msg.get("content") 
         return {
             "input_messages": initial["messages"],
             "output_messages": [
@@ -79,7 +79,7 @@ def _run_langgraph_chat(user_prompt: str) -> Dict[str, Any]:
             "output_messages": [
                 {
                     "role": "assistant",
-                    "content": "(stubbed response – install langgraph/langchain for real call)",  # noqa: E501
+                    "content": "(stubbed response – install langgraph/langchain for real call)", 
                 }
             ],
             "model_name": "stub-model",
@@ -89,7 +89,7 @@ def _run_langgraph_chat(user_prompt: str) -> Dict[str, Any]:
 
 # ---------------------------------------------------------------------------
 def emit_llm_invocation(result: Dict[str, Any]) -> None:
-    handler = get_telemetry_handler()  # Will auto-load translator if env flag set
+    handler = get_telemetry_handler() 
 
     # Prepare serialized messages like traceloop.entity.input / output would carry
     serialized_input = json.dumps(result["input_messages"])  # already simple dicts
@@ -122,7 +122,7 @@ def emit_llm_invocation(result: Dict[str, Any]) -> None:
     handler.stop_llm(inv)
 
 
-def main() -> None:  # pragma: no cover - example script
+def main() -> None: 
     _setup_tracing()
 
     user_prompt = "Hello, can you summarize OpenTelemetry GenAI?"
@@ -132,5 +132,5 @@ def main() -> None:  # pragma: no cover - example script
     print("\nDone. Inspect span output above for gen_ai.* attributes.")
 
 
-if __name__ == "__main__":  # pragma: no cover - script entry
+if __name__ == "__main__": 
     main()
