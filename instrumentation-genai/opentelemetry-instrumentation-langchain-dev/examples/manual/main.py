@@ -253,15 +253,13 @@ def embedding_invocation_demo():
     print("\n--- End Embedding Demo ---\n")
     _flush_evaluations()
 
-def agent_demo(llm: ChatOpenAI):
-    """Demonstrate a LangGraph + LangChain agent with:
-    - A tool (get_capital)
-    - A subagent specialized for capital questions
-    - A simple classifier node routing to subagent or general LLM response
+def simple_agent_demo(llm: ChatOpenAI):
+    """Simple single-agent LangGraph demo (renamed from agent_demo).
 
-    Tracing & metrics:
-      * Each LLM call is instrumented via LangChainInstrumentor.
-      * Tool invocation will create its own span.
+    Demonstrates:
+      - Tool (get_capital)
+      - Route classification (capital vs general)
+      - Single workflow + agent instrumentation (if util-genai handler present)
     """
     try:
         from langchain_core.tools import tool
@@ -374,7 +372,7 @@ def agent_demo(llm: ChatOpenAI):
         print("\n[Risk Scenario Enabled] Adding bias/toxicity challenge prompts to trigger evaluation metrics.")
         demo_questions.extend(risky_prompts)
 
-    print("\n--- LangGraph Agent Demo (with manual Workflow/Agent) ---")
+    print("\n--- Simple LangGraph Agent Demo (with manual Workflow/Agent) ---")
     handler = None
     try:  # Obtain util-genai handler if available
         handler = get_telemetry_handler()
@@ -434,7 +432,277 @@ def agent_demo(llm: ChatOpenAI):
         if workflow is not None:
             workflow.final_output = "demo_complete"
             handler.stop_workflow(workflow)
-    print("--- End Agent Demo ---\n")
+    print("--- End Simple Agent Demo ---\n")
+
+
+def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
+    """Multi-agent LangGraph demo inspired by multi-agent RAG example.
+
+    Features >=5 logical agents (router, capital, math, sentiment, summarizer, general).
+    Each agent is represented as a LangGraph node; we start/stop an AgentInvocation entity
+    for richer GenAI telemetry when the util-genai handler is available.
+
+    Tools provided locally (no network):
+      - get_capital(country)
+      - calc_math(expr)
+      - analyze_sentiment(text)
+      - summarize(text)
+
+    Routing keywords (case-insensitive):
+      math: contains math symbols or digits + operators -> math_agent
+      capital/city: -> capital_agent
+      sentiment/feel/mood: -> sentiment_agent
+      summarize/summary/shorten: -> summarizer_agent
+      else -> general_agent
+    """
+    try:
+        from typing import Annotated, TypedDict
+        from langchain_core.messages import AIMessage
+        from langchain_core.tools import tool
+        from langgraph.graph import StateGraph, END
+        from langgraph.graph.message import add_messages
+    except ImportError:
+        print("LangGraph / LangChain core not installed; skipping multi-agent demo.")
+        return
+
+    class MAState(TypedDict, total=False):
+        input: str
+        messages: Annotated[list[BaseMessage], add_messages]
+        route: str
+        context: str
+        intermediate: list[str]
+        output: str
+
+    # --- Tools ---
+    capitals = {
+        "france": "Paris",
+        "germany": "Berlin",
+        "italy": "Rome",
+        "spain": "Madrid",
+        "brazil": "Brasília",
+        "india": "New Delhi",
+        "japan": "Tokyo",
+        "canada": "Ottawa",
+    }
+
+    @tool
+    def get_capital(country: str) -> str:
+        """Return capital city (case-insensitive); 'Unknown' if not found."""
+        return capitals.get(country.strip().lower(), "Unknown")
+
+    @tool
+    def calc_math(expr: str) -> str:
+        """Very small math evaluator supporting +,-,*,/ and parentheses."""
+        import math, re
+        if not re.fullmatch(r"[0-9+\-*/(). ]{1,100}", expr):
+            return "unsafe expression"
+        try:
+            return str(eval(expr, {"__builtins": {}}, {"pi": math.pi, "e": math.e}))  # noqa: S307 (controlled eval)
+        except Exception as e:  # pragma: no cover - demo resiliency
+            return f"error: {e}" 
+
+    @tool
+    def analyze_sentiment(text: str) -> str:
+        """Heuristic sentiment: returns pos/neg/neu and normalized score."""
+        low = text.lower()
+        score = 0
+        for w in ["good", "great", "love", "happy", "wonderful"]:
+            if w in low:
+                score += 1
+        for w in ["bad", "hate", "awful", "sad", "angry"]:
+            if w in low:
+                score -= 1
+        label = "neu"
+        if score > 0:
+            label = "pos"
+        elif score < 0:
+            label = "neg"
+        return json.dumps({"label": label, "score": max(-1, min(1, score/3))})
+
+    @tool
+    def summarize(text: str) -> str:
+        """Trivial summarizer: first sentence or trimmed 80 chars."""
+        parts = [p.strip() for p in text.split('.') if p.strip()]
+        if parts:
+            return parts[0][:160]
+        return text[:80]
+
+    @tool
+    def evaluation_probe(topic: str) -> str:
+        """Return a crafted paragraph likely to exercise hallucination, bias, toxicity, answer relevancy, and sentiment evaluators.
+
+        The response intentionally mixes:
+          - Unsupported factual claims (hallucination risk)
+          - Subtle biased phrasing
+          - Mildly negative / emotionally charged language (sentiment + toxicity)
+          - Off-topic filler relative to a narrow query (answer relevancy)
+        Use only in demo/testing contexts.
+        """
+        return (
+            f"Report on {topic}: The ancient city allegedly levitated every equinox, a claim no scholar verifies. "
+            "Some people insist one profession is just naturally lazier than others (which is an unfair stereotype). "
+            "Frankly, parts of this situation feel frustrating and a bit toxic, though we should respond constructively. "
+            "Overall, while there are inspiring aspects, some details are invented or irrelevant to the core question."
+        )
+
+    handler = None
+    try:
+        handler = get_telemetry_handler()
+    except Exception:  # pragma: no cover
+        handler = None
+    workflow = None
+    if handler is not None:
+        from opentelemetry.util.genai.types import Workflow
+        workflow = Workflow(name="multi_agent_demo", description="Multi-agent decision workflow")
+        workflow.framework = "langchain"
+        handler.start_workflow(workflow)
+
+    def start_agent(name: str, tools: list[str]):
+        if handler is None:
+            return None
+        from opentelemetry.util.genai.types import AgentInvocation
+        agent = AgentInvocation(
+            name=name,
+            operation="invoke_agent",
+            description=f"{name} execution",
+            model=getattr(llm, "model", None) or getattr(llm, "model_name", None),
+            tools=tools,
+        )
+        agent.framework = "langchain"
+        if workflow is not None:
+            agent.parent_run_id = workflow.run_id
+        handler.start_agent(agent)
+        return agent
+
+    def stop_agent(agent, output: str | None):
+        if handler is None or agent is None:
+            return
+        agent.output_result = output
+        handler.stop_agent(agent)
+
+    # --- Agent Node Implementations ---
+    def router(state: MAState) -> MAState:
+        q = state["input"].lower()
+        if any(k in q for k in ["+", "-", "*", "/"]) and any(ch.isdigit() for ch in q):
+            route = "math"
+        elif any(k in q for k in ["capital", "city"]):
+            route = "capital"
+        elif any(k in q for k in ["sentiment", "feel", "mood"]):
+            route = "sentiment"
+        elif any(k in q for k in ["summary", "summarize", "shorten"]):
+            route = "summarizer"
+        elif any(k in q for k in ["probe", "evaluation", "hallucination", "bias", "toxicity"]):
+            route = "probe"
+        else:
+            route = "general"
+        return {"route": route}
+
+    def capital_agent(state: MAState) -> MAState:
+        agent = start_agent("capital_agent", ["get_capital"])
+        words = state["input"].rstrip("?!.").split()
+        country = words[-1]
+        cap = get_capital.run(country)
+        answer = f"The capital of {country.capitalize()} is {cap}."
+        stop_agent(agent, answer)
+        return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
+
+    def math_agent(state: MAState) -> MAState:
+        agent = start_agent("math_agent", ["calc_math"])
+        expr = ''.join(ch for ch in state["input"] if ch in '0123456789+-*/(). ')
+        result = calc_math.run(expr)
+        answer = f"Result: {result}"
+        stop_agent(agent, answer)
+        return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
+
+    def sentiment_agent(state: MAState) -> MAState:
+        agent = start_agent("sentiment_agent", ["analyze_sentiment"])
+        raw = analyze_sentiment.run(state["input"])
+        answer = f"Sentiment analysis: {raw}"
+        stop_agent(agent, answer)
+        return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
+
+    def summarizer_agent(state: MAState) -> MAState:
+        agent = start_agent("summarizer_agent", ["summarize"])
+        summary = summarize.run(state.get("context") or state["input"])
+        answer = f"Summary: {summary}"
+        stop_agent(agent, answer)
+        return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
+
+    def general_agent(state: MAState) -> MAState:
+        agent = start_agent("general_agent", [])
+        response = llm.invoke([
+            SystemMessage(content="You are a helpful multi-agent assistant."),
+            HumanMessage(content=state["input"]),
+        ])
+        content = getattr(response, "content", str(response))
+        answer = content
+        stop_agent(agent, answer)
+        return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
+
+    def probe_agent(state: MAState) -> MAState:
+        agent = start_agent("probe_agent", ["evaluation_probe"])  # single synthetic tool
+        # Use part of input as topic seed
+        topic = state["input"][:40].strip()
+        text = evaluation_probe.run(topic)
+        stop_agent(agent, text)
+        return {"messages": [AIMessage(content=text)], "output": text, "intermediate": state.get("intermediate", []) + [text]}
+
+    graph = StateGraph(MAState)
+    graph.add_node("router", router)
+    graph.add_node("capital_agent", capital_agent)
+    graph.add_node("math_agent", math_agent)
+    graph.add_node("sentiment_agent", sentiment_agent)
+    graph.add_node("summarizer_agent", summarizer_agent)
+    graph.add_node("general_agent", general_agent)
+    graph.add_node("probe_agent", probe_agent)
+
+    def decide(state: MAState):
+        return state.get("route", "general")
+
+    graph.add_conditional_edges("router", decide, {
+        "capital": "capital_agent",
+        "math": "math_agent",
+        "sentiment": "sentiment_agent",
+        "summarizer": "summarizer_agent",
+        "probe": "probe_agent",
+        "general": "general_agent",
+    })
+    # Chaining strategy: primary agent -> sentiment -> summarizer -> END
+    graph.add_edge("capital_agent", "sentiment_agent")
+    graph.add_edge("math_agent", "sentiment_agent")
+    graph.add_edge("probe_agent", "sentiment_agent")
+    graph.add_edge("general_agent", "sentiment_agent")
+    graph.add_edge("sentiment_agent", "summarizer_agent")
+    graph.add_edge("summarizer_agent", END)
+    graph.set_entry_point("router")
+    app = graph.compile()
+
+    # Base questions (we will inject probe every 2nd call dynamically)
+    base_questions = [
+        "What is the capital of Germany?",
+        "Compute 12 * (3 + 5) - 4",
+        "Can you analyze the sentiment: I love clean, well-documented code but hate rushed hacks",
+        "Summarize: OpenTelemetry enables unified observability across traces, metrics, and logs for cloud-native systems.",
+        "Tell me something interesting about compilers.",
+        "What is the capital city of Japan?",
+        "Please summarize why observability matters in modern distributed systems.",
+        "Compute (22 / 2) + 7 * 3",
+    ]
+    print("\n--- Multi-Agent Demo (Chained) ---")
+    for idx, q in enumerate(base_questions, start=1):
+        # Every 2nd invocation replace question with probe to trigger evaluation metrics.
+        if idx % 2 == 0:
+            q = f"Probe: run evaluation on topic {q[:30]}"  # ensures 'probe' keyword
+        print(f"\nUser[{idx}]: {q}")
+        state = app.invoke({"input": q, "messages": [], "intermediate": []})
+        answer = state.get("output")
+        print("Answer:", answer)
+        _flush_evaluations()
+    if handler is not None and workflow is not None:
+        workflow.final_output = "multi_agent_demo_complete"
+        handler.stop_workflow(workflow)
+    print("--- End Multi-Agent Demo ---\n")
+    _flush_evaluations()
 
 
 
@@ -474,8 +742,28 @@ def main():
     # TODO: fix api keys
     # embedding_invocation_demo()
 
-    # Run agent demo (tool + subagent). Safe if LangGraph unavailable.
-    agent_demo(llm)
+    # Determine which demo to run (env GENAI_DEMO_MODE=multi or arg 'multi')
+    mode = os.getenv("GENAI_DEMO_MODE", "simple").lower()
+    import sys
+    if len(sys.argv) > 1:
+        mode = sys.argv[1].lower()
+
+    tracer = trace.get_tracer("demo.manual.langchain")
+    # Root span simulating inbound request/session for entire demo run
+    with tracer.start_as_current_span(
+        "demo.request",
+        kind=trace.SpanKind.SERVER,
+        attributes={
+            "http.method": "GET",
+            "http.route": "/demo",
+            "demo.mode": mode,
+            "service.name": "langchain-demo-app",
+        },
+    ):
+        if mode.startswith("multi"):
+            multi_agent_demo(llm)
+        else:
+            simple_agent_demo(llm)
 
     _flush_evaluations()  # final flush before shutdown
 
