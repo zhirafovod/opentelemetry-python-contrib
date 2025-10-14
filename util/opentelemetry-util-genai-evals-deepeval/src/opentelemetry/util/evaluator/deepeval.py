@@ -524,11 +524,45 @@ class DeepevalEvaluator(Evaluator):
                 error = None
                 if error_msg:
                     error = Error(message=str(error_msg), type=RuntimeError)
-                label = None
-                if success is True:
-                    label = "pass"
-                elif success is False:
-                    label = "fail"
+                label: str | None = None
+                # Metric-specific labeling overrides generic pass/fail
+                metric_lower = str(name).lower()
+                if metric_lower in {
+                    "relevance",
+                    "answer_relevancy",
+                    "answer_relevance",
+                }:
+                    if success is True:
+                        label = "Relevant"
+                    elif success is False:
+                        label = "Irrelevant"
+                elif (
+                    metric_lower.startswith("hallucination")
+                    or metric_lower == "faithfulness"
+                ):
+                    if success is True:
+                        label = "Not hallucinated"
+                    elif success is False:
+                        label = "Hallucinated"
+                elif metric_lower == "toxicity":
+                    if success is True:
+                        label = "Non toxic"
+                    elif success is False:
+                        label = "Toxic"
+                elif metric_lower == "bias":
+                    if success is True:
+                        label = "Not biased"
+                    elif success is False:
+                        label = "Biased"
+                elif metric_lower.startswith("sentiment"):
+                    # Sentiment multi-class; we derive below from compound/score if not provided
+                    pass
+                else:
+                    # Fallback to generic if no mapping
+                    if success is True:
+                        label = "pass"
+                    elif success is False:
+                        label = "fail"
                 # Custom sentiment transformation: maintain original compound, map recorded score to [0,1]
                 if (
                     name in {"sentiment", "sentiment [geval]"}
@@ -541,6 +575,14 @@ class DeepevalEvaluator(Evaluator):
                         attributes.setdefault(
                             "deepeval.sentiment.compound", round(compound, 6)
                         )
+                        # Derive sentiment label if not already set by upstream success mapping
+                        if label is None:
+                            if compound >= 0.25:
+                                label = "Positive"
+                            elif compound <= -0.25:
+                                label = "Negative"
+                            else:
+                                label = "Neutral"
                     except Exception:  # pragma: no cover - defensive
                         pass
                 results.append(
@@ -611,11 +653,12 @@ class DeepevalEvaluator(Evaluator):
 
     @staticmethod
     def _coerce_option(value: Any) -> Any:
+        # Best-effort recursive coercion; add explicit types to avoid Unknown complaints
         if isinstance(value, MappingABC):
-            return {
-                k: DeepevalEvaluator._coerce_option(v)
-                for k, v in value.items()
-            }
+            out: dict[Any, Any] = {}
+            for k, v in value.items():  # type: ignore[assignment]
+                out[k] = DeepevalEvaluator._coerce_option(v)
+            return out
         if isinstance(value, (int, float, bool)):
             return value
         if value is None:
@@ -687,7 +730,7 @@ class DeepevalEvaluator(Evaluator):
                 if inner is not None:
                     return DeepevalEvaluator._flatten_to_strings(inner)
             try:
-                coerced = str(value)
+                coerced = str(value)  # type: ignore[arg-type]
                 return [coerced]
             except Exception:  # pragma: no cover - defensive
                 return []
@@ -695,7 +738,7 @@ class DeepevalEvaluator(Evaluator):
             value, (str, bytes, bytearray)
         ):
             flattened: list[str] = []
-            for item in value:
+            for item in value:  # type: ignore[assignment]
                 flattened.extend(DeepevalEvaluator._flatten_to_strings(item))
             return flattened
         return [str(value)]
