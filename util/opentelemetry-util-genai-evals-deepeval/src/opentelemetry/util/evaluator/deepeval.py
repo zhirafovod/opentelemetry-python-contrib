@@ -41,7 +41,6 @@ _DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
         "bias",
         "toxicity",
         "answer_relevancy",
-        "faithfulness",
         "hallucination",
         "sentiment",
     ),
@@ -49,7 +48,6 @@ _DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
         "bias",
         "toxicity",
         "answer_relevancy",
-        "faithfulness",
         "hallucination",
         "sentiment",
     ),
@@ -532,10 +530,28 @@ class DeepevalEvaluator(Evaluator):
                     "answer_relevancy",
                     "answer_relevance",
                 }:
+                    # Only allow 'Relevant' / 'Irrelevant'. If Deepeval supplied success we trust it.
                     if success is True:
                         label = "Relevant"
                     elif success is False:
                         label = "Irrelevant"
+                    else:
+                        # Derive based on score and threshold (if both numeric). If absent, default to Irrelevant conservatively when score is None.
+                        if isinstance(score, (int, float)) and isinstance(
+                            threshold, (int, float)
+                        ):
+                            label = (
+                                "Relevant"
+                                if score >= float(threshold)
+                                else "Irrelevant"
+                            )
+                        elif isinstance(score, (int, float)):
+                            # Assume default threshold 0.5 if unspecified.
+                            label = (
+                                "Relevant" if score >= 0.5 else "Irrelevant"
+                            )
+                        else:
+                            label = "Irrelevant"
                 elif (
                     metric_lower.startswith("hallucination")
                     or metric_lower == "faithfulness"
@@ -563,6 +579,45 @@ class DeepevalEvaluator(Evaluator):
                         label = "pass"
                     elif success is False:
                         label = "fail"
+                # Final defensive fallback: ensure every result has some label for downstream aggregation.
+                if label is None:
+                    # If score present we treat unknown success as Neutral (for sentiment) or pass for numeric metrics.
+                    if metric_lower.startswith("sentiment") and isinstance(
+                        score, (int, float)
+                    ):
+                        label = "Neutral"
+                    else:
+                        label = "pass" if success is not False else "fail"
+                # Derive pass/fail attribute centrally (moved from emitters). We expose a uniform
+                # boolean attribute 'gen_ai.evaluation.passed' for downstream aggregation. If Deepeval
+                # did not compute success we attempt a light inference from standardized labels.
+                passed: bool | None
+                if success is True:
+                    passed = True
+                elif success is False:
+                    passed = False
+                else:
+                    # Infer from label vocabulary when success is None (defensive fallback)
+                    if label in {
+                        "Relevant",
+                        "Not hallucinated",
+                        "Non toxic",
+                        "Not biased",
+                        "Positive",
+                        "Neutral",
+                    }:
+                        passed = True
+                    elif label in {
+                        "Irrelevant",
+                        "Hallucinated",
+                        "Toxic",
+                        "Biased",
+                        "Negative",
+                        "fail",
+                    }:
+                        passed = False
+                    else:
+                        passed = None
                 # Custom sentiment transformation: maintain original compound, map recorded score to [0,1]
                 if (
                     name in {"sentiment", "sentiment [geval]"}
@@ -595,23 +650,22 @@ class DeepevalEvaluator(Evaluator):
                         attributes=attributes,
                     )
                 )
+                if passed is not None:
+                    # Only set after EvaluationResult to avoid mutating attributes seen earlier if any consumer copies them pre-insertion
+                    attributes["gen_ai.evaluation.passed"] = passed
                 # Post-process custom sentiment distribution (after mapping)
                 if name in {"sentiment", "sentiment [geval]"} and isinstance(
                     score, (int, float)
                 ):
                     # Score expected in [-1,1]; clamp then transform.
                     try:
-                        # Retrieve compound (may have been set above)
                         compound_val = attributes.get(
                             "deepeval.sentiment.compound", (score * 2.0) - 1.0
                         )
                         clamped = max(-1.0, min(1.0, float(compound_val)))
-                        # Positive strength now is score itself (mapped)
                         pos_strength = float(score)
                         neg_strength = 1 - pos_strength
-                        # Heuristic neutral: proximity to midpoint
                         neu_strength = 1 - abs(clamped)
-                        # Normalize (neg+neu+pos) to 1 for safety
                         total = neg_strength + neu_strength + pos_strength
                         if total > 0:
                             neg_strength /= total
@@ -633,7 +687,7 @@ class DeepevalEvaluator(Evaluator):
                                 ),
                             }
                         )
-                    except Exception:  # pragma: no cover - defensive
+                    except Exception:
                         pass
         return results
 
