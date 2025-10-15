@@ -355,10 +355,6 @@ class LangchainInstrumentor(BaseInstrumentor):
 LangChainInstrumentor = LangchainInstrumentor
 
 
-# Backwards-compatible alias for older import casing
-LangChainInstrumentor = LangchainInstrumentor
-
-
 class _BaseCallbackManagerInitWrapper:
     def __init__(self, callback_handler: "TraceloopCallbackHandler"):
         self._callback_handler = callback_handler

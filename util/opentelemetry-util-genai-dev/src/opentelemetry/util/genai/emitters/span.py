@@ -702,6 +702,7 @@ class SpanEmitter(EmitterMeta):
                 token.__exit__(None, None, None)  # type: ignore[misc]
             except Exception:
                 pass
+        span.end()
 
     # ---- Retrieval lifecycle ---------------------------------------------
     def _start_retrieval(self, retrieval: RetrievalInvocation) -> None:
