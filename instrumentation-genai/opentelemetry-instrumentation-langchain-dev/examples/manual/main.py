@@ -577,7 +577,15 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
     def stop_agent(agent, output: str | None):
         if handler is None or agent is None:
             return
-        agent.output_result = output
+        # Ensure evaluator has both input and output text by populating input_context and output_result.
+        if output is not None:
+            agent.output_result = output
+        # If input_context missing, we derive a minimal one from the last question stored in _current_question.
+        if not getattr(agent, "input_context", None):
+            try:
+                agent.input_context = _current_question  # type: ignore[name-defined]
+            except Exception:
+                pass
         handler.stop_agent(agent)
 
     # --- Agent Node Implementations ---
@@ -694,6 +702,8 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
         if idx % 2 == 0:
             q = f"Probe: run evaluation on topic {q[:30]}"  # ensures 'probe' keyword
         print(f"\nUser[{idx}]: {q}")
+        # Track current question globally for agent input_context derivation
+        _current_question = q  # type: ignore[assignment]
         state = app.invoke({"input": q, "messages": [], "intermediate": []})
         answer = state.get("output")
         print("Answer:", answer)
