@@ -2,12 +2,14 @@ import base64
 import json
 import os
 from datetime import datetime, timedelta
+from typing import Any
 
 import requests
 from langchain_openai import ChatOpenAI, AzureOpenAIEmbeddings
 from langchain_core.messages import HumanMessage, SystemMessage
 # Add BaseMessage for typed state
 from langchain_core.messages import BaseMessage
+from langchain_core.runnables import RunnableLambda
 
 from opentelemetry import _events, _logs, metrics, trace
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
@@ -256,9 +258,10 @@ def embedding_invocation_demo():
 def simple_agent_demo(llm: ChatOpenAI):
     """Simple single-agent LangGraph demo.
 
-    Updated: Runs ONE randomly selected question instead of iterating a list,
-    and removes direct manual TelemetryHandler workflow/agent usage so that
-    LangChain instrumentation alone drives telemetry.
+    Updated: runs ONE randomly selected question, relies solely on
+    LangChain instrumentation (no direct TelemetryHandler calls), and attaches
+    metadata/tag hints so the callback handler emits Workflow + Agent entities
+    via util-genai.
     """
     try:
         from langchain_core.tools import tool
@@ -310,11 +313,13 @@ def simple_agent_demo(llm: ChatOpenAI):
         answer = f"The capital of {country.capitalize()} is {cap}."
         return {"messages": [AIMessage(content=answer)], "output": answer}
 
+    general_system_prompt = "You are a helpful, concise assistant."
+
     # ---- General Node (Fallback) ----
     def general_node(state: AgentState) -> AgentState:
         question: str = state["input"]
         response = llm.invoke([
-            SystemMessage(content="You are a helpful, concise assistant."),
+            SystemMessage(content=general_system_prompt),
             HumanMessage(content=question),
         ])
         # Ensure we wrap response as AIMessage if needed
@@ -326,10 +331,64 @@ def simple_agent_demo(llm: ChatOpenAI):
         q: str = state["input"].lower()
         return {"route": "capital" if ("capital" in q or "city" in q) else "general"}
 
+    model_label = getattr(llm, "model_name", None) or getattr(llm, "model", None)
+    provider_label = getattr(llm, "provider", None)
+
+    # Metadata below mirrors what callback_handler.py looks for when deciding
+    # whether a chain run represents a Workflow or Agent. The values are kept
+    # lightweight (strings/lists) so they round-trip through serializer safely.
+    capital_metadata: dict[str, Any] = {
+        "ls_is_agent": True,
+        "ls_agent_type": "capital_specialist",
+        "ls_tools": ["get_capital"],
+        "framework": "langchain",
+    }
+    if model_label:
+        capital_metadata["ls_model_name"] = model_label
+    if provider_label:
+        capital_metadata["ls_provider"] = provider_label
+
+    general_metadata: dict[str, Any] = {
+        "ls_is_agent": True,
+        "ls_agent_type": "general_llm",
+        "ls_system_prompt": general_system_prompt,
+        "framework": "langchain",
+    }
+    if model_label:
+        general_metadata["ls_model_name"] = model_label
+    if provider_label:
+        general_metadata["ls_provider"] = provider_label
+
+    classifier_metadata: dict[str, Any] = {
+        "ls_task_type": "routing",
+        "framework": "langgraph",
+    }
+
     graph = StateGraph(AgentState)
-    graph.add_node("classify", classifier)
-    graph.add_node("capital_agent", capital_subagent)
-    graph.add_node("general_agent", general_node)
+    graph.add_node(
+        "classify",
+        RunnableLambda(classifier).with_config(
+            run_name="routing_classifier",
+            tags=["task", "routing"],
+            metadata=classifier_metadata,
+        ),
+    )
+    graph.add_node(
+        "capital_agent",
+        RunnableLambda(capital_subagent).with_config(
+            run_name="capital_agent",
+            tags=["agent", "capital"],
+            metadata=capital_metadata,
+        ),
+    )
+    graph.add_node(
+        "general_agent",
+        RunnableLambda(general_node).with_config(
+            run_name="general_llm_agent",
+            tags=["agent", "llm"],
+            metadata=general_metadata,
+        ),
+    )
 
     def route_decider(state: AgentState):  # returns which edge to follow
         return state.get("route", "general")
@@ -342,7 +401,18 @@ def simple_agent_demo(llm: ChatOpenAI):
     graph.add_edge("capital_agent", END)
     graph.add_edge("general_agent", END)
     graph.set_entry_point("classify")
-    app = graph.compile().with_config({"run_name": "simple-agent-demo-wf"})
+    app = graph.compile()
+    workflow_metadata: dict[str, Any] = {
+        "framework": "langgraph",
+        "workflow_type": "conditional-routing",
+        "ls_entity_kind": "workflow",
+        "ls_description": "LangGraph capital/general routing demo",
+    }
+    workflow_app = app.with_config(
+        tags=["workflow", "langgraph"],
+        metadata=workflow_metadata,
+        run_name="simple_agent_workflow",
+    )
 
     demo_questions = [
         "What is the capital of France?",
@@ -376,7 +446,7 @@ def simple_agent_demo(llm: ChatOpenAI):
     import random
     q = random.choice(demo_questions)
     print(f"\nUser Question: {q}")
-    result_state = app.invoke({"input": q, "messages": []})
+    result_state = workflow_app.invoke({"input": q, "messages": []})
     answer = result_state.get("output") or ""
     print("Agent Output:", answer)
     _flush_evaluations()

@@ -712,14 +712,16 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         if context_api.get_value(_SUPPRESS_INSTRUMENTATION_KEY):
             return
 
-        name = self._get_name_from_callback(serialized, **kwargs)
-        is_agent_run = self._is_agent_run(serialized, metadata, tags)
+        serialized_payload = serialized if isinstance(serialized, dict) else {}
+
+        name = self._get_name_from_callback(serialized_payload, **kwargs)
+        is_agent_run = self._is_agent_run(serialized_payload, metadata, tags)
         parent_entity = self._get_entity(parent_run_id)
         metadata_attrs = self._sanitize_metadata_dict(metadata)
-        extra_attrs: dict[str, Any] = {
-            "callback.name": name,
-            "callback.id": serialized.get("id"),
-        }
+        extra_attrs: dict[str, Any] = {"callback.name": name}
+        callback_id = serialized_payload.get("id")
+        if callback_id is not None:
+            extra_attrs["callback.id"] = callback_id
 
         if is_agent_run:
             agent = self._build_agent_invocation(
