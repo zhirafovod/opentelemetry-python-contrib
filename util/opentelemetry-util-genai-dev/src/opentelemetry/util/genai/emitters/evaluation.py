@@ -413,6 +413,7 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
             try:
                 self._event_logger.emit(
                     _otel_events.Event(
+                        # context=span_context,
                         name=self._primary_event_name,
                         attributes=spec_attrs,
                         span_id=span_id,

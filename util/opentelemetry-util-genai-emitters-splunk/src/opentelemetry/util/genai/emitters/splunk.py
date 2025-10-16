@@ -33,6 +33,14 @@ from opentelemetry.util.genai.types import (
     LLMInvocation,
 )
 
+try:  # optional debug logging
+    from opentelemetry.util.genai.debug import genai_debug_log
+except Exception:  # pragma: no cover
+
+    def genai_debug_log(*_a: Any, **_k: Any) -> None:  # type: ignore
+        return None
+
+
 _LOGGER = logging.getLogger(__name__)
 
 _EVENT_NAME_EVALUATIONS = "gen_ai.splunk.evaluations"
@@ -156,12 +164,29 @@ class SplunkConversationEventsEmitter(EmitterMeta):
         # Emit semantic convention-aligned events for LLM & Agent invocations.
         if isinstance(obj, LLMInvocation):
             try:
+                genai_debug_log(
+                    "emitter.splunk.conversation.on_end",
+                    obj,
+                    output_messages=len(
+                        getattr(obj, "output_messages", []) or []
+                    ),
+                )
+            except Exception:  # pragma: no cover
+                pass
+            try:
                 rec = _llm_invocation_to_log_record(obj, self._capture_content)
                 if rec:
                     self._event_logger.emit(rec)
             except Exception:  # pragma: no cover - defensive
                 pass
         elif isinstance(obj, AgentInvocation):
+            try:
+                genai_debug_log(
+                    "emitter.splunk.conversation.on_end.agent",
+                    obj,
+                )
+            except Exception:  # pragma: no cover
+                pass
             try:
                 rec = _agent_to_log_record(obj, self._capture_content)
                 if rec:
@@ -240,6 +265,14 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
     ) -> None:
         if not records or self._event_logger is None:
             return
+        try:
+            genai_debug_log(
+                "emitter.splunk.evaluations.emit",
+                invocation,
+                records_count=len(records),
+            )
+        except Exception:  # pragma: no cover
+            pass
         # Build messages & system instructions
         input_messages = _coerce_messages(
             invocation.input_messages, self._capture_content
