@@ -15,6 +15,7 @@ from ..types import (
     EmbeddingInvocation,
     Error,
     LLMInvocation,
+    RetrievalInvocation,
     Task,
     Workflow,
 )
@@ -50,6 +51,9 @@ class MetricsEmitter(EmitterMeta):
         self._task_duration_histogram: Histogram = (
             instruments.task_duration_histogram
         )
+        self._retrieval_duration_histogram: Histogram = (
+            instruments.retrieval_duration_histogram
+        )
 
     def on_start(self, obj: Any) -> None:  # no-op for metrics
         return None
@@ -63,6 +67,9 @@ class MetricsEmitter(EmitterMeta):
             return
         if isinstance(obj, Task):
             self._record_task_metrics(obj)
+            return
+        if isinstance(obj, RetrievalInvocation):
+            self._record_retrieval_metrics(obj)
             return
 
         if isinstance(obj, LLMInvocation):
@@ -153,6 +160,9 @@ class MetricsEmitter(EmitterMeta):
         if isinstance(obj, Task):
             self._record_task_metrics(obj)
             return
+        if isinstance(obj, RetrievalInvocation):
+            self._record_retrieval_metrics(obj)
+            return
 
         # Handle existing types with agent context
         if isinstance(obj, LLMInvocation):
@@ -234,6 +244,7 @@ class MetricsEmitter(EmitterMeta):
                 AgentInvocation,
                 Task,
                 EmbeddingInvocation,
+                RetrievalInvocation,
             ),
         )
 
@@ -315,4 +326,30 @@ class MetricsEmitter(EmitterMeta):
 
         self._task_duration_histogram.record(
             duration, attributes=metric_attrs, context=context
+        )
+
+    def _record_retrieval_metrics(self, retrieval: RetrievalInvocation) -> None:
+        """Record metrics for a retrieval operation."""
+        if retrieval.end_time is None:
+            return
+        duration = retrieval.end_time - retrieval.start_time
+        metric_attrs = {
+            GenAI.GEN_AI_OPERATION_NAME: retrieval.operation_name,
+        }
+        if retrieval.retriever_type:
+            metric_attrs["gen_ai.retrieval.type"] = retrieval.retriever_type
+        if retrieval.vector_store:
+            metric_attrs["gen_ai.retrieval.vector_store"] = retrieval.vector_store
+        if retrieval.framework:
+            metric_attrs["gen_ai.framework"] = retrieval.framework
+        if retrieval.provider:
+            metric_attrs[GenAI.GEN_AI_PROVIDER_NAME] = retrieval.provider
+        # Add agent context if available
+        if retrieval.agent_name:
+            metric_attrs[GenAI.GEN_AI_AGENT_NAME] = retrieval.agent_name
+        if retrieval.agent_id:
+            metric_attrs[GenAI.GEN_AI_AGENT_ID] = retrieval.agent_id
+
+        self._retrieval_duration_histogram.record(
+            duration, attributes=metric_attrs
         )

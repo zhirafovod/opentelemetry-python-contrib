@@ -38,13 +38,14 @@ EMBEDDING_PATCHES = [
     {
         "module": "langchain_openai.embeddings",
         "class_name": "OpenAIEmbeddings",
-        "methods": ["embed_query", "embed_documents"],
+        "methods": ["embed_query"],
     },
-    {
-        "module": "langchain_openai.embeddings",
-        "class_name": "AzureOpenAIEmbeddings",
-        "methods": ["embed_query", "embed_documents"],
-    },
+    # comment for now as it causes duplicate spans/instrumentation
+    # {
+    #     "module": "langchain_openai.embeddings",
+    #     "class_name": "AzureOpenAIEmbeddings",
+    #     "methods": ["embed_query", "embed_documents"],
+    # },
     {
         "module": "langchain_huggingface.embeddings",
         "class_name": "HuggingFaceEmbeddings",

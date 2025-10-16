@@ -185,9 +185,9 @@ def llm_invocation_demo(llm: ChatOpenAI):
     print(f"LLM output: {getattr(result, 'content', result)}")
     _flush_evaluations()  # flush after second invocation
 
-def embedding_invocation_demo():
+def embedding_invocation_demo(embeddings : AzureOpenAIEmbeddings):
     """Demonstrate OpenAI embeddings with telemetry.
-    
+
     Shows:
     - Single query embedding (embed_query)
     - Batch document embeddings (embed_documents)
@@ -195,29 +195,18 @@ def embedding_invocation_demo():
     """
     print("\n--- Embedding Invocation Demo ---")
 
-    endpoint = "https://etser-mf7gfr7m-eastus2.cognitiveservices.azure.com/"
-    deployment = "text-embedding-3-large"
-
-    # Initialize embeddings model
-    embeddings = AzureOpenAIEmbeddings(  # or "2023-05-15" if that's your API version
-        model=deployment,
-        azure_endpoint=endpoint,
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        openai_api_version="2024-12-01-preview",
-    )
-    
     # Demo 1: Single query embedding
     print("\n1. Single Query Embedding:")
     query = "What is the capital of France?"
     print(f"   Query: {query}")
-    
+
     try:
         query_vector = embeddings.embed_query(query)
         print(f"   ✓ Embedded query into {len(query_vector)} dimensions")
         print(f"   First 5 values: {query_vector[:5]}")
     except Exception as e:
         print(f"   ✗ Error: {e}")
-    
+
     # Demo 2: Batch document embeddings
     print("\n2. Batch Document Embeddings:")
     documents = [
@@ -227,7 +216,7 @@ def embedding_invocation_demo():
         "Madrid is the capital of Spain.",
     ]
     print(f"   Documents: {len(documents)} texts")
-    
+
     try:
         doc_vectors = embeddings.embed_documents(documents)
         print(f"   ✓ Embedded {len(doc_vectors)} documents")
@@ -235,7 +224,7 @@ def embedding_invocation_demo():
         print(f"   First document vector (first 5): {doc_vectors[0][:5]}")
     except Exception as e:
         print(f"   ✗ Error: {e}")
-    
+
     # Demo 3: Mixed content embeddings
     print("\n3. Mixed Content Embeddings:")
     mixed_texts = [
@@ -243,7 +232,7 @@ def embedding_invocation_demo():
         "LangChain simplifies LLM applications",
         "Vector databases store embeddings",
     ]
-    
+
     try:
         mixed_vectors = embeddings.embed_documents(mixed_texts)
         print(f"   ✓ Embedded {len(mixed_vectors)} mixed content texts")
@@ -251,8 +240,134 @@ def embedding_invocation_demo():
             print(f"   - Text {i+1}: {text[:40]}... → {len(mixed_vectors[i])}D vector")
     except Exception as e:
         print(f"   ✗ Error: {e}")
-    
+
     print("\n--- End Embedding Demo ---\n")
+    _flush_evaluations()
+
+def retrieval_invocation_demo(embeddings : AzureOpenAIEmbeddings):
+    """Demonstrate retrieval operations with telemetry.
+
+    Shows:
+    - Document loading and splitting
+    - Vector store creation with embeddings
+    - Similarity search (retrieval)
+    - Retrieval with scores
+    - Telemetry capture for retrieval operations
+    """
+    print("\n--- Retrieval Invocation Demo ---")
+
+    try:
+        from langchain_community.vectorstores import FAISS
+        from langchain_core.documents import Document
+        from langchain_text_splitters import CharacterTextSplitter
+    except ImportError:  # pragma: no cover - optional dependency
+        print("FAISS or text splitters not installed; skipping retrieval demo.")
+        return
+
+    # Create sample documents
+    documents = [
+        Document(
+            page_content="Paris is the capital and most populous city of France. It is known for the Eiffel Tower and the Louvre Museum.",
+            metadata={"source": "geography", "country": "France"}
+        ),
+        Document(
+            page_content="Berlin is the capital of Germany. It is famous for its history, culture, and the Brandenburg Gate.",
+            metadata={"source": "geography", "country": "Germany"}
+        ),
+        Document(
+            page_content="Rome is the capital of Italy. It is home to ancient ruins like the Colosseum and the Roman Forum.",
+            metadata={"source": "geography", "country": "Italy"}
+        ),
+        Document(
+            page_content="Madrid is the capital of Spain. It features world-class museums like the Prado and vibrant nightlife.",
+            metadata={"source": "geography", "country": "Spain"}
+        ),
+        Document(
+            page_content="OpenTelemetry is an observability framework for cloud-native software. It provides APIs and tools for collecting telemetry data.",
+            metadata={"source": "technology", "topic": "observability"}
+        ),
+        Document(
+            page_content="LangChain is a framework for developing applications powered by language models. It simplifies building LLM applications.",
+            metadata={"source": "technology", "topic": "ai"}
+        ),
+    ]
+
+    print(f"\n1. Creating Vector Store:")
+    print(f"   Documents: {len(documents)} texts")
+    
+    try:
+        # Create vector store from documents
+        vectorstore = FAISS.from_documents(documents, embeddings)
+        print(f"   ✓ Vector store created with {len(documents)} documents")
+    except Exception as e:
+        print(f"   ✗ Error creating vector store: {e}")
+        return
+    
+    # Convert vectorstore to retriever for proper callback invocation
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+    # Demo 1: Basic retrieval using retriever
+    print("\n2. Basic Retrieval (Top 3):")
+    query = "What is the capital of France?"
+    print(f"   Query: {query}")
+    
+    try:
+        results = retriever.invoke(query)
+        print(f"   ✓ Retrieved {len(results)} documents")
+        for i, doc in enumerate(results, 1):
+            print(f"   {i}. {doc.page_content[:60]}... [country: {doc.metadata.get('country', 'N/A')}]")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+    
+    # Demo 2: Retrieval with different query
+    print("\n3. Technology Query:")
+    query = "Tell me about observability and telemetry"
+    print(f"   Query: {query}")
+
+    try:
+        results = retriever.invoke(query)
+        print(f"   ✓ Retrieved {len(results)} documents")
+        for i, doc in enumerate(results, 1):
+            print(f"   {i}. {doc.page_content[:50]}...")
+            print(f"      Metadata: {doc.metadata}")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+
+    # Demo 3: MMR retriever for diversity
+    print("\n4. MMR Retrieval (Diverse Results):")
+    mmr_retriever = vectorstore.as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": 3, "fetch_k": 6}
+    )
+    query = "capital cities"
+    print(f"   Query: {query}")
+
+    try:
+        mmr_results = mmr_retriever.invoke(query)
+        print(f"   ✓ Retrieved {len(mmr_results)} diverse documents")
+        for i, doc in enumerate(mmr_results, 1):
+            print(f"   {i}. {doc.page_content[:60]}... [country: {doc.metadata.get('country', 'N/A')}]")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+
+    # Demo 4: Similarity score threshold retriever
+    print("\n5. Similarity Score Threshold:")
+    threshold_retriever = vectorstore.as_retriever(
+        search_type="similarity_score_threshold",
+        search_kwargs={"score_threshold": 0.5, "k": 5}
+    )
+    query = "European capitals"
+    print(f"   Query: {query}")
+
+    try:
+        threshold_results = threshold_retriever.invoke(query)
+        print(f"   ✓ Retrieved {len(threshold_results)} documents above threshold")
+        for i, doc in enumerate(threshold_results, 1):
+            print(f"   {i}. {doc.page_content[:60]}...")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+
+    print("\n--- End Retrieval Demo ---\n")
     _flush_evaluations()
 
 def simple_agent_demo(llm: ChatOpenAI):
@@ -702,12 +817,27 @@ def main():
         model_kwargs={"user": json.dumps(user_md)} if user_md else {},  # always supply dict
     )
 
+    endpoint = "https://etser-mf7gfr7m-eastus2.cognitiveservices.azure.com/"
+    deployment = "text-embedding-3-large"
+
+    # Initialize embeddings model
+    embeddings = AzureOpenAIEmbeddings(
+        model=deployment,
+        azure_endpoint=endpoint,
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        openai_api_version="2024-12-01-preview",
+    )
+
     # LLM invocation demo (simple)
-    # llm_invocation_demo(llm)
+    #llm_invocation_demo(llm)
 
     # Embedding invocation demo
-    # TODO: fix api keys
-    # embedding_invocation_demo()
+    # TODO: CIRCUIT doesn't support embeddings yet
+    #embedding_invocation_demo(embeddings)
+
+    # Retrieval invocation demo
+    # TODO: CIRCUIT doesn't support embeddings yet
+    #retrieval_invocation_demo(embeddings)
 
     # Determine which demo to run (env GENAI_DEMO_MODE=multi or arg 'multi')
     mode = os.getenv("GENAI_DEMO_MODE", "simple").lower()

@@ -56,11 +56,30 @@ from opentelemetry.util.genai.types import (
     LLMInvocation as UtilLLMInvocation,
     OutputMessage as UtilOutputMessage,
     Task as UtilTask,
+    RetrievalInvocation as UtilRetrievalInvocation,
     Text as UtilText,
     Workflow as UtilWorkflow,
 )
 from threading import Lock
 from .utils import get_property_value
+
+
+def _extract_class_name_from_serialized(serialized: Optional[dict[str, Any]]) -> str:
+    """Extract class name from serialized model information.
+    
+    Args:
+        serialized: Serialized model information from LangChain callback
+    
+    Returns:
+        Class name string, or empty string if not found
+    """
+    class_id = (serialized or {}).get("id", [])
+    if isinstance(class_id, list) and len(class_id) > 0:
+        return class_id[-1]
+    elif class_id:
+        return str(class_id)
+    else:
+        return ""
 
 
 def _sanitize_metadata_value(value: Any) -> Any:
@@ -155,6 +174,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         self._telemetry_handler = handler
         self._entities: dict[UUID, GenAI] = {}
         self._llms: dict[UUID, UtilLLMInvocation] = {}
+        self._retrievals: dict[UUID, UtilRetrievalInvocation] = {}
         self._lock = Lock()
         self._payload_truncation_bytes = 8 * 1024
         # Implicit parent entity stack (workflow/agent) for contexts where
@@ -173,10 +193,14 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             return serialized["kwargs"]["name"]
         if kwargs.get("name"):
             return kwargs["name"]
-        if serialized.get("name"):
+        if serialized and serialized.get("name"):
             return serialized["name"]
-        if "id" in serialized:
-            return serialized["id"][-1]
+        if serialized and "id" in serialized:
+            id_value = serialized["id"]
+            if isinstance(id_value, list) and len(id_value) > 0:
+                return id_value[-1]
+            elif isinstance(id_value, str):
+                return id_value
 
         return "unknown"
 
@@ -483,6 +507,69 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 return str(payload)
             except Exception:  # pragma: no cover - defensive
                 return None
+
+    def _detect_vector_store(self, serialized: Optional[dict[str, Any]]) -> Optional[str]:
+        """Detect vector store type from serialized info."""
+        class_name = _extract_class_name_from_serialized(serialized)
+        if not class_name:
+            return None
+
+        class_lower = class_name.lower()
+        if "faiss" in class_lower:
+            return "faiss"
+        elif "chroma" in class_lower:
+            return "chroma"
+        elif "pinecone" in class_lower:
+            return "pinecone"
+        elif "qdrant" in class_lower:
+            return "qdrant"
+        elif "milvus" in class_lower:
+            return "milvus"
+        elif "weaviate" in class_lower:
+            return "weaviate"
+        elif "redis" in class_lower:
+            return "redis"
+        return class_name
+
+    def _detect_db_system(self, serialized: Optional[dict[str, Any]]) -> Optional[str]:
+        """Detect database system type from serialized info."""
+        class_name = _extract_class_name_from_serialized(serialized)
+        if not class_name:
+            return None
+
+        class_lower = class_name.lower()
+        # Vector databases
+        if "faiss" in class_lower:
+            return "faiss"
+        elif "chroma" in class_lower or "chromadb" in class_lower:
+            return "chromadb"
+        elif "pinecone" in class_lower:
+            return "pinecone"
+        elif "qdrant" in class_lower:
+            return "qdrant"
+        elif "milvus" in class_lower:
+            return "milvus"
+        elif "weaviate" in class_lower:
+            return "weaviate"
+        # Traditional databases
+        elif "postgres" in class_lower or "postgresql" in class_lower:
+            return "postgresql"
+        elif "mysql" in class_lower:
+            return "mysql"
+        elif "mongodb" in class_lower or "mongo" in class_lower:
+            return "mongodb"
+        elif "redis" in class_lower:
+            return "redis"
+        elif "elasticsearch" in class_lower or "elastic" in class_lower:
+            return "elasticsearch"
+        elif "opensearch" in class_lower:
+            return "opensearch"
+        elif "cassandra" in class_lower:
+            return "cassandra"
+        elif "neo4j" in class_lower:
+            return "neo4j"
+
+        return None
 
     def _is_agent_run(
         self,
@@ -1353,6 +1440,98 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         self._handle_error(error, run_id, parent_run_id, **kwargs)
 
     @dont_throw
+    def on_retriever_start(
+        self,
+        serialized: dict[str, Any],
+        query: str,
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        tags: Optional[list[str]] = None,
+        metadata: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Run when retriever starts."""
+        if context_api.get_value(_SUPPRESS_INSTRUMENTATION_KEY):
+            return
+
+        metadata_attrs = self._sanitize_metadata_dict(metadata)
+        extras: dict[str, Any] = {}
+        if tags:
+            extras["tags"] = [str(tag) for tag in tags]
+
+        search_kwargs = kwargs.get("search_kwargs", {})
+        top_k = search_kwargs.get("k") or search_kwargs.get("top_k")
+        retriever_type = search_kwargs.get("search_type", "similarity")
+        vector_store = metadata_attrs.get("vector_store") or self._detect_vector_store(serialized)
+
+        extras.update(metadata_attrs)
+
+        # Add additional retrieval attributes
+        retriever_name = kwargs.get("name")
+        if retriever_name:
+            extras["gen_ai.system"] = retriever_name
+
+        # Add embedding provider as request model if available
+        embedding_provider = metadata_attrs.get("ls_embedding_provider")
+        if embedding_provider:
+            extras["gen_ai.request.model"] = embedding_provider
+
+        # Add database system if available
+        db_system = self._detect_db_system(serialized)
+        if db_system:
+            extras["gen_ai.langchain.db.system"] = db_system
+
+        # Add query text if content capture is enabled
+        if should_send_prompts() and query:
+            extras["db.query.text"] = query
+
+        retrieval_inv = UtilRetrievalInvocation(
+            query=query,
+            top_k=top_k,
+            retriever_type=retriever_type,
+            vector_store=vector_store,
+            framework="langchain",
+            search_kwargs=search_kwargs,
+            attributes=extras,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+        )
+
+        self._telemetry_handler.start_retrieval(retrieval_inv)
+        with self._lock:
+            self._retrievals[run_id] = retrieval_inv
+
+    @dont_throw
+    def on_retriever_end(
+        self,
+        documents: list[Any],
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Run when retriever ends."""
+        if context_api.get_value(_SUPPRESS_INSTRUMENTATION_KEY):
+            return
+
+        with self._lock:
+            retrieval_inv = self._retrievals.pop(run_id, None)
+
+        if retrieval_inv:
+            retrieval_inv.documents_retrieved = len(documents)
+            retrieval_inv.results = [
+                {
+                    "content": getattr(doc, "page_content", str(doc))[:500],
+                    "metadata": getattr(doc, "metadata", {}),
+                    "score": getattr(doc, "score", None),
+                }
+                for doc in documents[:10]
+            ]
+
+            self._telemetry_handler.stop_retrieval(retrieval_inv)
+
+    @dont_throw
     def on_retriever_error(
         self,
         error: BaseException,
@@ -1362,6 +1541,16 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """Run when retriever errors."""
+        with self._lock:
+            retrieval_inv = self._retrievals.pop(run_id, None)
+        if retrieval_inv:
+            try:
+                self._telemetry_handler.fail_retrieval(
+                    retrieval_inv,
+                    UtilError(message=str(error), type=type(error)),
+                )
+            except Exception:
+                pass
         self._handle_error(error, run_id, parent_run_id, **kwargs)
 
     def _emit_chat_input_events(self, messages):

@@ -303,4 +303,5 @@ class SpanKindValues(Enum):
     TASK = "task"
     AGENT = "agent"
     TOOL = "tool"
+    RETRIEVAL = "retrieval"
     UNKNOWN = "unknown"

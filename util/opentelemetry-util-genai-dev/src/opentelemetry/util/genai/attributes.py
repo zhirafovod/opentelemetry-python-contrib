@@ -55,6 +55,13 @@ GEN_AI_EMBEDDINGS_DIMENSION_COUNT = "gen_ai.embeddings.dimension.count"
 GEN_AI_EMBEDDINGS_INPUT_TEXTS = "gen_ai.embeddings.input.texts"
 GEN_AI_REQUEST_ENCODING_FORMATS = "gen_ai.request.encoding_formats"
 
+# Retrieval attributes
+GEN_AI_RETRIEVAL_QUERY = "gen_ai.retrieval.query"
+GEN_AI_RETRIEVAL_TOP_K = "gen_ai.retrieval.top_k"
+GEN_AI_RETRIEVAL_TYPE = "gen_ai.retrieval.type"
+GEN_AI_RETRIEVAL_VECTOR_STORE = "gen_ai.retrieval.vector_store"
+GEN_AI_RETRIEVAL_DOCUMENTS_RETRIEVED = "gen_ai.retrieval.documents_retrieved"
+
 # Server attributes (from semantic conventions)
 SERVER_ADDRESS = "server.address"
 SERVER_PORT = "server.port"

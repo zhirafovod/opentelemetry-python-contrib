@@ -78,6 +78,7 @@ from opentelemetry.util.genai.types import (
     EvaluationResult,
     GenAI,
     LLMInvocation,
+    RetrievalInvocation,
     Task,
     ToolCall,
     Workflow,
@@ -621,6 +622,43 @@ class TelemetryHandler:
             except Exception:
                 pass
         return task
+
+    def start_retrieval(self, retrieval: RetrievalInvocation) -> RetrievalInvocation:
+        """Start a retrieval operation and create a pending span entry."""
+        self._refresh_capture_content()
+        retrieval.start_time = time.time()
+        self._emitter.on_start(retrieval)
+        return retrieval
+
+    def stop_retrieval(self, retrieval: RetrievalInvocation) -> RetrievalInvocation:
+        """Finalize a retrieval operation successfully and end its span."""
+        retrieval.end_time = time.time()
+        self._emitter.on_end(retrieval)
+        self._notify_completion(retrieval)
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:
+                self._meter_provider.force_flush()
+            except Exception:
+                pass
+        return retrieval
+
+    def fail_retrieval(self, retrieval: RetrievalInvocation, error: Error) -> RetrievalInvocation:
+        """Fail a retrieval operation and end its span with error status."""
+        retrieval.end_time = time.time()
+        self._emitter.on_error(error, retrieval)
+        self._notify_completion(retrieval)
+        if (
+            hasattr(self, "_meter_provider")
+            and self._meter_provider is not None
+        ):
+            try:
+                self._meter_provider.force_flush()
+            except Exception:
+                pass
+        return retrieval
 
     def evaluate_llm(
         self,

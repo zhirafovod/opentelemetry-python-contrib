@@ -314,6 +314,25 @@ class EmbeddingInvocation(GenAI):
 
 
 @dataclass
+class RetrievalInvocation(GenAI):
+    """Represents a single retrieval/search invocation."""
+
+    operation_name: str = field(
+        default="retrieval",
+        metadata={"semconv": GenAIAttributes.GEN_AI_OPERATION_NAME},
+    )
+    query: Optional[str] = None
+    query_vector: Optional[list[float]] = None
+    top_k: Optional[int] = None
+    retriever_type: Optional[str] = None
+    vector_store: Optional[str] = None
+    documents_retrieved: Optional[int] = None
+    search_filter: Optional[dict[str, Any]] = None
+    search_kwargs: dict[str, Any] = field(default_factory=_new_str_any_dict)
+    results: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
 class Workflow(GenAI):
     """Represents a workflow orchestrating multiple agents and tasks.
 
@@ -409,6 +428,7 @@ __all__ = [
     "GenAI",
     "LLMInvocation",
     "EmbeddingInvocation",
+    "RetrievalInvocation",
     "Error",
     "EvaluationResult",
     # agentic AI types
