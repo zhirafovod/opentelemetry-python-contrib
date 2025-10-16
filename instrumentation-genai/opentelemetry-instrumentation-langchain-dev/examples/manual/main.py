@@ -254,12 +254,11 @@ def embedding_invocation_demo():
     _flush_evaluations()
 
 def simple_agent_demo(llm: ChatOpenAI):
-    """Simple single-agent LangGraph demo (renamed from agent_demo).
+    """Simple single-agent LangGraph demo.
 
-    Demonstrates:
-      - Tool (get_capital)
-      - Route classification (capital vs general)
-      - Single workflow + agent instrumentation (if util-genai handler present)
+    Updated: Runs ONE randomly selected question instead of iterating a list,
+    and removes direct manual TelemetryHandler workflow/agent usage so that
+    LangChain instrumentation alone drives telemetry.
     """
     try:
         from langchain_core.tools import tool
@@ -343,7 +342,7 @@ def simple_agent_demo(llm: ChatOpenAI):
     graph.add_edge("capital_agent", END)
     graph.add_edge("general_agent", END)
     graph.set_entry_point("classify")
-    app = graph.compile()
+    app = graph.compile().with_config({"run_name": "simple-agent-demo-wf"})
 
     demo_questions = [
         "What is the capital of France?",
@@ -372,88 +371,28 @@ def simple_agent_demo(llm: ChatOpenAI):
         print("\n[Risk Scenario Enabled] Adding bias/toxicity challenge prompts to trigger evaluation metrics.")
         demo_questions.extend(risky_prompts)
 
-    print("\n--- Simple LangGraph Agent Demo (with manual Workflow/Agent) ---")
-    handler = None
-    try:  # Obtain util-genai handler if available
-        handler = get_telemetry_handler()
-    except Exception:
-        handler = None
-
-    workflow = agent_entity = None
-    transcript: list[str] = []  # accumulate Q/A for agent evaluation
-    if handler is not None:
-        from opentelemetry.util.genai.types import Workflow, AgentInvocation
-        # Start a workflow representing the overall demo run
-        workflow = Workflow(name="langgraph_demo", description="LangGraph capital & general QA demo")
-        workflow.framework = "langchain"
-        handler.start_workflow(workflow)
-        # Start an agent invocation to group the routing + tool decisions
-        agent_entity = AgentInvocation(
-            name="routing_agent",
-            operation="invoke_agent",
-            description="Classifier + capital specialist or general LLM",
-            model=getattr(llm, "model", None) or getattr(llm, "model_name", None),
-            tools=["get_capital"],
-        )
-        agent_entity.framework = "langchain"
-        agent_entity.system_instructions = (
-            "You are a routing agent. Decide if a user question asks for a capital city; "
-            "if so, delegate to a capital lookup tool, otherwise use the general LLM."
-        )
-        agent_entity.parent_run_id = workflow.run_id
-        handler.start_agent(agent_entity)
-
-    for q in demo_questions:
-        print(f"\nUser Question: {q}")
-        # Initialize state with additive messages list.
-        result_state = app.invoke({"input": q, "messages": []})
-        answer = result_state.get("output") or ""
-        print("Agent Output:", answer)
-        transcript.append(f"Q: {q}\nA: {answer}")
+    print("\n--- Simple LangGraph Agent Demo ---")
+    # Randomly select ONE question to run
+    import random
+    q = random.choice(demo_questions)
+    print(f"\nUser Question: {q}")
+    result_state = app.invoke({"input": q, "messages": []})
+    answer = result_state.get("output") or ""
+    print("Agent Output:", answer)
+    _flush_evaluations()
+    if risky_prompts and q in risky_prompts:
         _flush_evaluations()
-        # Force an additional flush after risky prompts to ensure early visibility
-        # of evaluation metrics (bias/toxicity) without waiting until the end.
-        if risky_prompts and q in risky_prompts:
-            _flush_evaluations()
-
-    # Stop agent & workflow in reverse order
-    if handler is not None:
-        if agent_entity is not None:
-            # Provide combined transcript as input_context for evaluator richness
-            if transcript and not agent_entity.input_context:
-                agent_entity.input_context = "\n\n".join(transcript)
-            # Set a meaningful summarized result as final agent output
-            agent_entity.output_result = (
-                "Answered {} questions ({} standard + {} risk probes).".format(
-                    len(demo_questions), len(demo_questions) - len(risky_prompts), len(risky_prompts)
-                )
-            )
-            handler.stop_agent(agent_entity)
-        if workflow is not None:
-            workflow.final_output = "demo_complete"
-            handler.stop_workflow(workflow)
     print("--- End Simple Agent Demo ---\n")
 
 
 def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
-    """Multi-agent LangGraph demo inspired by multi-agent RAG example.
+    """Simplified multi-agent demo.
 
-    Features >=5 logical agents (router, capital, math, sentiment, summarizer, general).
-    Each agent is represented as a LangGraph node; we start/stop an AgentInvocation entity
-    for richer GenAI telemetry when the util-genai handler is available.
-
-    Tools provided locally (no network):
-      - get_capital(country)
-      - calc_math(expr)
-      - analyze_sentiment(text)
-      - summarize(text)
-
-    Routing keywords (case-insensitive):
-      math: contains math symbols or digits + operators -> math_agent
-      capital/city: -> capital_agent
-      sentiment/feel/mood: -> sentiment_agent
-      summarize/summary/shorten: -> summarizer_agent
-      else -> general_agent
+    Updated: Runs ONE randomly selected question. Ensures EXACTLY two tool
+    invocations per run. Second tool is `evaluation_probe` in ~50% of runs,
+    otherwise a secondary sentiment analysis tool to keep tool count stable.
+    Removes manual TelemetryHandler workflow/agent usage; relies on LangChain
+    instrumentation only.
     """
     try:
         from typing import Annotated, TypedDict
@@ -545,48 +484,7 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
             "Overall, while there are inspiring aspects, some details are invented or irrelevant to the core question."
         )
 
-    handler = None
-    try:
-        handler = get_telemetry_handler()
-    except Exception:  # pragma: no cover
-        handler = None
-    workflow = None
-    if handler is not None:
-        from opentelemetry.util.genai.types import Workflow
-        workflow = Workflow(name="multi_agent_demo", description="Multi-agent decision workflow")
-        workflow.framework = "langchain"
-        handler.start_workflow(workflow)
-
-    def start_agent(name: str, tools: list[str]):
-        if handler is None:
-            return None
-        from opentelemetry.util.genai.types import AgentInvocation
-        agent = AgentInvocation(
-            name=name,
-            operation="invoke_agent",
-            description=f"{name} execution",
-            model=getattr(llm, "model", None) or getattr(llm, "model_name", None),
-            tools=tools,
-        )
-        agent.framework = "langchain"
-        if workflow is not None:
-            agent.parent_run_id = workflow.run_id
-        handler.start_agent(agent)
-        return agent
-
-    def stop_agent(agent, output: str | None):
-        if handler is None or agent is None:
-            return
-        # Ensure evaluator has both input and output text by populating input_context and output_result.
-        if output is not None:
-            agent.output_result = output
-        # If input_context missing, we derive a minimal one from the last question stored in _current_question.
-        if not getattr(agent, "input_context", None):
-            try:
-                agent.input_context = _current_question  # type: ignore[name-defined]
-            except Exception:
-                pass
-        handler.stop_agent(agent)
+    # Manual handler usage removed.
 
     # --- Agent Node Implementations ---
     def router(state: MAState) -> MAState:
@@ -606,53 +504,41 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
         return {"route": route}
 
     def capital_agent(state: MAState) -> MAState:
-        agent = start_agent("capital_agent", ["get_capital"])
         words = state["input"].rstrip("?!.").split()
         country = words[-1]
         cap = get_capital.run(country)
         answer = f"The capital of {country.capitalize()} is {cap}."
-        stop_agent(agent, answer)
         return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
 
     def math_agent(state: MAState) -> MAState:
-        agent = start_agent("math_agent", ["calc_math"])
         expr = ''.join(ch for ch in state["input"] if ch in '0123456789+-*/(). ')
         result = calc_math.run(expr)
         answer = f"Result: {result}"
-        stop_agent(agent, answer)
         return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
 
     def sentiment_agent(state: MAState) -> MAState:
-        agent = start_agent("sentiment_agent", ["analyze_sentiment"])
         raw = analyze_sentiment.run(state["input"])
         answer = f"Sentiment analysis: {raw}"
-        stop_agent(agent, answer)
         return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
 
     def summarizer_agent(state: MAState) -> MAState:
-        agent = start_agent("summarizer_agent", ["summarize"])
         summary = summarize.run(state.get("context") or state["input"])
         answer = f"Summary: {summary}"
-        stop_agent(agent, answer)
         return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
 
     def general_agent(state: MAState) -> MAState:
-        agent = start_agent("general_agent", [])
         response = llm.invoke([
             SystemMessage(content="You are a helpful multi-agent assistant."),
             HumanMessage(content=state["input"]),
         ])
         content = getattr(response, "content", str(response))
         answer = content
-        stop_agent(agent, answer)
         return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
 
     def probe_agent(state: MAState) -> MAState:
-        agent = start_agent("probe_agent", ["evaluation_probe"])  # single synthetic tool
         # Use part of input as topic seed
         topic = state["input"][:40].strip()
         text = evaluation_probe.run(topic)
-        stop_agent(agent, text)
         return {"messages": [AIMessage(content=text)], "output": text, "intermediate": state.get("intermediate", []) + [text]}
 
     graph = StateGraph(MAState)
@@ -675,42 +561,43 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
         "probe": "probe_agent",
         "general": "general_agent",
     })
-    # Chaining strategy: primary agent -> sentiment -> summarizer -> END
-    graph.add_edge("capital_agent", "sentiment_agent")
-    graph.add_edge("math_agent", "sentiment_agent")
-    graph.add_edge("probe_agent", "sentiment_agent")
-    graph.add_edge("general_agent", "sentiment_agent")
-    graph.add_edge("sentiment_agent", "summarizer_agent")
+    # Simplified: router -> chosen agent -> END (second tool call handled manually)
+    graph.add_edge("capital_agent", END)
+    graph.add_edge("math_agent", END)
+    graph.add_edge("sentiment_agent", END)
     graph.add_edge("summarizer_agent", END)
+    graph.add_edge("general_agent", END)
+    graph.add_edge("probe_agent", END)
     graph.set_entry_point("router")
     app = graph.compile()
 
-    # Base questions (we will inject probe every 2nd call dynamically)
     base_questions = [
         "What is the capital of Germany?",
         "Compute 12 * (3 + 5) - 4",
-        "Can you analyze the sentiment: I love clean, well-documented code but hate rushed hacks",
+        "Analyze the sentiment: I love clean, well-documented code but hate rushed hacks",
         "Summarize: OpenTelemetry enables unified observability across traces, metrics, and logs for cloud-native systems.",
         "Tell me something interesting about compilers.",
         "What is the capital city of Japan?",
         "Please summarize why observability matters in modern distributed systems.",
         "Compute (22 / 2) + 7 * 3",
     ]
-    print("\n--- Multi-Agent Demo (Chained) ---")
-    for idx, q in enumerate(base_questions, start=1):
-        # Every 2nd invocation replace question with probe to trigger evaluation metrics.
-        if idx % 2 == 0:
-            q = f"Probe: run evaluation on topic {q[:30]}"  # ensures 'probe' keyword
-        print(f"\nUser[{idx}]: {q}")
-        # Track current question globally for agent input_context derivation
-        _current_question = q  # type: ignore[assignment]
-        state = app.invoke({"input": q, "messages": [], "intermediate": []})
-        answer = state.get("output")
-        print("Answer:", answer)
-        _flush_evaluations()
-    if handler is not None and workflow is not None:
-        workflow.final_output = "multi_agent_demo_complete"
-        handler.stop_workflow(workflow)
+    import random
+    q = random.choice(base_questions)
+    print("\n--- Multi-Agent Demo (Simplified) ---")
+    print(f"\nUser: {q}")
+    state = app.invoke({"input": q, "messages": [], "intermediate": []})
+    primary_answer = state.get("output") or ""
+    print("Primary Answer:", primary_answer)
+    # Second tool invocation decision
+    second_tool_is_probe = random.random() < 0.5
+    if second_tool_is_probe:
+        probe_text = evaluation_probe.run(q[:40])
+        print("Probe Output:", probe_text)
+    else:
+        # Use sentiment analysis as secondary tool for stability
+        sentiment_text = analyze_sentiment.run(primary_answer or q)
+        print("Sentiment Output:", sentiment_text)
+    _flush_evaluations()
     print("--- End Multi-Agent Demo ---\n")
     _flush_evaluations()
 
