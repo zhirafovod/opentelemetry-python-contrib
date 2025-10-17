@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Union
 
 from .emitters.spec import CategoryOverride
 from .environment_variables import (
@@ -130,7 +130,7 @@ def parse_env() -> Settings:
 
 def _parse_category_override(
     category: str, raw: str
-) -> CategoryOverride | None:  # pragma: no cover - thin parsing
+) -> Union[CategoryOverride, None]:  # pragma: no cover - thin parsing
     if not raw:
         return None
     text = raw.strip()

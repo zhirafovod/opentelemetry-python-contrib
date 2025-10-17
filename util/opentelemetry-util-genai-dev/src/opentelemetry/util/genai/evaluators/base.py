@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Sequence, Union
 
 from opentelemetry.util.genai.types import (
     AgentInvocation,
@@ -35,10 +35,10 @@ class Evaluator(ABC):
 
     def __init__(
         self,
-        metrics: Iterable[str] | None = None,
+        metrics: Union[Iterable[str], None] = None,
         *,
-        invocation_type: str | None = None,
-        options: Mapping[str, str] | None = None,
+        invocation_type: Union[str, None] = None,
+        options: Union[Mapping[str, str], None] = None,
     ) -> None:
         default_metrics = (
             self.default_metrics_for(invocation_type)
@@ -65,7 +65,7 @@ class Evaluator(ABC):
         return ()
 
     def default_metrics_for(
-        self, invocation_type: str | None
+        self, invocation_type: Union[str, None]
     ) -> Sequence[str]:
         mapping = self.default_metrics_by_type()
         if invocation_type and invocation_type in mapping:

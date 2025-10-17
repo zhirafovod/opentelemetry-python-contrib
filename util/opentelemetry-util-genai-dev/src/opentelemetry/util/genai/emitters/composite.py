@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence, Union
 
 from ..interfaces import EmitterMeta, EmitterProtocol
 from ..types import Error, EvaluationResult
@@ -37,10 +37,10 @@ class CompositeEmitter(EmitterMeta):
     def __init__(
         self,
         *,
-        span_emitters: Iterable[EmitterProtocol] | None = None,
-        metrics_emitters: Iterable[EmitterProtocol] | None = None,
-        content_event_emitters: Iterable[EmitterProtocol] | None = None,
-        evaluation_emitters: Iterable[EmitterProtocol] | None = None,
+        span_emitters: Union[Iterable[EmitterProtocol], None] = None,
+        metrics_emitters: Union[Iterable[EmitterProtocol], None] = None,
+        content_event_emitters: Union[Iterable[EmitterProtocol], None] = None,
+        evaluation_emitters: Union[Iterable[EmitterProtocol], None] = None,
     ) -> None:
         self._categories: dict[str, list[EmitterProtocol]] = {
             "span": list(span_emitters or []),
@@ -64,7 +64,7 @@ class CompositeEmitter(EmitterMeta):
     def on_evaluation_results(
         self,
         results: Sequence[EvaluationResult],
-        obj: Any | None = None,
+        obj: Union[Any, None] = None,
     ) -> None:  # type: ignore[override]
         if not results:
             return
@@ -79,7 +79,7 @@ class CompositeEmitter(EmitterMeta):
     # Introspection helpers used during configuration refresh
 
     def iter_emitters(
-        self, categories: Sequence[str] | None = None
+        self, categories: Union[Sequence[str], None] = None
     ) -> Iterator[EmitterProtocol]:
         names = categories or (
             "span",
@@ -108,9 +108,9 @@ class CompositeEmitter(EmitterMeta):
         categories: Sequence[str],
         method_name: str,
         *,
-        obj: Any | None = None,
-        error: Error | None = None,
-        results: Sequence[EvaluationResult] | None = None,
+        obj: Union[Any, None] = None,
+        error: Union[Error, None] = None,
+        results: Union[Sequence[EvaluationResult], None] = None,
     ) -> None:
         for category in categories:
             emitters = self._categories.get(category)

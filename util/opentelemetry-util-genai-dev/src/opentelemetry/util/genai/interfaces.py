@@ -2,7 +2,7 @@
 # composite generator + plugin system can rely on a stable narrow contract.
 from __future__ import annotations
 
-from typing import Any, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, Sequence, runtime_checkable, Union
 
 from .types import Error, EvaluationResult, LLMInvocation
 
@@ -27,7 +27,7 @@ class EmitterProtocol(Protocol):
         ...
 
     def on_evaluation_results(
-        self, results: Sequence[EvaluationResult], obj: Any | None = None
+        self, results: Sequence[EvaluationResult], obj: Union[Any, None] = None
     ) -> None:  # pragma: no cover - structural
         ...
 
@@ -53,6 +53,6 @@ class EmitterMeta:
         return True
 
     def on_evaluation_results(
-        self, results: Sequence[EvaluationResult], obj: Any | None = None
+        self, results: Sequence[EvaluationResult], obj: Union[Any, None] = None
     ) -> None:  # pragma: no cover - default no-op
         return None
