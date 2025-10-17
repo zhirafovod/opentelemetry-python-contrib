@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from opentelemetry._logs import Logger, get_logger
@@ -43,6 +44,13 @@ class ContentEventsEmitter(EmitterMeta):
     ):
         self._logger: Logger = logger or get_logger(__name__)
         self._capture_content = capture_content
+        self._py_logger = logging.getLogger(f"{__name__}.ContentEventsEmitter")
+        if self._py_logger.isEnabledFor(logging.DEBUG):
+            self._py_logger.debug(
+                "Initialized ContentEventsEmitter capture_content=%s logger=%s",
+                capture_content,
+                type(self._logger).__name__,
+            )
 
     def on_start(self, obj: Any) -> None:
         # LLM events are emitted in finish() when we have both input and output
@@ -50,6 +58,11 @@ class ContentEventsEmitter(EmitterMeta):
 
     def on_end(self, obj: Any) -> None:
         if not self._capture_content:
+            if self._py_logger.isEnabledFor(logging.DEBUG):
+                self._py_logger.debug(
+                    "Skipping content emission (capture_content disabled) obj_type=%s",
+                    type(obj).__name__,
+                )
             return
 
         # if isinstance(obj, Workflow):
@@ -73,10 +86,19 @@ class ContentEventsEmitter(EmitterMeta):
                     self._capture_content,
                 )
                 if record and self._logger:
+                    if self._py_logger.isEnabledFor(logging.DEBUG):
+                        self._py_logger.debug(
+                            "Emitting LLM content event trace_id=%s span_id=%s",
+                            getattr(obj, "trace_id", None),
+                            getattr(obj, "span_id", None),
+                        )
                     self._logger.emit(record)
+                elif self._py_logger.isEnabledFor(logging.DEBUG):
+                    self._py_logger.debug(
+                        "No log record generated for LLM invocation (capture_content=%s)",
+                        self._capture_content,
+                    )
             except Exception as e:
-                import logging
-
                 logging.getLogger(__name__).warning(
                     f"Failed to emit LLM invocation event: {e}", exc_info=True
                 )

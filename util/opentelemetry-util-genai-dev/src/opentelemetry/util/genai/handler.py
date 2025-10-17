@@ -70,6 +70,11 @@ from opentelemetry.trace import get_tracer
 from opentelemetry.util.genai.emitters.configuration import (
     build_emitter_pipeline,
 )
+from opentelemetry.util.genai.span_context import (
+    extract_span_context,
+    span_context_hex_ids,
+    store_span_context,
+)
 from opentelemetry.util.genai.types import (
     AgentInvocation,
     ContentCapturingMode,
@@ -238,15 +243,17 @@ class TelemetryHandler:
         # Start invocation span; tracer context propagation handles parent/child links
         self._emitter.on_start(invocation)
         try:
-            span_context = (
-                invocation.span.get_span_context() if invocation.span else None
-            )
-            if span_context and getattr(span_context, "is_valid", False):
+            span_context = invocation.span_context
+            if span_context is None and invocation.span is not None:
+                span_context = extract_span_context(invocation.span)
+                store_span_context(invocation, span_context)
+            trace_hex, span_hex = span_context_hex_ids(span_context)
+            if trace_hex and span_hex:
                 genai_debug_log(
                     "handler.start_llm.span_created",
                     invocation,
-                    trace_id=f"{span_context.trace_id:032x}",
-                    span_id=f"{span_context.span_id:016x}",
+                    trace_id=trace_hex,
+                    span_id=span_hex,
                 )
             else:
                 genai_debug_log("handler.start_llm.no_span", invocation)
@@ -260,9 +267,11 @@ class TelemetryHandler:
         self._emitter.on_end(invocation)
         self._notify_completion(invocation)
         try:
-            span_context = (
-                invocation.span.get_span_context() if invocation.span else None
-            )
+            span_context = invocation.span_context
+            if span_context is None and invocation.span is not None:
+                span_context = extract_span_context(invocation.span)
+                store_span_context(invocation, span_context)
+            trace_hex, span_hex = span_context_hex_ids(span_context)
             genai_debug_log(
                 "handler.stop_llm.complete",
                 invocation,
@@ -271,18 +280,8 @@ class TelemetryHandler:
                 )
                 if invocation.end_time
                 else None,
-                trace_id=(
-                    f"{span_context.trace_id:032x}"  # type: ignore[attr-defined]
-                    if span_context
-                    and getattr(span_context, "is_valid", False)
-                    else None
-                ),
-                span_id=(
-                    f"{span_context.span_id:016x}"  # type: ignore[attr-defined]
-                    if span_context
-                    and getattr(span_context, "is_valid", False)
-                    else None
-                ),
+                trace_id=trace_hex,
+                span_id=span_hex,
             )
         except Exception:  # pragma: no cover
             pass
@@ -305,26 +304,18 @@ class TelemetryHandler:
         self._emitter.on_error(error, invocation)
         self._notify_completion(invocation)
         try:
-            span_context = (
-                invocation.span.get_span_context() if invocation.span else None
-            )
+            span_context = invocation.span_context
+            if span_context is None and invocation.span is not None:
+                span_context = extract_span_context(invocation.span)
+                store_span_context(invocation, span_context)
+            trace_hex, span_hex = span_context_hex_ids(span_context)
             genai_debug_log(
                 "handler.fail_llm.error",
                 invocation,
                 error_type=getattr(error, "type", None),
                 error_message=getattr(error, "message", None),
-                trace_id=(
-                    f"{span_context.trace_id:032x}"  # type: ignore[attr-defined]
-                    if span_context
-                    and getattr(span_context, "is_valid", False)
-                    else None
-                ),
-                span_id=(
-                    f"{span_context.span_id:016x}"  # type: ignore[attr-defined]
-                    if span_context
-                    and getattr(span_context, "is_valid", False)
-                    else None
-                ),
+                trace_id=trace_hex,
+                span_id=span_hex,
             )
         except Exception:  # pragma: no cover
             pass

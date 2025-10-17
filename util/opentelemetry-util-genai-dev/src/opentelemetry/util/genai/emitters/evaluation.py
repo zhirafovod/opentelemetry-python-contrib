@@ -20,6 +20,11 @@ from ..attributes import (
     GEN_AI_RESPONSE_ID,
 )
 from ..interfaces import EmitterMeta
+from ..span_context import (
+    build_otel_context,
+    extract_span_context,
+    store_span_context,
+)
 from ..types import EvaluationResult, GenAI
 
 
@@ -140,6 +145,18 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
         # Per-emitter set of (reason, key) we have already logged to avoid noise.
         if not hasattr(self, "_logged_skip_keys"):
             self._logged_skip_keys = set()  # type: ignore[attr-defined]
+
+        span_context = getattr(invocation, "span_context", None)
+        if (
+            span_context is None
+            and getattr(invocation, "span", None) is not None
+        ):
+            span_context = extract_span_context(invocation.span)
+            store_span_context(invocation, span_context)
+        otel_context = build_otel_context(
+            getattr(invocation, "span", None),
+            span_context,
+        )
 
         def _log_skip(
             reason: str,
@@ -263,9 +280,6 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                 attrs[GEN_AI_PROVIDER_NAME] = provider
             if res.label is not None:
                 attrs[GEN_AI_EVALUATION_SCORE_LABEL] = res.label
-            else:
-                # Defensive fallback: evaluator should set, but ensure presence
-                attrs[GEN_AI_EVALUATION_SCORE_LABEL] = "unknown"
             # Propagate evaluator-derived pass boolean if present
             passed = None
             try:
@@ -273,13 +287,26 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                     passed = res.attributes.get("gen_ai.evaluation.passed")
             except Exception:  # pragma: no cover - defensive
                 passed = None
+            if passed is None and res.label is not None:
+                label_text = str(res.label).strip().lower()
+                if label_text in {"pass", "passed"}:
+                    passed = True
+                elif label_text in {"fail", "failed"}:
+                    passed = False
             if isinstance(passed, bool):
                 attrs["gen_ai.evaluation.passed"] = passed
             attrs["gen_ai.evaluation.score.units"] = "score"
             if res.error is not None:
                 attrs["error.type"] = res.error.type.__qualname__
             try:
-                histogram.record(res.score, attributes=attrs)  # type: ignore[attr-defined]
+                if otel_context is not None:
+                    histogram.record(  # type: ignore[attr-defined]
+                        res.score,
+                        attributes=attrs,
+                        context=otel_context,
+                    )
+                else:
+                    histogram.record(res.score, attributes=attrs)  # type: ignore[attr-defined]
             except Exception as exc:  # pragma: no cover - defensive
                 _log_skip(
                     "histogram_record_error", raw_name, {"error": repr(exc)}
@@ -323,22 +350,15 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
         provider = getattr(invocation, "provider", None)
         response_id = _get_response_id(invocation)
 
-        span_context = None
-        if getattr(invocation, "span", None) is not None:
-            try:
-                span_context = invocation.span.get_span_context()
-            except Exception:  # pragma: no cover - defensive
-                span_context = None
-        span_id = (
-            getattr(span_context, "span_id", None)
-            if span_context is not None
-            else None
-        )
-        trace_id = (
-            getattr(span_context, "trace_id", None)
-            if span_context is not None
-            else None
-        )
+        span_context = getattr(invocation, "span_context", None)
+        if (
+            span_context is None
+            and getattr(invocation, "span", None) is not None
+        ):
+            span_context = extract_span_context(invocation.span)
+            store_span_context(invocation, span_context)
+        span_id = getattr(invocation, "span_id", None)
+        trace_id = getattr(invocation, "trace_id", None)
 
         for res in results:
             canonical = _canonicalize_metric_name(

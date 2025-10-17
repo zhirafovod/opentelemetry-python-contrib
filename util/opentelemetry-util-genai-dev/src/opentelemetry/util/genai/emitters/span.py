@@ -39,6 +39,7 @@ from ..attributes import (
     SERVER_PORT,
 )
 from ..interfaces import EmitterMeta
+from ..span_context import extract_span_context, store_span_context
 from ..types import (
     AgentInvocation,
     ContentCapturingMode,
@@ -253,6 +254,16 @@ class SpanEmitter(EmitterMeta):
             if serialized is not None:
                 span.set_attribute(GEN_AI_OUTPUT_MESSAGES, serialized)
 
+    def _attach_span(
+        self,
+        invocation: GenAIType,
+        span: Span,
+        context_manager: Any,
+    ) -> None:
+        invocation.span = span  # type: ignore[assignment]
+        invocation.context_token = context_manager  # type: ignore[assignment]
+        store_span_context(invocation, extract_span_context(span))
+
     # ---- lifecycle -------------------------------------------------------
     def on_start(
         self, invocation: LLMInvocation | EmbeddingInvocation
@@ -271,8 +282,7 @@ class SpanEmitter(EmitterMeta):
                 span_name, kind=SpanKind.CLIENT, end_on_exit=False
             )
             span = cm.__enter__()
-            invocation.span = span  # type: ignore[assignment]
-            invocation.context_token = cm  # type: ignore[assignment]
+            self._attach_span(invocation, span, cm)
             self._apply_start_attrs(invocation)
         elif isinstance(invocation, EmbeddingInvocation):
             self._start_embedding(invocation)
@@ -285,8 +295,7 @@ class SpanEmitter(EmitterMeta):
                 span_name, kind=SpanKind.CLIENT, end_on_exit=False
             )
             span = cm.__enter__()
-            invocation.span = span  # type: ignore[assignment]
-            invocation.context_token = cm  # type: ignore[assignment]
+            self._attach_span(invocation, span, cm)
             self._apply_start_attrs(invocation)
 
     def on_end(self, invocation: LLMInvocation | EmbeddingInvocation) -> None:  # type: ignore[override]
@@ -348,8 +357,7 @@ class SpanEmitter(EmitterMeta):
             span_name, kind=SpanKind.CLIENT, end_on_exit=False
         )
         span = cm.__enter__()
-        workflow.span = span
-        workflow.context_token = cm
+        self._attach_span(workflow, span, cm)
 
         # Set workflow attributes
         span.set_attribute(GEN_AI_WORKFLOW_NAME, workflow.name)
@@ -438,8 +446,7 @@ class SpanEmitter(EmitterMeta):
             span_name, kind=SpanKind.CLIENT, end_on_exit=False
         )
         span = cm.__enter__()
-        agent.span = span
-        agent.context_token = cm
+        self._attach_span(agent, span, cm)
 
         # Required attributes per semantic conventions
         # Set operation name based on agent operation (create or invoke)
@@ -535,8 +542,7 @@ class SpanEmitter(EmitterMeta):
             span_name, kind=SpanKind.CLIENT, end_on_exit=False
         )
         span = cm.__enter__()
-        task.span = span
-        task.context_token = cm
+        self._attach_span(task, span, cm)
 
         # Set task attributes
         span.set_attribute(GEN_AI_TASK_NAME, task.name)
@@ -626,8 +632,7 @@ class SpanEmitter(EmitterMeta):
             span_name, kind=SpanKind.CLIENT, end_on_exit=False
         )
         span = cm.__enter__()
-        embedding.span = span  # type: ignore[assignment]
-        embedding.context_token = cm  # type: ignore[assignment]
+        self._attach_span(embedding, span, cm)
         self._apply_start_attrs(embedding)
 
         # Set embedding-specific start attributes

@@ -11,10 +11,16 @@ from opentelemetry.util.genai.types import EvaluationResult, LLMInvocation
 
 class _RecordingHistogram:
     def __init__(self) -> None:
-        self.records: List[tuple[float, Dict[str, Any]]] = []
+        self.records: List[tuple[float, Dict[str, Any], Any]] = []
 
-    def record(self, value: float, *, attributes: Dict[str, Any]):  # type: ignore[override]
-        self.records.append((value, attributes))
+    def record(
+        self,
+        value: float,
+        *,
+        attributes: Dict[str, Any],
+        context: Any = None,
+    ):  # type: ignore[override]
+        self.records.append((value, attributes, context))
 
 
 class _HistogramFactory:
