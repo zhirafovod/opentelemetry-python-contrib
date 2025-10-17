@@ -16,7 +16,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 from opentelemetry.util.genai.environment_variables import (
-    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE,
     OTEL_INSTRUMENTATION_GENAI_EMITTERS,
 )
 from opentelemetry.util.genai.handler import get_telemetry_handler
@@ -65,8 +66,16 @@ class TestMetricsEmission(unittest.TestCase):
         env = {
             **STABILITY_EXPERIMENTAL,
             OTEL_INSTRUMENTATION_GENAI_EMITTERS: generator,
-            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES: capture_mode.lower(),
         }
+        if capture_mode is not None:
+            upper_mode = capture_mode.upper()
+            capture_enabled = upper_mode != "NONE"
+            env[OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT] = (
+                "true" if capture_enabled else "false"
+            )
+            env[OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE] = (
+                upper_mode
+            )
         with patch.dict(os.environ, env, clear=False):
             _OpenTelemetrySemanticConventionStability._initialized = False
             _OpenTelemetrySemanticConventionStability._initialize()
@@ -235,7 +244,8 @@ class TestMetricsEmission(unittest.TestCase):
         env = {
             **STABILITY_EXPERIMENTAL,
             OTEL_INSTRUMENTATION_GENAI_EMITTERS: "span_metric",
-            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES: "span",
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "true",
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE: "SPAN_ONLY",
         }
         with patch.dict(os.environ, env, clear=False):
             if hasattr(get_telemetry_handler, "_default_handler"):
