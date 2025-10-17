@@ -16,7 +16,8 @@ import logging
 import os
 
 from opentelemetry.util.genai.environment_variables import (
-    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE,
 )
 from opentelemetry.util.genai.types import ContentCapturingMode
 
@@ -27,25 +28,57 @@ def is_experimental_mode() -> bool:  # backward stub (always false)
     return False
 
 
-def get_content_capturing_mode() -> (
-    ContentCapturingMode
-):  # single authoritative implementation
-    value = os.environ.get(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES, "")
-    if not value:
-        return ContentCapturingMode.NO_CONTENT
-    normalized = value.strip().lower()
-    mapping = {
-        "span": ContentCapturingMode.SPAN_ONLY,
-        "events": ContentCapturingMode.EVENT_ONLY,
-        "both": ContentCapturingMode.SPAN_AND_EVENT,
-        "none": ContentCapturingMode.NO_CONTENT,
-    }
-    mode = mapping.get(normalized)
-    if mode is not None:
-        return mode
-    logger.warning(
-        "%s is not a valid option for `%s` environment variable. Must be one of span, events, both, none. Defaulting to `NO_CONTENT`.",
-        value,
-        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES,
+_TRUTHY_VALUES = {"1", "true", "yes", "on"}
+
+
+def _is_truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in _TRUTHY_VALUES
+
+
+def get_content_capturing_mode() -> ContentCapturingMode:
+    """Return capture mode derived from environment variables."""
+
+    # Preferred configuration: boolean flag + explicit mode
+    capture_flag = os.environ.get(
+        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
     )
+    if capture_flag is not None:
+        if not _is_truthy(capture_flag):
+            return ContentCapturingMode.NO_CONTENT
+        raw_mode = os.environ.get(
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE,
+            "span_and_event",
+        )
+        normalized = (raw_mode or "").strip().lower().replace("-", "_")
+        mapping = {
+            "event_only": ContentCapturingMode.EVENT_ONLY,
+            "events": ContentCapturingMode.EVENT_ONLY,  # synonym
+            "span_only": ContentCapturingMode.SPAN_ONLY,
+            "span": ContentCapturingMode.SPAN_ONLY,  # synonym
+            "span_and_event": ContentCapturingMode.SPAN_AND_EVENT,
+            "both": ContentCapturingMode.SPAN_AND_EVENT,  # synonym
+            "none": ContentCapturingMode.NO_CONTENT,
+        }
+        mode = mapping.get(normalized)
+        if mode is not None:
+            return mode
+        logger.warning(
+            "%s is not a valid option for `%s`. Must be one of span_only, event_only, span_and_event, none. Defaulting to `SPAN_AND_EVENT`.",
+            raw_mode,
+            OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE,
+        )
+        return ContentCapturingMode.SPAN_AND_EVENT
+
+    # Legacy fallback: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES
+    legacy_value = os.environ.get(
+        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES"
+    )
+    if legacy_value is not None:
+        logger.warning(
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES is deprecated and ignored. "
+            "Use OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT and "
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE instead."
+        )
     return ContentCapturingMode.NO_CONTENT

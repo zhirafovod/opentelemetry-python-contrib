@@ -36,12 +36,19 @@ from opentelemetry.util.genai.types import (
     Text,
 )
 
+try:  # Optional debug logging import
+    from opentelemetry.util.genai.debug import genai_debug_log
+except Exception:  # pragma: no cover
+
+    def genai_debug_log(*_a: Any, **_k: Any) -> None:  # type: ignore
+        return None
+
+
 _DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
     "LLMInvocation": (
         "bias",
         "toxicity",
         "answer_relevancy",
-        "faithfulness",
         "hallucination",
         "sentiment",
     ),
@@ -49,7 +56,6 @@ _DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
         "bias",
         "toxicity",
         "answer_relevancy",
-        "faithfulness",
         "hallucination",
         "sentiment",
     ),
@@ -133,11 +139,35 @@ class DeepevalEvaluator(Evaluator):
     def _evaluate_generic(
         self, invocation: GenAI, invocation_type: str
     ) -> Sequence[EvaluationResult]:
+        try:
+            genai_debug_log(
+                "evaluator.deepeval.start",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
+        except Exception:  # pragma: no cover
+            pass
         metric_specs = self._build_metric_specs()
         if not metric_specs:
+            genai_debug_log(
+                "evaluator.deepeval.skip.no_metrics",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
             return []
         test_case = self._build_test_case(invocation, invocation_type)
         if test_case is None:
+            genai_debug_log(
+                "evaluator.deepeval.error.missing_io",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
             return self._error_results(
                 "Deepeval requires both input and output text to evaluate",
                 ValueError,
@@ -186,6 +216,16 @@ class DeepevalEvaluator(Evaluator):
                     pass
         except Exception:  # pragma: no cover - defensive
             api_key = None
+        try:
+            genai_debug_log(
+                "evaluator.deepeval.resolve_api_key",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                has_key=bool(api_key),
+            )
+        except Exception:
+            pass
         # Do not fail early if API key missing; underlying Deepeval/OpenAI usage
         # will produce an error which we surface as evaluation error results.
         try:
@@ -195,6 +235,13 @@ class DeepevalEvaluator(Evaluator):
         except Exception as exc:  # pragma: no cover - defensive
             return self._error_results(str(exc), type(exc))
         if not metrics:
+            genai_debug_log(
+                "evaluator.deepeval.skip.no_valid_metrics",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
             return skipped_results or self._error_results(
                 "No Deepeval metrics available", RuntimeError
             )
@@ -208,6 +255,8 @@ class DeepevalEvaluator(Evaluator):
                 *self._error_results(str(exc), type(exc)),
             ]
         return [*skipped_results, *self._convert_results(evaluation)]
+
+    # NOTE: unreachable code below; logging handled prior to return.
 
     # ---- Helpers ------------------------------------------------------
     def _build_metric_specs(self) -> Sequence[_MetricSpec]:
@@ -497,8 +546,8 @@ class DeepevalEvaluator(Evaluator):
                 threshold = getattr(metric, "threshold", None)
                 evaluation_model = getattr(metric, "evaluation_model", None)
                 evaluation_cost = getattr(metric, "evaluation_cost", None)
-                verbose_logs = getattr(metric, "verbose_logs", None)
-                strict_mode = getattr(metric, "strict_mode", None)
+                # verbose_logs = getattr(metric, "verbose_logs", None)
+                # strict_mode = getattr(metric, "strict_mode", None)
                 error_msg = getattr(metric, "error", None)
                 attributes: dict[str, Any] = {
                     "deepeval.success": success,
@@ -509,10 +558,10 @@ class DeepevalEvaluator(Evaluator):
                     attributes["deepeval.evaluation_model"] = evaluation_model
                 if evaluation_cost is not None:
                     attributes["deepeval.evaluation_cost"] = evaluation_cost
-                if verbose_logs:
-                    attributes["deepeval.verbose_logs"] = verbose_logs
-                if strict_mode is not None:
-                    attributes["deepeval.strict_mode"] = strict_mode
+                # if verbose_logs:
+                #     attributes["deepeval.verbose_logs"] = verbose_logs
+                # if strict_mode is not None:
+                #     attributes["deepeval.strict_mode"] = strict_mode
                 if getattr(test, "name", None):
                     attributes.setdefault(
                         "deepeval.test_case", getattr(test, "name")
@@ -532,10 +581,28 @@ class DeepevalEvaluator(Evaluator):
                     "answer_relevancy",
                     "answer_relevance",
                 }:
+                    # Only allow 'Relevant' / 'Irrelevant'. If Deepeval supplied success we trust it.
                     if success is True:
                         label = "Relevant"
                     elif success is False:
                         label = "Irrelevant"
+                    else:
+                        # Derive based on score and threshold (if both numeric). If absent, default to Irrelevant conservatively when score is None.
+                        if isinstance(score, (int, float)) and isinstance(
+                            threshold, (int, float)
+                        ):
+                            label = (
+                                "Relevant"
+                                if score >= float(threshold)
+                                else "Irrelevant"
+                            )
+                        elif isinstance(score, (int, float)):
+                            # Assume default threshold 0.5 if unspecified.
+                            label = (
+                                "Relevant" if score >= 0.5 else "Irrelevant"
+                            )
+                        else:
+                            label = "Irrelevant"
                 elif (
                     metric_lower.startswith("hallucination")
                     or metric_lower == "faithfulness"
@@ -563,6 +630,45 @@ class DeepevalEvaluator(Evaluator):
                         label = "pass"
                     elif success is False:
                         label = "fail"
+                # Final defensive fallback: ensure every result has some label for downstream aggregation.
+                if label is None:
+                    # If score present we treat unknown success as Neutral (for sentiment) or pass for numeric metrics.
+                    if metric_lower.startswith("sentiment") and isinstance(
+                        score, (int, float)
+                    ):
+                        label = "Neutral"
+                    else:
+                        label = "pass" if success is not False else "fail"
+                # Derive pass/fail attribute centrally (moved from emitters). We expose a uniform
+                # boolean attribute 'gen_ai.evaluation.passed' for downstream aggregation. If Deepeval
+                # did not compute success we attempt a light inference from standardized labels.
+                passed: bool | None
+                if success is True:
+                    passed = True
+                elif success is False:
+                    passed = False
+                else:
+                    # Infer from label vocabulary when success is None (defensive fallback)
+                    if label in {
+                        "Relevant",
+                        "Not hallucinated",
+                        "Non toxic",
+                        "Not biased",
+                        "Positive",
+                        "Neutral",
+                    }:
+                        passed = True
+                    elif label in {
+                        "Irrelevant",
+                        "Hallucinated",
+                        "Toxic",
+                        "Biased",
+                        "Negative",
+                        "fail",
+                    }:
+                        passed = False
+                    else:
+                        passed = None
                 # Custom sentiment transformation: maintain original compound, map recorded score to [0,1]
                 if (
                     name in {"sentiment", "sentiment [geval]"}
@@ -595,23 +701,22 @@ class DeepevalEvaluator(Evaluator):
                         attributes=attributes,
                     )
                 )
+                if passed is not None:
+                    # Only set after EvaluationResult to avoid mutating attributes seen earlier if any consumer copies them pre-insertion
+                    attributes["gen_ai.evaluation.passed"] = passed
                 # Post-process custom sentiment distribution (after mapping)
                 if name in {"sentiment", "sentiment [geval]"} and isinstance(
                     score, (int, float)
                 ):
                     # Score expected in [-1,1]; clamp then transform.
                     try:
-                        # Retrieve compound (may have been set above)
                         compound_val = attributes.get(
                             "deepeval.sentiment.compound", (score * 2.0) - 1.0
                         )
                         clamped = max(-1.0, min(1.0, float(compound_val)))
-                        # Positive strength now is score itself (mapped)
                         pos_strength = float(score)
                         neg_strength = 1 - pos_strength
-                        # Heuristic neutral: proximity to midpoint
                         neu_strength = 1 - abs(clamped)
-                        # Normalize (neg+neu+pos) to 1 for safety
                         total = neg_strength + neu_strength + pos_strength
                         if total > 0:
                             neg_strength /= total
@@ -633,7 +738,7 @@ class DeepevalEvaluator(Evaluator):
                                 ),
                             }
                         )
-                    except Exception:  # pragma: no cover - defensive
+                    except Exception:
                         pass
         return results
 

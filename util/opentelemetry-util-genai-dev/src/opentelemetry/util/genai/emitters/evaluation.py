@@ -263,43 +263,20 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                 attrs[GEN_AI_PROVIDER_NAME] = provider
             if res.label is not None:
                 attrs[GEN_AI_EVALUATION_SCORE_LABEL] = res.label
-            # Derive boolean gen_ai.evaluation.passed
+            # Propagate evaluator-derived pass boolean if present
             passed = None
-            if res.label:
-                lbl_raw = str(res.label)
-                lbl = lbl_raw.lower()
-                # Positive (passed) label vocabulary
-                passed_positive = {
-                    "pass",
-                    "success",
-                    "ok",
-                    "true",
-                    "relevant",
-                    "not hallucinated",
-                    "non toxic",
-                    "not biased",
-                    "positive",  # sentiment
-                    "neutral",  # treat neutral as acceptable pass
-                }
-                failed_negative = {
-                    "fail",
-                    "error",
-                    "false",
-                    "irrelevant",
-                    "hallucinated",
-                    "toxic",
-                    "biased",
-                    "negative",  # negative sentiment considered not passed
-                }
-                if lbl in passed_positive:
+            try:
+                if isinstance(getattr(res, "attributes", None), dict):
+                    passed = res.attributes.get("gen_ai.evaluation.passed")
+            except Exception:  # pragma: no cover - defensive
+                passed = None
+            if passed is None and res.label is not None:
+                label_text = str(res.label).strip().lower()
+                if label_text in {"pass", "passed", "success"}:
                     passed = True
-                elif lbl in failed_negative:
+                elif label_text in {"fail", "failed", "error"}:
                     passed = False
-            # NOTE: We deliberately do NOT infer pass/fail purely from numeric score
-            # without an accompanying categorical label to avoid accidental cardinality
-            # or semantic ambiguities across evaluators. Future extension could allow
-            # opt-in heuristic score->pass mapping.
-            if passed is not None:
+            if isinstance(passed, bool):
                 attrs["gen_ai.evaluation.passed"] = passed
             attrs["gen_ai.evaluation.score.units"] = "score"
             if res.error is not None:
@@ -406,38 +383,16 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
                 base_attrs[GEN_AI_EVALUATION_SCORE_VALUE] = res.score
             if res.label is not None:
                 base_attrs[GEN_AI_EVALUATION_SCORE_LABEL] = res.label
+            else:
+                base_attrs[GEN_AI_EVALUATION_SCORE_LABEL] = "unknown"
+            # Propagate pass boolean if available
             passed = None
-            if res.label:
-                lbl_raw = str(res.label)
-                lbl = lbl_raw.lower()
-                passed_positive = {
-                    "pass",
-                    "success",
-                    "ok",
-                    "true",
-                    "relevant",
-                    "not hallucinated",
-                    "non toxic",
-                    "not biased",
-                    "positive",
-                    "neutral",
-                }
-                failed_negative = {
-                    "fail",
-                    "error",
-                    "false",
-                    "irrelevant",
-                    "hallucinated",
-                    "toxic",
-                    "biased",
-                    "negative",
-                }
-                if lbl in passed_positive:
-                    passed = True
-                elif lbl in failed_negative:
-                    passed = False
-            # Do not infer pass/fail solely from numeric score (see metrics emitter note)
-            if passed is not None:
+            try:
+                if isinstance(getattr(res, "attributes", None), dict):
+                    passed = res.attributes.get("gen_ai.evaluation.passed")
+            except Exception:  # pragma: no cover - defensive
+                passed = None
+            if isinstance(passed, bool):
                 base_attrs["gen_ai.evaluation.passed"] = passed
             if isinstance(res.score, (int, float)):
                 base_attrs["gen_ai.evaluation.score.units"] = "score"
@@ -461,6 +416,7 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
             try:
                 self._event_logger.emit(
                     _otel_events.Event(
+                        # context=span_context,
                         name=self._primary_event_name,
                         attributes=spec_attrs,
                         span_id=span_id,

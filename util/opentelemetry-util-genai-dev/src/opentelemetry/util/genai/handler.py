@@ -53,6 +53,14 @@ import os
 import time
 from typing import Any, Optional
 
+try:
+    from opentelemetry.util.genai.debug import genai_debug_log
+except Exception:  # pragma: no cover - fallback if debug module missing
+
+    def genai_debug_log(*_args: Any, **_kwargs: Any) -> None:  # type: ignore
+        return None
+
+
 from opentelemetry import _events as _otel_events
 from opentelemetry import _logs
 from opentelemetry import metrics as _metrics
@@ -79,9 +87,19 @@ from opentelemetry.util.genai.version import __version__
 
 from .callbacks import CompletionCallback
 from .config import parse_env
-from .environment_variables import OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES
+from .environment_variables import (
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+_TRUTHY_VALUES = {"1", "true", "yes", "on"}
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in _TRUTHY_VALUES
 
 
 class TelemetryHandler:
@@ -181,7 +199,11 @@ class TelemetryHandler:
             span_capture_allowed = True
             if control is not None:
                 span_capture_allowed = control.span_allowed
-            if os.environ.get(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES):
+            if _is_truthy_env(
+                os.environ.get(
+                    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+                )
+            ):
                 span_capture_allowed = True
             # Respect the content capture mode for all generator kinds
             new_value_events = mode in (
@@ -217,6 +239,7 @@ class TelemetryHandler:
         """Start an LLM invocation and create a pending span entry."""
         # Ensure capture content settings are current
         self._refresh_capture_content()
+        genai_debug_log("handler.start_llm.begin", invocation)
         # Implicit agent inheritance
         if (
             not invocation.agent_name or not invocation.agent_id
@@ -228,6 +251,21 @@ class TelemetryHandler:
                 invocation.agent_id = top_id
         # Start invocation span; tracer context propagation handles parent/child links
         self._emitter.on_start(invocation)
+        try:
+            span_context = (
+                invocation.span.get_span_context() if invocation.span else None
+            )
+            if span_context and getattr(span_context, "is_valid", False):
+                genai_debug_log(
+                    "handler.start_llm.span_created",
+                    invocation,
+                    trace_id=f"{span_context.trace_id:032x}",
+                    span_id=f"{span_context.span_id:016x}",
+                )
+            else:
+                genai_debug_log("handler.start_llm.no_span", invocation)
+        except Exception:  # pragma: no cover
+            pass
         return invocation
 
     def stop_llm(self, invocation: LLMInvocation) -> LLMInvocation:
@@ -235,6 +273,33 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_end(invocation)
         self._notify_completion(invocation)
+        try:
+            span_context = (
+                invocation.span.get_span_context() if invocation.span else None
+            )
+            genai_debug_log(
+                "handler.stop_llm.complete",
+                invocation,
+                duration_ms=round(
+                    (invocation.end_time - invocation.start_time) * 1000, 3
+                )
+                if invocation.end_time
+                else None,
+                trace_id=(
+                    f"{span_context.trace_id:032x}"  # type: ignore[attr-defined]
+                    if span_context
+                    and getattr(span_context, "is_valid", False)
+                    else None
+                ),
+                span_id=(
+                    f"{span_context.span_id:016x}"  # type: ignore[attr-defined]
+                    if span_context
+                    and getattr(span_context, "is_valid", False)
+                    else None
+                ),
+            )
+        except Exception:  # pragma: no cover
+            pass
         # Force flush metrics if a custom provider with force_flush is present
         if (
             hasattr(self, "_meter_provider")
@@ -253,6 +318,30 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_error(error, invocation)
         self._notify_completion(invocation)
+        try:
+            span_context = (
+                invocation.span.get_span_context() if invocation.span else None
+            )
+            genai_debug_log(
+                "handler.fail_llm.error",
+                invocation,
+                error_type=getattr(error, "type", None),
+                error_message=getattr(error, "message", None),
+                trace_id=(
+                    f"{span_context.trace_id:032x}"  # type: ignore[attr-defined]
+                    if span_context
+                    and getattr(span_context, "is_valid", False)
+                    else None
+                ),
+                span_id=(
+                    f"{span_context.span_id:016x}"  # type: ignore[attr-defined]
+                    if span_context
+                    and getattr(span_context, "is_valid", False)
+                    else None
+                ),
+            )
+        except Exception:  # pragma: no cover
+            pass
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None

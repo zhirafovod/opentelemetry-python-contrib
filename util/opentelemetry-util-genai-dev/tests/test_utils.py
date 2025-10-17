@@ -25,7 +25,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 from opentelemetry.util.genai.environment_variables import (
-    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE,
 )
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
@@ -40,13 +41,29 @@ from opentelemetry.util.genai.utils import get_content_capturing_mode
 _F = TypeVar("_F", bound=Callable[..., Any])
 
 
-def patch_capture_mode(value: str) -> Callable[[_F], _F]:
+def patch_capture_mode(value: str | None) -> Callable[[_F], _F]:
     def decorator(test_case: _F) -> _F:  # type: ignore[misc]
-        @patch.dict(
-            os.environ, {OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES: value}
-        )
         def wrapper(*args: Any, **kwargs: Any):  # type: ignore[override]
-            return test_case(*args, **kwargs)
+            with patch.dict(os.environ, {}, clear=False):
+                if value is None:
+                    os.environ[
+                        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+                    ] = "false"
+                    os.environ.pop(
+                        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE,
+                        None,
+                    )
+                else:
+                    os.environ[
+                        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+                    ] = "true"
+                    os.environ[
+                        OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE
+                    ] = value
+                os.environ.pop(
+                    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES", None
+                )
+                return test_case(*args, **kwargs)
 
         return wrapper  # type: ignore[return-value]
 
@@ -54,15 +71,15 @@ def patch_capture_mode(value: str) -> Callable[[_F], _F]:
 
 
 class TestVersion(unittest.TestCase):
-    @patch_capture_mode("span")
+    @patch_capture_mode("SPAN_ONLY")
     def test_get_content_capturing_mode_parses_valid_envvar(self):  # pylint: disable=no-self-use
         assert get_content_capturing_mode() == ContentCapturingMode.SPAN_ONLY
 
-    @patch_capture_mode("")
+    @patch_capture_mode(None)
     def test_empty_content_capturing_envvar(self):  # pylint: disable=no-self-use
         assert get_content_capturing_mode() == ContentCapturingMode.NO_CONTENT
 
-    @patch_capture_mode("both")
+    @patch_capture_mode("SPAN_AND_EVENT")
     def test_both_mode(self):  # pylint: disable=no-self-use
         assert (
             get_content_capturing_mode() == ContentCapturingMode.SPAN_AND_EVENT
@@ -74,10 +91,22 @@ class TestVersion(unittest.TestCase):
     ):  # pylint: disable=no-self-use
         with self.assertLogs(level="WARNING") as cm:
             assert (
-                get_content_capturing_mode() == ContentCapturingMode.NO_CONTENT
+                get_content_capturing_mode()
+                == ContentCapturingMode.SPAN_AND_EVENT
             )
         self.assertEqual(len(cm.output), 1)
-        self.assertIn("INVALID_VALUE is not a valid option for ", cm.output[0])
+        self.assertIn("not a valid option", cm.output[0])
+
+    def test_legacy_env_triggers_warning(self):
+        with patch.dict(
+            os.environ, {"OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES": "span"}
+        ):
+            with self.assertLogs(level="WARNING") as cm:
+                assert (
+                    get_content_capturing_mode()
+                    == ContentCapturingMode.NO_CONTENT
+                )
+        self.assertIn("deprecated and ignored", cm.output[0])
 
 
 class TestTelemetryHandler(unittest.TestCase):
@@ -107,7 +136,7 @@ class TestTelemetryHandler(unittest.TestCase):
         if hasattr(get_telemetry_handler, "_default_handler"):
             delattr(get_telemetry_handler, "_default_handler")
 
-    @patch_capture_mode("span")
+    @patch_capture_mode("SPAN_ONLY")
     def test_llm_start_and_stop_creates_span(self):  # pylint: disable=no-self-use
         message = InputMessage(
             role="Human", parts=[Text(content="hello world")]
@@ -212,7 +241,7 @@ class TestTelemetryHandler(unittest.TestCase):
         assert child_span.parent is not None
         assert child_span.parent.span_id == parent_span.context.span_id
 
-    @patch_capture_mode("events")
+    @patch_capture_mode("EVENT_ONLY")
     def test_span_metric_event_generator_event_only_no_span_messages(self):
         from opentelemetry.util.genai.environment_variables import (
             OTEL_INSTRUMENTATION_GENAI_EMITTERS,
@@ -251,7 +280,7 @@ class TestTelemetryHandler(unittest.TestCase):
             assert span.attributes.get("gen_ai.input.messages") is None
             assert span.attributes.get("gen_ai.output.messages") is None
 
-    @patch_capture_mode("span")
+    @patch_capture_mode("SPAN_ONLY")
     def test_span_metric_event_generator_span_only_mode_still_no_span_messages(
         self,
     ):
@@ -290,7 +319,7 @@ class TestTelemetryHandler(unittest.TestCase):
             assert span.attributes.get("gen_ai.input.messages") is not None
             assert span.attributes.get("gen_ai.output.messages") is not None
 
-    @patch_capture_mode("both")
+    @patch_capture_mode("SPAN_AND_EVENT")
     def test_span_metric_event_generator_span_and_event_mode_behaves_like_event_only(
         self,
     ):
@@ -326,7 +355,7 @@ class TestTelemetryHandler(unittest.TestCase):
             assert span.attributes.get("gen_ai.input.messages") is not None
             assert span.attributes.get("gen_ai.output.messages") is not None
 
-    @patch_capture_mode("both")
+    @patch_capture_mode("SPAN_AND_EVENT")
     def test_span_generator_span_and_event_mode_adds_messages(self):
         # span flavor should capture on span when SPAN_AND_EVENT
         from opentelemetry.util.genai.environment_variables import (
@@ -357,7 +386,7 @@ class TestTelemetryHandler(unittest.TestCase):
             assert span.attributes.get("gen_ai.input.messages") is not None
             assert span.attributes.get("gen_ai.output.messages") is not None
 
-    @patch_capture_mode("events")
+    @patch_capture_mode("EVENT_ONLY")
     def test_span_generator_event_only_mode_does_not_add_messages(self):
         from opentelemetry.util.genai.environment_variables import (
             OTEL_INSTRUMENTATION_GENAI_EMITTERS,
