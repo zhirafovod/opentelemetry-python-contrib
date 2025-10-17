@@ -87,9 +87,19 @@ from opentelemetry.util.genai.version import __version__
 
 from .callbacks import CompletionCallback
 from .config import parse_env
-from .environment_variables import OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES
+from .environment_variables import (
+    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+_TRUTHY_VALUES = {"1", "true", "yes", "on"}
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in _TRUTHY_VALUES
 
 
 class TelemetryHandler:
@@ -189,7 +199,11 @@ class TelemetryHandler:
             span_capture_allowed = True
             if control is not None:
                 span_capture_allowed = control.span_allowed
-            if os.environ.get(OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES):
+            if _is_truthy_env(
+                os.environ.get(
+                    OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+                )
+            ):
                 span_capture_allowed = True
             # Respect the content capture mode for all generator kinds
             new_value_events = mode in (

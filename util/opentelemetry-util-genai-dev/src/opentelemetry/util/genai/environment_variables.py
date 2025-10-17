@@ -12,15 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES = (
-    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES"
+OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT = (
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
 )
 """
-.. envvar:: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
 
-One of ``span``, ``events``, ``both``, ``none`` (case-insensitive). Overrides the
-legacy ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT(_MODE)`` variables when
-set.
+Enable capture of GenAI message content. When set to a truthy value (``true``,
+``1``, ``yes``, ``on``) the emitter pipeline records prompt and completion
+content according to :envvar:`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE`.
+Unset or falsey values disable content capture entirely.
+"""
+
+OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE = (
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE"
+)
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE
+
+Controls where captured message content is emitted. Accepted case-insensitive values:
+
+``SPAN_ONLY`` – emit content on spans only.
+``EVENT_ONLY`` – emit content as log events only.
+``SPAN_AND_EVENT`` (default) – emit content on spans and as log events.
+``NONE`` – disable content emission (equivalent to disabling capture entirely).
 """
 
 
@@ -142,7 +157,8 @@ OTEL_GENAI_EVALUATION_EVENT_LEGACY = "OTEL_GENAI_EVALUATION_EVENT_LEGACY"
 
 __all__ = [
     # existing
-    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES",
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE",
     "OTEL_INSTRUMENTATION_GENAI_UPLOAD_HOOK",
     "OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH",
     # evaluation

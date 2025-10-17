@@ -153,7 +153,7 @@ Numbered for incremental execution (referenced in CHANGELOG):
 4. Merge evaluation emitters into composite evaluation category.
 5. Remove `CompositeEvaluationEmitter` and legacy `CompositeGenerator`.
 6. Implement new env var parser (`emitter_config.py`).
-7. Add support for `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES` (span|events|both|none) controlling initialization flags.
+7. Add support for `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` + `_MODE` toggles controlling capture destinations.
 8. Remove old `generator_kind` branching in handler.
 9. Move emitter configuration building from handler to composite builder.
 10. Add entry point group & loader function for emitter specs.
@@ -263,7 +263,7 @@ If blocked, append a BLOCKED section with reason and proposed resolution.
 - Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/config.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/environment_variables.py`.
 - Follow-ups: Add targeted tests covering category override directives and legacy compatibility.
 
-### Task 7: Add OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES support
+### Task 7: Add OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT support
 - Introduced the new capture-messages env var and updated helpers to prioritise it over legacy capture flags.
 - Files touched: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/environment_variables.py`, `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/utils.py`, `util/opentelemetry-util-genai-emitters-splunk/src/opentelemetry/util/genai/emitters/splunk.py`.
 - Follow-ups: Extend test matrix to assert both legacy and new env vars produce expected capture modes.

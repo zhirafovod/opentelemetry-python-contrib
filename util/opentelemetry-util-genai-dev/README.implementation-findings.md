@@ -128,7 +128,7 @@ The implementation broadly aligns with the intended layered design (Types → Ha
 |----------|-------------|----------------------|--------|
 | OTEL_INSTRUMENTATION_GENAI_EMITTERS | Baseline + extras (span_metric_event) | Partially (older doc) | Update doc with baseline modes |
 | OTEL_INSTRUMENTATION_GENAI_EMITTERS_<CATEGORY> | Supports append/prepend/replace/replace-category/replace-same-name | Partially (replace-category examples only) | Expand docs |
-| OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES | span/events/both/none + experimental gating | Mentioned (no gating) | Add experimental note |
+| OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT(_MODE) | span/event/span+event/none | Mentioned (no gating) | Add experimental note |
 | OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT(_MODE) | Legacy fallback | Not emphasized | Mark legacy |
 | OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS | Full grammar with per-type metric(options) | Summarized | Align examples |
 | OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION | Bool | Mentioned | ✅ |

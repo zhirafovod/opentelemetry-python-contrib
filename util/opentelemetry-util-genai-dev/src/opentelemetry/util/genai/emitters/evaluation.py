@@ -263,9 +263,6 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                 attrs[GEN_AI_PROVIDER_NAME] = provider
             if res.label is not None:
                 attrs[GEN_AI_EVALUATION_SCORE_LABEL] = res.label
-            else:
-                # Defensive fallback: evaluator should set, but ensure presence
-                attrs[GEN_AI_EVALUATION_SCORE_LABEL] = "unknown"
             # Propagate evaluator-derived pass boolean if present
             passed = None
             try:
@@ -273,6 +270,12 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                     passed = res.attributes.get("gen_ai.evaluation.passed")
             except Exception:  # pragma: no cover - defensive
                 passed = None
+            if passed is None and res.label is not None:
+                label_text = str(res.label).strip().lower()
+                if label_text in {"pass", "passed", "success"}:
+                    passed = True
+                elif label_text in {"fail", "failed", "error"}:
+                    passed = False
             if isinstance(passed, bool):
                 attrs["gen_ai.evaluation.passed"] = passed
             attrs["gen_ai.evaluation.score.units"] = "score"
