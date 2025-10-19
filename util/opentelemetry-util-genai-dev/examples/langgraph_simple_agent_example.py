@@ -1,35 +1,24 @@
 #!/usr/bin/env python3
 """
-Simple LangGraph Agent Example with Manual OpenTelemetry Instrumentation.
+Mocked LangGraph Agent Example with Manual OpenTelemetry Instrumentation.
 
-This example demonstrates:
-1. A simple LangGraph agent (no tools) that answers capital city questions
-2. Manual instrumentation using opentelemetry-util-genai-dev
-3. Agent telemetry without Workflow or Task (just Agent + LLM)
-4. The LLM answers directly from its knowledge (no tool calls)
-
-This is the simplest possible example showing how to instrument a LangGraph
-agent that just wraps an LLM call.
-
-Requirements:
-- langgraph
-- langchain-openai
-- opentelemetry-util-genai-dev
+This example synthesizes the telemetry that a LangGraph agent (backed by
+LangChain) would normally emit. Instead of depending on the LangChain runtime,
+we construct the OpenTelemetry GenAI types directly and send them through the
+`TelemetryHandler`. This keeps the example dependency-free while still showing
+the full set of attributes that would be captured by a real callback.
 
 Run with:
-  export OPENAI_API_KEY=your_key_here
   python examples/langgraph_simple_agent_example.py
 """
+
+from __future__ import annotations
 
 import os
 import random
 import time
-
-from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.messages import HumanMessage
-from langchain_core.outputs import LLMResult
-from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
+import uuid
+from typing import Any, Dict
 
 from opentelemetry import _logs as logs
 from opentelemetry import metrics, trace
@@ -50,16 +39,15 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
-    AgentInvocation as Agent,
-)
-from opentelemetry.util.genai.types import (
+    AgentInvocation,
     InputMessage,
     LLMInvocation,
     OutputMessage,
     Text,
 )
 
-# Set environment variables for content capture
+# Set environment variables for content capture so that spans and events
+# include message payloads when emitters allow it.
 os.environ.setdefault(
     "OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental"
 )
@@ -73,376 +61,201 @@ os.environ.setdefault(
     "OTEL_INSTRUMENTATION_GENAI_EMITTERS", "span_metric_event"
 )
 
-
-# Configure OpenTelemetry with OTLP exporters
-# Traces
+# Configure OpenTelemetry with OTLP exporters so the spans can be shipped to a
+# collector if one is running locally.
 trace.set_tracer_provider(TracerProvider())
 span_processor = BatchSpanProcessor(OTLPSpanExporter())
 trace.get_tracer_provider().add_span_processor(span_processor)
 
-# Metrics
 metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter())
 metrics.set_meter_provider(MeterProvider(metric_readers=[metric_reader]))
 
-# Logs (for events)
 logs.set_logger_provider(LoggerProvider())
 logs.get_logger_provider().add_log_record_processor(
     BatchLogRecordProcessor(OTLPLogExporter())
 )
 
 
-class TelemetryCallback(BaseCallbackHandler):
-    """Custom callback to capture LangChain/LangGraph execution details.
+def _mock_langgraph_execution(question: str) -> Dict[str, Any]:
+    """Return mocked LangGraph execution details for the supplied question."""
 
-    Captures data from:
-    - LLM calls (on_llm_start/end)
-    - Chain/Graph execution (on_chain_start/end)
-    - Agent actions (on_agent_action/finish)
-    """
+    question_key = question.strip().lower()
+    capital_answers = {
+        "what is the capital of france?": "Paris is the capital of France.",
+        "what is the capital of japan?": "Tokyo is the capital city of Japan.",
+        "what is the capital of brazil?": "Brasília is the capital of Brazil.",
+        "what is the capital of australia?": "Canberra serves as Australia's capital.",
+        "what is the capital of canada?": "Ottawa is the capital city of Canada.",
+    }
 
-    def __init__(self):
-        self.llm_calls = []
-        self.chain_calls = []
-        self.agent_actions = []
-        self.current_llm_call = None
-        self.current_chain = None
+    # Produce a deterministic answer if we know the question, otherwise fall back.
+    answer = capital_answers.get(
+        question_key,
+        "I'm not sure, but checking an up-to-date atlas should help.",
+    )
 
-    def on_llm_start(self, serialized, prompts, **kwargs):
-        """Capture LLM start event."""
-        invocation_params = kwargs.get("invocation_params", {})
-        self.current_llm_call = {
-            "prompts": prompts,
-            "model": serialized.get("id", [None])[-1]
-            if serialized.get("id")
-            else "unknown",
-            "invocation_params": invocation_params,
-            # Capture request parameters for gen_ai.* attributes
-            "temperature": invocation_params.get("temperature"),
-            "max_tokens": invocation_params.get("max_tokens"),
-            "top_p": invocation_params.get("top_p"),
-            "top_k": invocation_params.get("top_k"),
-            "frequency_penalty": invocation_params.get("frequency_penalty"),
-            "presence_penalty": invocation_params.get("presence_penalty"),
-            "stop_sequences": invocation_params.get("stop"),
-            "request_id": kwargs.get("run_id"),  # LangChain run_id
-            "parent_run_id": kwargs.get("parent_run_id"),
-        }
+    requested_model = "gpt-4o-mini"
+    response_model = "gpt-4o-mini-2024-07-18"
+    invocation_params = {
+        "temperature": 0.0,
+        "max_tokens": 256,
+        "top_p": 1.0,
+        "top_k": 0,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stop_sequences": ["\n\n"],
+        "service_tier": "standard",
+    }
 
-    def on_llm_end(self, response: LLMResult, **kwargs):
-        """Capture LLM end event with token usage and response details."""
-        if self.current_llm_call:
-            generation = response.generations[0][0]
-            self.current_llm_call["output"] = generation.text
-            self.current_llm_call["finish_reason"] = (
-                generation.generation_info.get("finish_reason", "stop")
-                if generation.generation_info
-                else "stop"
-            )
+    # Estimate tokens based on simple heuristics to keep the example lightweight.
+    input_tokens = max(8, len(question.split()) + 4)
+    output_tokens = max(16, len(answer.split()) + 6)
 
-            # Extract token usage from response
-            if response.llm_output and "token_usage" in response.llm_output:
-                token_usage = response.llm_output["token_usage"]
-                self.current_llm_call["input_tokens"] = token_usage.get(
-                    "prompt_tokens", 0
-                )
-                self.current_llm_call["output_tokens"] = token_usage.get(
-                    "completion_tokens", 0
-                )
-                self.current_llm_call["total_tokens"] = token_usage.get(
-                    "total_tokens", 0
-                )
-            else:
-                # Fallback if token usage not available
-                self.current_llm_call["input_tokens"] = 0
-                self.current_llm_call["output_tokens"] = 0
-                self.current_llm_call["total_tokens"] = 0
-
-            # Extract model name and response ID from response
-            if response.llm_output:
-                if "model_name" in response.llm_output:
-                    self.current_llm_call["response_model"] = (
-                        response.llm_output["model_name"]
-                    )
-                if "system_fingerprint" in response.llm_output:
-                    self.current_llm_call["system_fingerprint"] = (
-                        response.llm_output["system_fingerprint"]
-                    )
-
-            # Extract response ID from generation info
-            if (
-                generation.generation_info
-                and "response_id" in generation.generation_info
-            ):
-                self.current_llm_call["response_id"] = (
-                    generation.generation_info["response_id"]
-                )
-
-            self.llm_calls.append(self.current_llm_call.copy())
-            self.current_llm_call = None
-
-    def on_chain_start(self, serialized, inputs, **kwargs):
-        """Capture chain/graph start event."""
-        # LangGraph sometimes passes serialized=None
-        if serialized is None:
-            serialized = {}
-
-        chain_name = serialized.get(
-            "name", kwargs.get("name", "unknown_chain")
-        )
-        chain_type = (
-            serialized.get("id", ["unknown"])[-1]
-            if serialized.get("id")
-            else "unknown"
-        )
-
-        self.current_chain = {
-            "name": chain_name,
-            "type": chain_type,
-            "inputs": inputs,
-            "run_id": kwargs.get("run_id"),
-            "parent_run_id": kwargs.get("parent_run_id"),
-            "tags": kwargs.get("tags", []),
-            "metadata": kwargs.get("metadata", {}),
-        }
-
-    def on_chain_end(self, outputs, **kwargs):
-        """Capture chain/graph end event."""
-        if self.current_chain:
-            self.current_chain["outputs"] = outputs
-            self.chain_calls.append(self.current_chain.copy())
-            self.current_chain = None
-
-    def on_agent_action(self, action, **kwargs):
-        """Capture agent action (tool call decision)."""
-        self.agent_actions.append(
-            {
-                "type": "action",
-                "tool": action.tool,
-                "tool_input": action.tool_input,
-                "log": action.log,
-                "run_id": kwargs.get("run_id"),
-            }
-        )
-
-    def on_agent_finish(self, finish, **kwargs):
-        """Capture agent finish event."""
-        self.agent_actions.append(
-            {
-                "type": "finish",
-                "output": finish.return_values,
-                "log": finish.log,
-                "run_id": kwargs.get("run_id"),
-            }
-        )
+    return {
+        "answer": answer,
+        "requested_model": requested_model,
+        "response_model": response_model,
+        "invocation_params": invocation_params,
+        "finish_reason": "stop",
+        "response_id": f"resp-{uuid.uuid4()}",
+        "system_fingerprint": f"fp-{uuid.uuid4().hex[:8]}",
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "agent_run_id": uuid.uuid4(),
+        "llm_run_id": uuid.uuid4(),
+        "agent_initialization_delay": random.uniform(0.01, 0.05),
+        "llm_latency": random.uniform(0.05, 0.15),
+    }
 
 
-def run_simple_agent_with_telemetry(question: str):
-    """Run a simple agent with telemetry (Agent + LLM only, no Workflow/Task)."""
+def run_mock_agent_with_telemetry(question: str) -> str:
+    """Emit agent and LLM telemetry for a mocked LangGraph execution."""
 
     handler = get_telemetry_handler()
-    telemetry_callback = TelemetryCallback()
+    mocked = _mock_langgraph_execution(question)
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"QUESTION: {question}")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
-    # 1. Create Agent with all attributes populated
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("create_agent span...")
-    print(f"{'='*80}\n")
-    agent_obj = Agent(
+    print(f"{'=' * 80}\n")
+
+    agent_create = AgentInvocation(
         name="simple_capital_agent",
-        operation="create",
+        operation="create_agent",
         agent_type="qa",
-        description="Simple agent that answers capital city questions from knowledge",
+        description="Simple agent that answers capital city questions from knowledge.",
+        model=mocked["requested_model"],
+        provider="openai",
         framework="langgraph",
-        model="gpt-4",
-        system_instructions="You are a helpful assistant that answers questions about capital cities using your knowledge.",
+        system_instructions=(
+            "You are a helpful assistant that answers questions about capital "
+            "cities using your knowledge."
+        ),
     )
-    # Populate additional attributes for the agent
-    agent_obj.attributes["agent.version"] = "1.0"
-    agent_obj.attributes["agent.temperature"] = 0  # From LLM config
-    handler.start_agent(agent_obj)
+    agent_create.agent_name = agent_create.name
+    agent_create.agent_id = str(agent_create.run_id)
+    agent_create.attributes["agent.version"] = "1.0"
+    agent_create.attributes["agent.temperature"] = mocked["invocation_params"][
+        "temperature"
+    ]
 
-    # Create the LangGraph agent (no tools) with callback
-    llm = ChatOpenAI(
-        model="gpt-4", temperature=0, callbacks=[telemetry_callback]
-    )
-    graph = create_react_agent(llm, tools=[])  # Empty tools list
+    handler.start_agent(agent_create)
+    time.sleep(mocked["agent_initialization_delay"])
+    handler.stop_agent(agent_create)
 
-    handler.stop_agent(agent_obj)
-
-    # 2. Invoke Agent
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("invoke_agent span")
-    print(f"{'='*80}\n")
-    agent_invocation = Agent(
+    print(f"{'=' * 80}\n")
+
+    agent_invoke = AgentInvocation(
         name="simple_capital_agent",
-        operation="invoke",
+        operation="invoke_agent",
         agent_type="qa",
+        model=mocked["requested_model"],
+        provider="openai",
         framework="langgraph",
-        model="gpt-4",
         input_context=question,
-        run_id=agent_obj.run_id,
+        run_id=mocked["agent_run_id"],
+        parent_run_id=agent_create.run_id,
     )
-    handler.start_agent(agent_invocation)
+    agent_invoke.agent_name = agent_invoke.name
+    agent_invoke.agent_id = agent_create.agent_id
+    agent_invoke.attributes["agent.temperature"] = mocked["invocation_params"][
+        "temperature"
+    ]
 
-    # Run the graph with callbacks to capture real data
-    messages = [HumanMessage(content=question)]
-    result = graph.invoke(
-        {"messages": messages}, config={"callbacks": [telemetry_callback]}
+    handler.start_agent(agent_invoke)
+
+    user_message = InputMessage(role="user", parts=[Text(content=question)])
+    assistant_message = OutputMessage(
+        role="assistant",
+        parts=[Text(content=mocked["answer"])],
+        finish_reason=mocked["finish_reason"],
     )
 
-    # Extract the response
-    final_message = result["messages"][-1]
-    final_answer = final_message.content
+    llm_invocation = LLMInvocation(
+        request_model=mocked["requested_model"],
+        response_model_name=mocked["response_model"],
+        provider="openai",
+        framework="langgraph",
+        input_messages=[user_message],
+        output_messages=[assistant_message],
+        response_id=mocked["response_id"],
+        request_temperature=mocked["invocation_params"]["temperature"],
+        request_top_p=mocked["invocation_params"]["top_p"],
+        request_top_k=mocked["invocation_params"]["top_k"],
+        request_frequency_penalty=mocked["invocation_params"][
+            "frequency_penalty"
+        ],
+        request_presence_penalty=mocked["invocation_params"][
+            "presence_penalty"
+        ],
+        request_stop_sequences=mocked["invocation_params"]["stop_sequences"],
+        request_max_tokens=mocked["invocation_params"]["max_tokens"],
+        request_choice_count=1,
+        output_type="text",
+        response_finish_reasons=[mocked["finish_reason"]],
+        response_system_fingerprint=mocked["system_fingerprint"],
+        request_service_tier=mocked["invocation_params"]["service_tier"],
+        run_id=mocked["llm_run_id"],
+        parent_run_id=agent_invoke.run_id,
+        agent_name=agent_invoke.name,
+        agent_id=str(agent_invoke.run_id),
+    )
+    llm_invocation.input_tokens = mocked["input_tokens"]
+    llm_invocation.output_tokens = mocked["output_tokens"]
 
-    print(f"{'='*80}")
-    print(f"AI Response: {final_answer}\n")
-    print(f"{'='*80}")
+    handler.start_llm(llm_invocation)
+    time.sleep(mocked["llm_latency"])
+    handler.stop_llm(llm_invocation)
 
-    # 3. Create LLM Invocation telemetry from captured callback data
-    if telemetry_callback.llm_calls:
-        llm_call_data = telemetry_callback.llm_calls[
-            0
-        ]  # Get the first (and likely only) LLM call
+    print(f"{'=' * 80}")
+    print(
+        f"Token Usage (mocked): Input={llm_invocation.input_tokens}, "
+        f"Output={llm_invocation.output_tokens}"
+    )
+    print(
+        f"Model: {mocked['response_model']}, "
+        f"Finish Reason: {mocked['finish_reason']}\n"
+    )
+    print(f"{'=' * 80}")
 
-        # Create user message from the question
-        user_msg = InputMessage(role="user", parts=[Text(content=question)])
+    agent_invoke.output_result = mocked["answer"]
+    handler.stop_agent(agent_invoke)
 
-        # Output message from actual LLM response
-        output_msg = OutputMessage(
-            role="assistant",
-            parts=[Text(content=final_answer)],
-            finish_reason=llm_call_data.get("finish_reason", "stop"),
-        )
+    print(f"{'=' * 80}")
+    print(f"FINAL ANSWER: {mocked['answer']}")
+    print(f"{'=' * 80}\n")
 
-        # Get actual model name from response or use request model
-        actual_model = llm_call_data.get(
-            "response_model", llm_call_data.get("model", "gpt-4")
-        )
-
-        # Create LLM invocation with real data from callbacks
-        llm_invocation = LLMInvocation(
-            request_model="gpt-4",
-            response_model_name=actual_model,  # Use response_model_name field
-            provider="openai",
-            framework="langgraph",
-            input_messages=[user_msg],
-            output_messages=[output_msg],
-            agent_name="simple_capital_agent",
-            agent_id=str(agent_obj.run_id),
-        )
-
-        # Populate all token-related attributes
-        llm_invocation.input_tokens = llm_call_data.get("input_tokens", 0)
-        llm_invocation.output_tokens = llm_call_data.get("output_tokens", 0)
-
-        # Populate response_id if available
-        if llm_call_data.get("response_id"):
-            llm_invocation.response_id = llm_call_data["response_id"]
-
-        # Populate run_id and parent_run_id from LangChain
-        if llm_call_data.get("request_id"):
-            llm_invocation.run_id = llm_call_data["request_id"]
-        if llm_call_data.get("parent_run_id"):
-            llm_invocation.parent_run_id = llm_call_data["parent_run_id"]
-
-        # Populate attributes dict with gen_ai.* semantic convention attributes
-        # These will be emitted as span attributes by the emitters
-        if llm_call_data.get("temperature") is not None:
-            llm_invocation.attributes["gen_ai.request.temperature"] = (
-                llm_call_data["temperature"]
-            )
-        if llm_call_data.get("max_tokens") is not None:
-            llm_invocation.attributes["gen_ai.request.max_tokens"] = (
-                llm_call_data["max_tokens"]
-            )
-        if llm_call_data.get("top_p") is not None:
-            llm_invocation.attributes["gen_ai.request.top_p"] = llm_call_data[
-                "top_p"
-            ]
-        if llm_call_data.get("top_k") is not None:
-            llm_invocation.attributes["gen_ai.request.top_k"] = llm_call_data[
-                "top_k"
-            ]
-        if llm_call_data.get("frequency_penalty") is not None:
-            llm_invocation.attributes["gen_ai.request.frequency_penalty"] = (
-                llm_call_data["frequency_penalty"]
-            )
-        if llm_call_data.get("presence_penalty") is not None:
-            llm_invocation.attributes["gen_ai.request.presence_penalty"] = (
-                llm_call_data["presence_penalty"]
-            )
-        if llm_call_data.get("stop_sequences") is not None:
-            llm_invocation.attributes["gen_ai.request.stop_sequences"] = (
-                llm_call_data["stop_sequences"]
-            )
-        if llm_call_data.get("system_fingerprint"):
-            llm_invocation.attributes["gen_ai.response.system_fingerprint"] = (
-                llm_call_data["system_fingerprint"]
-            )
-
-        # Add finish reasons as an attribute (semantic convention)
-        llm_invocation.attributes["gen_ai.response.finish_reasons"] = [
-            llm_call_data.get("finish_reason", "stop")
-        ]
-
-        print(f"{'='*80}")
-        print(
-            f"Token Usage (from LangChain): Input={llm_invocation.input_tokens}, Output={llm_invocation.output_tokens}"
-        )
-        print(
-            f"Model: {actual_model}, Finish Reason: {llm_call_data.get('finish_reason', 'stop')}\n"
-        )
-        print(f"{'='*80}")
-
-        handler.start_llm(llm_invocation)
-        handler.stop_llm(llm_invocation)
-    else:
-        print(f"\n{'=' * 80}")
-        print("No LLM calls captured by callback\n")
-        print(f"{'=' * 80}\n")
-
-    # Log chain/graph execution info if captured
-    if telemetry_callback.chain_calls:
-        print(f"{'=' * 80}")
-        print(
-            f"Captured {len(telemetry_callback.chain_calls)} chain/graph executions"
-        )
-        for chain in telemetry_callback.chain_calls:
-            print(f"   - Chain: {chain['name']} (type: {chain['type']})")
-        print(f"{'=' * 80}\n")
-
-    # Log agent actions if captured
-    if telemetry_callback.agent_actions:
-        print(f"{'=' * 80}")
-        print(
-            f"Captured {len(telemetry_callback.agent_actions)} agent actions"
-        )
-        for action in telemetry_callback.agent_actions:
-            if action["type"] == "action":
-                print(f"   - Tool call: {action['tool']}")
-            else:
-                print("   - Agent finished")
-        print(f"\n{'=' * 80}")
-
-    # Complete agent invocation
-    agent_invocation.output_result = final_answer
-    handler.stop_agent(agent_invocation)
-
-    print(f"{'='*80}")
-    print(f"FINAL ANSWER: {final_answer}")
-    print(f"{'='*80}\n")
-
-    return final_answer
+    return mocked["answer"]
 
 
-def main():
-    """Main function to run the example."""
-    # Telemetry is configured at module level (see above)
+def main() -> None:
+    """Main entry point for the example."""
 
-    # Sample questions
     questions = [
         "What is the capital of France?",
         "What is the capital of Japan?",
@@ -450,14 +263,10 @@ def main():
         "What is the capital of Australia?",
         "What is the capital of Canada?",
     ]
-
-    # Pick a random question
     question = random.choice(questions)
 
-    # Run the agent
-    run_simple_agent_with_telemetry(question)
+    run_mock_agent_with_telemetry(question)
 
-    # Wait for metrics to export
     print(f"\n{'=' * 80}")
     print("\nWaiting for metrics export...")
     print(f"{'=' * 80}\n")

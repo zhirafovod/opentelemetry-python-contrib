@@ -145,7 +145,7 @@ def build_emitter_pipeline(
             name="EvaluationEvents",
             category=_CATEGORY_EVALUATION,
             factory=lambda ctx: EvaluationEventsEmitter(
-                ctx.event_logger,
+                ctx.content_logger,
                 emit_legacy_event=settings.emit_legacy_evaluation_event,
             ),
         )

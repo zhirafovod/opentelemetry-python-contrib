@@ -445,7 +445,23 @@ class TelemetryHandler:
     ) -> None:
         """Public hook for completion callbacks to report evaluation output."""
 
+        try:
+            genai_debug_log(
+                "handler.evaluation_results.begin",
+                invocation,
+                result_count=len(results),
+            )
+        except Exception:  # pragma: no cover - defensive
+            pass
         self._handle_evaluation_results(invocation, results)
+        try:
+            genai_debug_log(
+                "handler.evaluation_results.end",
+                invocation,
+                result_count=len(results),
+            )
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     def register_completion_callback(
         self, callback: CompletionCallback

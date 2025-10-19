@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Dict, Optional, Sequence
 
-from opentelemetry import _events as _otel_events
+from opentelemetry._logs import Logger, get_logger
 
 from ..attributes import (
     GEN_AI_EVALUATION_ATTRIBUTES_PREFIX,
@@ -26,6 +26,7 @@ from ..span_context import (
     store_span_context,
 )
 from ..types import EvaluationResult, GenAI
+from .utils import _evaluation_to_log_record
 
 
 def _get_request_model(invocation: GenAI) -> str | None:
@@ -328,20 +329,24 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
     name = "EvaluationEvents"
 
     def __init__(
-        self, event_logger, *, emit_legacy_event: bool = False
+        self,
+        logger: Optional[Logger] = None,
+        *,
+        emit_legacy_event: bool = False,
     ) -> None:
-        self._event_logger = event_logger
+        self._logger: Logger = logger or get_logger(__name__)
         self._emit_legacy_event = emit_legacy_event
         self._primary_event_name = "gen_ai.evaluation.result"
         self._legacy_event_name = "gen_ai.evaluation"
+        self._py_logger = logging.getLogger(
+            f"{__name__}.EvaluationEventsEmitter"
+        )
 
     def on_evaluation_results(  # type: ignore[override]
         self,
         results: Sequence[EvaluationResult],
         obj: Any | None = None,
     ) -> None:
-        if self._event_logger is None:
-            return
         invocation = obj if isinstance(obj, GenAI) else None
         if invocation is None or not results:
             return
@@ -357,8 +362,8 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
         ):
             span_context = extract_span_context(invocation.span)
             store_span_context(invocation, span_context)
-        span_id = getattr(invocation, "span_id", None)
-        trace_id = getattr(invocation, "trace_id", None)
+        # span_id = getattr(invocation, "span_id", None)
+        # trace_id = getattr(invocation, "trace_id", None)
 
         for res in results:
             canonical = _canonicalize_metric_name(
@@ -431,17 +436,24 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
                 ] = res.error.message
 
             try:
-                self._event_logger.emit(
-                    _otel_events.Event(
-                        # context=span_context,
-                        name=self._primary_event_name,
-                        attributes=spec_attrs,
-                        span_id=span_id,
-                        trace_id=trace_id,
-                    )
+                record = _evaluation_to_log_record(
+                    invocation,
+                    self._primary_event_name,
+                    spec_attrs,
                 )
+                self._logger.emit(record)
+                if self._py_logger.isEnabledFor(logging.DEBUG):
+                    self._py_logger.debug(
+                        "Emitted evaluation log event metric=%s trace_id=%s span_id=%s",
+                        canonical,
+                        getattr(invocation, "trace_id", None),
+                        getattr(invocation, "span_id", None),
+                    )
             except Exception:  # pragma: no cover - defensive
-                pass
+                if self._py_logger.isEnabledFor(logging.DEBUG):
+                    self._py_logger.debug(
+                        "Failed to emit evaluation log event", exc_info=True
+                    )
 
             if not self._emit_legacy_event:
                 continue
@@ -458,17 +470,19 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
                 legacy_attrs["error.message"] = res.error.message
 
             try:
-                self._event_logger.emit(
-                    _otel_events.Event(
-                        name=self._legacy_event_name,
-                        attributes=legacy_attrs,
-                        body=legacy_body or None,
-                        span_id=span_id,
-                        trace_id=trace_id,
-                    )
+                legacy_record = _evaluation_to_log_record(
+                    invocation,
+                    self._legacy_event_name,
+                    legacy_attrs,
+                    body=legacy_body or None,
                 )
+                self._logger.emit(legacy_record)
             except Exception:  # pragma: no cover - defensive
-                pass
+                if self._py_logger.isEnabledFor(logging.DEBUG):
+                    self._py_logger.debug(
+                        "Failed to emit legacy evaluation log event",
+                        exc_info=True,
+                    )
 
 
 __all__ = [

@@ -504,6 +504,9 @@ class DeepevalEvaluator(Evaluator):
         return None
 
     def _run_deepeval(self, test_case: Any, metrics: Sequence[Any]) -> Any:
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
         from deepeval import evaluate as deepeval_evaluate
         from deepeval.evaluate.configs import AsyncConfig, DisplayConfig
 
@@ -511,12 +514,26 @@ class DeepevalEvaluator(Evaluator):
             show_indicator=False, print_results=False
         )
         async_config = AsyncConfig(run_async=False)
-        return deepeval_evaluate(
-            [test_case],
-            list(metrics),
-            async_config=async_config,
-            display_config=display_config,
-        )
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
+            result = deepeval_evaluate(
+                [test_case],
+                list(metrics),
+                async_config=async_config,
+                display_config=display_config,
+            )
+        captured_stdout = stdout_buffer.getvalue().strip()
+        captured_stderr = stderr_buffer.getvalue().strip()
+        if captured_stdout:
+            genai_debug_log(
+                "evaluator.deepeval.stdout", None, output=captured_stdout
+            )
+        if captured_stderr:
+            genai_debug_log(
+                "evaluator.deepeval.stderr", None, output=captured_stderr
+            )
+        return result
 
     def _convert_results(self, evaluation: Any) -> Sequence[EvaluationResult]:
         results: list[EvaluationResult] = []

@@ -74,6 +74,38 @@ def _ensure_span_context(entity: Any) -> None:
     store_span_context(entity, span_context)
 
 
+def _evaluation_to_log_record(
+    invocation: GenAI,
+    event_name: str,
+    attributes: Dict[str, Any],
+    body: Dict[str, Any] | None = None,
+) -> SDKLogRecord:
+    """Create a log record for an evaluation result."""
+
+    _ensure_span_context(invocation)
+    otel_context = build_otel_context(
+        getattr(invocation, "span", None),
+        getattr(invocation, "span_context", None),
+    )
+    trace_id = getattr(invocation, "trace_id", None)
+    span_id = getattr(invocation, "span_id", None)
+    trace_flags = getattr(invocation, "trace_flags", None)
+
+    record = SDKLogRecord(
+        body=body or None,
+        attributes=attributes,
+        event_name=event_name,
+        context=otel_context,
+    )
+    if trace_id is not None:
+        record.trace_id = trace_id  # type: ignore[attr-defined]
+    if span_id is not None:
+        record.span_id = span_id  # type: ignore[attr-defined]
+    if trace_flags is not None:
+        record.trace_flags = trace_flags  # type: ignore[attr-defined]
+    return record
+
+
 def filter_semconv_gen_ai_attributes(
     attributes: Mapping[str, Any] | None,
     *,

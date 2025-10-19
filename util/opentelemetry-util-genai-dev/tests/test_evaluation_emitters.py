@@ -47,7 +47,7 @@ def test_spec_event_emission_uses_semconv_attributes() -> None:
 
     assert len(logger.records) == 1
     event = logger.records[0]
-    assert event.name == "gen_ai.evaluation.result"
+    assert event.event_name == "gen_ai.evaluation.result"
     assert event.trace_id == invocation.trace_id
     assert event.span_id == invocation.span_id
     attrs = event.attributes
@@ -76,8 +76,8 @@ def test_legacy_event_emission_when_flag_enabled() -> None:
 
     assert len(logger.records) == 2
     new_event, legacy_event = logger.records
-    assert new_event.name == "gen_ai.evaluation.result"
-    assert legacy_event.name == "gen_ai.evaluation"
+    assert new_event.event_name == "gen_ai.evaluation.result"
+    assert legacy_event.event_name == "gen_ai.evaluation"
     assert new_event.trace_id == invocation.trace_id
     assert new_event.span_id == invocation.span_id
     assert legacy_event.trace_id == invocation.trace_id
