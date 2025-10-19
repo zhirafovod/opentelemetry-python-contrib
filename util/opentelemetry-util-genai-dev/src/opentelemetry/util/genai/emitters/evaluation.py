@@ -355,16 +355,6 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
         provider = getattr(invocation, "provider", None)
         response_id = _get_response_id(invocation)
 
-        span_context = getattr(invocation, "span_context", None)
-        if (
-            span_context is None
-            and getattr(invocation, "span", None) is not None
-        ):
-            span_context = extract_span_context(invocation.span)
-            store_span_context(invocation, span_context)
-        # span_id = getattr(invocation, "span_id", None)
-        # trace_id = getattr(invocation, "trace_id", None)
-
         for res in results:
             canonical = _canonicalize_metric_name(
                 getattr(res, "metric_name", "") or ""
@@ -435,11 +425,29 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
                     f"{GEN_AI_EVALUATION_ATTRIBUTES_PREFIX}error.message"
                 ] = res.error.message
 
+            primary_body: Dict[str, Any] = {}
+            if isinstance(res.score, (int, float)):
+                primary_body["score"] = res.score
+            elif res.score is not None:
+                primary_body["score"] = res.score
+            if res.label is not None:
+                primary_body["label"] = res.label
+            if res.explanation:
+                primary_body["explanation"] = res.explanation
+            if res.attributes:
+                primary_body["attributes"] = dict(res.attributes)
+            if res.error is not None:
+                primary_body["error"] = {
+                    "type": res.error.type.__qualname__,
+                    "message": getattr(res.error, "message", None),
+                }
+
             try:
                 record = _evaluation_to_log_record(
                     invocation,
                     self._primary_event_name,
                     spec_attrs,
+                    body=primary_body or None,
                 )
                 self._logger.emit(record)
                 if self._py_logger.isEnabledFor(logging.DEBUG):
