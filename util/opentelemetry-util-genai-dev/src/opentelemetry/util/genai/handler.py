@@ -96,7 +96,7 @@ _LOGGER = logging.getLogger(__name__)
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
-def _is_truthy_env(value: str | None) -> bool:
+def _is_truthy_env(value: Optional[str]) -> bool:
     if value is None:
         return False
     return value.strip().lower() in _TRUTHY_VALUES

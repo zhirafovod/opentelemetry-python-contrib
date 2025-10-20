@@ -14,6 +14,7 @@
 
 import logging
 import os
+from typing import Optional
 
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
@@ -31,7 +32,7 @@ def is_experimental_mode() -> bool:  # backward stub (always false)
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
-def _is_truthy(value: str | None) -> bool:
+def _is_truthy(value: Optional[str]) -> bool:
     if value is None:
         return False
     return value.strip().lower() in _TRUTHY_VALUES

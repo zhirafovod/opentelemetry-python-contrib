@@ -15,7 +15,7 @@
 import json
 import os
 import unittest
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Optional, TypeVar
 from unittest.mock import patch
 
 from opentelemetry import trace
@@ -41,7 +41,7 @@ from opentelemetry.util.genai.utils import get_content_capturing_mode
 _F = TypeVar("_F", bound=Callable[..., Any])
 
 
-def patch_capture_mode(value: str | None) -> Callable[[_F], _F]:
+def patch_capture_mode(value: Optional[str]) -> Callable[[_F], _F]:
     def decorator(test_case: _F) -> _F:  # type: ignore[misc]
         def wrapper(*args: Any, **kwargs: Any):  # type: ignore[override]
             with patch.dict(os.environ, {}, clear=False):
