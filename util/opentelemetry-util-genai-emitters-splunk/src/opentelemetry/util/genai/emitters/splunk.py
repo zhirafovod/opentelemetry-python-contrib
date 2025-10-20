@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import asdict
 from typing import (
@@ -63,6 +64,11 @@ _MAX_ATTRIBUTE_KEYS = (
     "max",
     "upper_bound",
     "upper",
+)
+
+_INCLUDE_EVALUATION_MESSAGE_CONTENT = (
+    os.environ.get("SPLUNK_EVALUATION_RESULTS_MESSAGE_CONTENT", "").lower()
+    == "true"
 )
 
 
@@ -272,23 +278,27 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
             )
         except Exception:  # pragma: no cover
             pass
-        # Build messages & system instructions
-        input_messages = _coerce_messages(
-            invocation.input_messages, self._capture_content
-        )
-        output_messages = _coerce_messages(
-            invocation.output_messages, self._capture_content
-        )
-        system_instruction = invocation.attributes.get(
-            "system_instruction"
-        ) or invocation.attributes.get("system_instructions")
-        if not system_instruction and getattr(invocation, "system", None):
-            system_instruction = invocation.system
-        system_instructions = (
-            _coerce_iterable(system_instruction)
-            if system_instruction is not None
-            else []
-        )
+        # Build messages & system instructions (opt-in via env var)
+        input_messages = None
+        output_messages = None
+        system_instructions: Sequence[Any] = []
+        if _INCLUDE_EVALUATION_MESSAGE_CONTENT:
+            input_messages = _coerce_messages(
+                invocation.input_messages, self._capture_content
+            )
+            output_messages = _coerce_messages(
+                invocation.output_messages, self._capture_content
+            )
+            system_instruction = invocation.attributes.get(
+                "system_instruction"
+            ) or invocation.attributes.get("system_instructions")
+            if not system_instruction and getattr(invocation, "system", None):
+                system_instruction = invocation.system
+            system_instructions = (
+                _coerce_iterable(system_instruction)
+                if system_instruction is not None
+                else []
+            )
 
         # Span / invocation attributes used as baseline
         attrs: Dict[str, Any] = {
@@ -310,6 +320,15 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
             if k in ("system_instruction", "system_instructions"):
                 continue
             attrs.setdefault(k, v)
+        if not _INCLUDE_EVALUATION_MESSAGE_CONTENT:
+            # Ensure message content never leaks from span/invocation attributes.
+            for key in (
+                "gen_ai.input.messages",
+                "gen_ai.output.messages",
+                "gen_ai.system.instructions",
+                "gen_ai.system_instructions",
+            ):
+                attrs.pop(key, None)
         if invocation.provider:
             attrs["gen_ai.system"] = invocation.provider
             attrs["gen_ai.provider.name"] = invocation.provider
@@ -377,12 +396,13 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
         attrs["gen_ai.evaluations"] = evaluations
 
         # Add conversation content arrays
-        if input_messages:
-            attrs["gen_ai.input.messages"] = input_messages
-        if output_messages:
-            attrs["gen_ai.output.messages"] = output_messages
-        if system_instructions:
-            attrs["gen_ai.system_instructions"] = system_instructions
+        if _INCLUDE_EVALUATION_MESSAGE_CONTENT:
+            if input_messages:
+                attrs["gen_ai.input.messages"] = input_messages
+            if output_messages:
+                attrs["gen_ai.output.messages"] = output_messages
+            if system_instructions:
+                attrs["gen_ai.system_instructions"] = system_instructions
 
         # Trace/span correlation
         span_context = (
@@ -398,12 +418,11 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
             attrs.setdefault("span_id", span_id_hex)
 
         # SDKLogRecord signature in current OTel version used elsewhere: body, attributes, event_name
-        body = {
-            "gen_ai.system.instructions": system_instructions or None,
-            "gen_ai.input.messages": input_messages or None,
-            "gen_ai.output.messages": output_messages or None,
-            "gen_ai.evaluations": evaluations,
-        }
+        body = {"gen_ai.evaluations": evaluations}
+        if _INCLUDE_EVALUATION_MESSAGE_CONTENT:
+            body["gen_ai.system.instructions"] = system_instructions or None
+            body["gen_ai.input.messages"] = input_messages or None
+            body["gen_ai.output.messages"] = output_messages or None
         record = _evaluation_to_log_record(
             invocation,
             _EVENT_NAME_EVALUATIONS,
