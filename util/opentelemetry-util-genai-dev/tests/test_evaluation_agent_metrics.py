@@ -10,15 +10,15 @@ from opentelemetry.util.genai.types import AgentInvocation, EvaluationResult
 
 class _RecordingHistogram:
     def __init__(self) -> None:
-        self.records: List[Tuple[float, Dict[str, Any]]] = []
+        self.records: List[Tuple[float, Dict[str, Any], Any]] = []
 
-    def record(self, value: float, attributes=None):  # type: ignore[override]
+    def record(self, value: float, attributes=None, context=None):  # type: ignore[override]
         attrs: Dict[str, Any] = {}
         if isinstance(attributes, dict):
             from typing import cast
 
             attrs.update(cast(Dict[str, Any], attributes))
-        self.records.append((value, attrs))
+        self.records.append((value, attrs, context))
 
 
 def test_agent_evaluation_metric_includes_agent_identity():
@@ -33,7 +33,7 @@ def test_agent_evaluation_metric_includes_agent_identity():
     emitter.on_evaluation_results([res], agent)
 
     assert hist.records, "Expected one histogram record"
-    value, attrs = hist.records[0]
+    value, attrs, _ = hist.records[0]
     assert value == 0.9
     # core evaluation attrs
     assert attrs["gen_ai.evaluation.name"] == "bias"

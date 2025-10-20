@@ -24,7 +24,7 @@ from uuid import UUID, uuid4
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAIAttributes,
 )
-from opentelemetry.trace import Span
+from opentelemetry.trace import Span, SpanContext
 
 # Backward compatibility: older semconv builds may miss new GEN_AI attributes
 if not hasattr(GenAIAttributes, "GEN_AI_PROVIDER_NAME"):
@@ -63,6 +63,10 @@ class GenAI:
 
     context_token: Optional[ContextToken] = None
     span: Optional[Span] = None
+    span_context: Optional[SpanContext] = None
+    trace_id: Optional[int] = None
+    span_id: Optional[int] = None
+    trace_flags: Optional[int] = None
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
     provider: Optional[str] = field(

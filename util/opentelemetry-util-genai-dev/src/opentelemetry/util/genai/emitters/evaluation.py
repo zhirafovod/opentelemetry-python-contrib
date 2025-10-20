@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Dict, Optional, Sequence
 
-from opentelemetry import _events as _otel_events
+from opentelemetry._logs import Logger, get_logger
 
 from ..attributes import (
     GEN_AI_EVALUATION_ATTRIBUTES_PREFIX,
@@ -20,7 +20,13 @@ from ..attributes import (
     GEN_AI_RESPONSE_ID,
 )
 from ..interfaces import EmitterMeta
+from ..span_context import (
+    build_otel_context,
+    extract_span_context,
+    store_span_context,
+)
 from ..types import EvaluationResult, GenAI
+from .utils import _evaluation_to_log_record
 
 
 def _get_request_model(invocation: GenAI) -> str | None:
@@ -140,6 +146,18 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
         # Per-emitter set of (reason, key) we have already logged to avoid noise.
         if not hasattr(self, "_logged_skip_keys"):
             self._logged_skip_keys = set()  # type: ignore[attr-defined]
+
+        span_context = getattr(invocation, "span_context", None)
+        if (
+            span_context is None
+            and getattr(invocation, "span", None) is not None
+        ):
+            span_context = extract_span_context(invocation.span)
+            store_span_context(invocation, span_context)
+        otel_context = build_otel_context(
+            getattr(invocation, "span", None),
+            span_context,
+        )
 
         def _log_skip(
             reason: str,
@@ -263,9 +281,6 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                 attrs[GEN_AI_PROVIDER_NAME] = provider
             if res.label is not None:
                 attrs[GEN_AI_EVALUATION_SCORE_LABEL] = res.label
-            else:
-                # Defensive fallback: evaluator should set, but ensure presence
-                attrs[GEN_AI_EVALUATION_SCORE_LABEL] = "unknown"
             # Propagate evaluator-derived pass boolean if present
             passed = None
             try:
@@ -273,13 +288,26 @@ class EvaluationMetricsEmitter(_EvaluationEmitterBase):
                     passed = res.attributes.get("gen_ai.evaluation.passed")
             except Exception:  # pragma: no cover - defensive
                 passed = None
+            if passed is None and res.label is not None:
+                label_text = str(res.label).strip().lower()
+                if label_text in {"pass", "passed"}:
+                    passed = True
+                elif label_text in {"fail", "failed"}:
+                    passed = False
             if isinstance(passed, bool):
                 attrs["gen_ai.evaluation.passed"] = passed
             attrs["gen_ai.evaluation.score.units"] = "score"
             if res.error is not None:
                 attrs["error.type"] = res.error.type.__qualname__
             try:
-                histogram.record(res.score, attributes=attrs)  # type: ignore[attr-defined]
+                if otel_context is not None:
+                    histogram.record(  # type: ignore[attr-defined]
+                        res.score,
+                        attributes=attrs,
+                        context=otel_context,
+                    )
+                else:
+                    histogram.record(res.score, attributes=attrs)  # type: ignore[attr-defined]
             except Exception as exc:  # pragma: no cover - defensive
                 _log_skip(
                     "histogram_record_error", raw_name, {"error": repr(exc)}
@@ -301,20 +329,24 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
     name = "EvaluationEvents"
 
     def __init__(
-        self, event_logger, *, emit_legacy_event: bool = False
+        self,
+        logger: Optional[Logger] = None,
+        *,
+        emit_legacy_event: bool = False,
     ) -> None:
-        self._event_logger = event_logger
+        self._logger: Logger = logger or get_logger(__name__)
         self._emit_legacy_event = emit_legacy_event
         self._primary_event_name = "gen_ai.evaluation.result"
         self._legacy_event_name = "gen_ai.evaluation"
+        self._py_logger = logging.getLogger(
+            f"{__name__}.EvaluationEventsEmitter"
+        )
 
     def on_evaluation_results(  # type: ignore[override]
         self,
         results: Sequence[EvaluationResult],
         obj: Any | None = None,
     ) -> None:
-        if self._event_logger is None:
-            return
         invocation = obj if isinstance(obj, GenAI) else None
         if invocation is None or not results:
             return
@@ -322,23 +354,6 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
         req_model = _get_request_model(invocation)
         provider = getattr(invocation, "provider", None)
         response_id = _get_response_id(invocation)
-
-        span_context = None
-        if getattr(invocation, "span", None) is not None:
-            try:
-                span_context = invocation.span.get_span_context()
-            except Exception:  # pragma: no cover - defensive
-                span_context = None
-        span_id = (
-            getattr(span_context, "span_id", None)
-            if span_context is not None
-            else None
-        )
-        trace_id = (
-            getattr(span_context, "trace_id", None)
-            if span_context is not None
-            else None
-        )
 
         for res in results:
             canonical = _canonicalize_metric_name(
@@ -410,17 +425,43 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
                     f"{GEN_AI_EVALUATION_ATTRIBUTES_PREFIX}error.message"
                 ] = res.error.message
 
+            primary_body: Dict[str, Any] = {}
+            if isinstance(res.score, (int, float)):
+                primary_body["score"] = res.score
+            elif res.score is not None:
+                primary_body["score"] = res.score
+            if res.label is not None:
+                primary_body["label"] = res.label
+            if res.explanation:
+                primary_body["explanation"] = res.explanation
+            if res.attributes:
+                primary_body["attributes"] = dict(res.attributes)
+            if res.error is not None:
+                primary_body["error"] = {
+                    "type": res.error.type.__qualname__,
+                    "message": getattr(res.error, "message", None),
+                }
+
             try:
-                self._event_logger.emit(
-                    _otel_events.Event(
-                        name=self._primary_event_name,
-                        attributes=spec_attrs,
-                        span_id=span_id,
-                        trace_id=trace_id,
-                    )
+                record = _evaluation_to_log_record(
+                    invocation,
+                    self._primary_event_name,
+                    spec_attrs,
+                    body=primary_body or None,
                 )
+                self._logger.emit(record)
+                if self._py_logger.isEnabledFor(logging.DEBUG):
+                    self._py_logger.debug(
+                        "Emitted evaluation log event metric=%s trace_id=%s span_id=%s",
+                        canonical,
+                        getattr(invocation, "trace_id", None),
+                        getattr(invocation, "span_id", None),
+                    )
             except Exception:  # pragma: no cover - defensive
-                pass
+                if self._py_logger.isEnabledFor(logging.DEBUG):
+                    self._py_logger.debug(
+                        "Failed to emit evaluation log event", exc_info=True
+                    )
 
             if not self._emit_legacy_event:
                 continue
@@ -437,17 +478,19 @@ class EvaluationEventsEmitter(_EvaluationEmitterBase):
                 legacy_attrs["error.message"] = res.error.message
 
             try:
-                self._event_logger.emit(
-                    _otel_events.Event(
-                        name=self._legacy_event_name,
-                        attributes=legacy_attrs,
-                        body=legacy_body or None,
-                        span_id=span_id,
-                        trace_id=trace_id,
-                    )
+                legacy_record = _evaluation_to_log_record(
+                    invocation,
+                    self._legacy_event_name,
+                    legacy_attrs,
+                    body=legacy_body or None,
                 )
+                self._logger.emit(legacy_record)
             except Exception:  # pragma: no cover - defensive
-                pass
+                if self._py_logger.isEnabledFor(logging.DEBUG):
+                    self._py_logger.debug(
+                        "Failed to emit legacy evaluation log event",
+                        exc_info=True,
+                    )
 
 
 __all__ = [

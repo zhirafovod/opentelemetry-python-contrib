@@ -36,6 +36,14 @@ from opentelemetry.util.genai.types import (
     Text,
 )
 
+try:  # Optional debug logging import
+    from opentelemetry.util.genai.debug import genai_debug_log
+except Exception:  # pragma: no cover
+
+    def genai_debug_log(*_a: Any, **_k: Any) -> None:  # type: ignore
+        return None
+
+
 _DEFAULT_METRICS: Mapping[str, Sequence[str]] = {
     "LLMInvocation": (
         "bias",
@@ -131,11 +139,35 @@ class DeepevalEvaluator(Evaluator):
     def _evaluate_generic(
         self, invocation: GenAI, invocation_type: str
     ) -> Sequence[EvaluationResult]:
+        try:
+            genai_debug_log(
+                "evaluator.deepeval.start",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
+        except Exception:  # pragma: no cover
+            pass
         metric_specs = self._build_metric_specs()
         if not metric_specs:
+            genai_debug_log(
+                "evaluator.deepeval.skip.no_metrics",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
             return []
         test_case = self._build_test_case(invocation, invocation_type)
         if test_case is None:
+            genai_debug_log(
+                "evaluator.deepeval.error.missing_io",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
             return self._error_results(
                 "Deepeval requires both input and output text to evaluate",
                 ValueError,
@@ -184,6 +216,16 @@ class DeepevalEvaluator(Evaluator):
                     pass
         except Exception:  # pragma: no cover - defensive
             api_key = None
+        try:
+            genai_debug_log(
+                "evaluator.deepeval.resolve_api_key",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                has_key=bool(api_key),
+            )
+        except Exception:
+            pass
         # Do not fail early if API key missing; underlying Deepeval/OpenAI usage
         # will produce an error which we surface as evaluation error results.
         try:
@@ -193,6 +235,13 @@ class DeepevalEvaluator(Evaluator):
         except Exception as exc:  # pragma: no cover - defensive
             return self._error_results(str(exc), type(exc))
         if not metrics:
+            genai_debug_log(
+                "evaluator.deepeval.skip.no_valid_metrics",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
             return skipped_results or self._error_results(
                 "No Deepeval metrics available", RuntimeError
             )
@@ -206,6 +255,8 @@ class DeepevalEvaluator(Evaluator):
                 *self._error_results(str(exc), type(exc)),
             ]
         return [*skipped_results, *self._convert_results(evaluation)]
+
+    # NOTE: unreachable code below; logging handled prior to return.
 
     # ---- Helpers ------------------------------------------------------
     def _build_metric_specs(self) -> Sequence[_MetricSpec]:
@@ -453,6 +504,9 @@ class DeepevalEvaluator(Evaluator):
         return None
 
     def _run_deepeval(self, test_case: Any, metrics: Sequence[Any]) -> Any:
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
         from deepeval import evaluate as deepeval_evaluate
         from deepeval.evaluate.configs import AsyncConfig, DisplayConfig
 
@@ -460,12 +514,26 @@ class DeepevalEvaluator(Evaluator):
             show_indicator=False, print_results=False
         )
         async_config = AsyncConfig(run_async=False)
-        return deepeval_evaluate(
-            [test_case],
-            list(metrics),
-            async_config=async_config,
-            display_config=display_config,
-        )
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
+            result = deepeval_evaluate(
+                [test_case],
+                list(metrics),
+                async_config=async_config,
+                display_config=display_config,
+            )
+        captured_stdout = stdout_buffer.getvalue().strip()
+        captured_stderr = stderr_buffer.getvalue().strip()
+        if captured_stdout:
+            genai_debug_log(
+                "evaluator.deepeval.stdout", None, output=captured_stdout
+            )
+        if captured_stderr:
+            genai_debug_log(
+                "evaluator.deepeval.stderr", None, output=captured_stderr
+            )
+        return result
 
     def _convert_results(self, evaluation: Any) -> Sequence[EvaluationResult]:
         results: list[EvaluationResult] = []
@@ -495,8 +563,8 @@ class DeepevalEvaluator(Evaluator):
                 threshold = getattr(metric, "threshold", None)
                 evaluation_model = getattr(metric, "evaluation_model", None)
                 evaluation_cost = getattr(metric, "evaluation_cost", None)
-                verbose_logs = getattr(metric, "verbose_logs", None)
-                strict_mode = getattr(metric, "strict_mode", None)
+                # verbose_logs = getattr(metric, "verbose_logs", None)
+                # strict_mode = getattr(metric, "strict_mode", None)
                 error_msg = getattr(metric, "error", None)
                 attributes: dict[str, Any] = {
                     "deepeval.success": success,
@@ -507,10 +575,10 @@ class DeepevalEvaluator(Evaluator):
                     attributes["deepeval.evaluation_model"] = evaluation_model
                 if evaluation_cost is not None:
                     attributes["deepeval.evaluation_cost"] = evaluation_cost
-                if verbose_logs:
-                    attributes["deepeval.verbose_logs"] = verbose_logs
-                if strict_mode is not None:
-                    attributes["deepeval.strict_mode"] = strict_mode
+                # if verbose_logs:
+                #     attributes["deepeval.verbose_logs"] = verbose_logs
+                # if strict_mode is not None:
+                #     attributes["deepeval.strict_mode"] = strict_mode
                 if getattr(test, "name", None):
                     attributes.setdefault(
                         "deepeval.test_case", getattr(test, "name")

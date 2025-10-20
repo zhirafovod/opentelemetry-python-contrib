@@ -19,6 +19,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..handler import TelemetryHandler
 from opentelemetry.sdk.trace.sampling import Decision, TraceIdRatioBased
 
+from ..span_context import extract_span_context, store_span_context
 from ..types import (
     AgentInvocation,
     EmbeddingInvocation,
@@ -104,10 +105,24 @@ class Manager(CompletionCallback):
     def on_completion(self, invocation: GenAI) -> None:
         if not self.has_evaluators:
             return
-        if invocation.span.get_span_context().trace_id:
+        trace_id_val = getattr(invocation, "trace_id", None)
+        span_context = getattr(invocation, "span_context", None)
+        if trace_id_val is None:
+            if (
+                span_context is None
+                and getattr(invocation, "span", None) is not None
+            ):
+                span_context = extract_span_context(invocation.span)
+                store_span_context(invocation, span_context)
+            trace_id_val = (
+                getattr(span_context, "trace_id", None)
+                if span_context is not None
+                else None
+            )
+        if trace_id_val:
             try:
                 sampling_result = self._sampler.should_sample(
-                    trace_id=invocation.span.get_span_context().trace_id,
+                    trace_id=trace_id_val,
                     parent_context=None,
                     name="",
                 )

@@ -133,8 +133,8 @@ Emitted attributes (core):
 |----------|---------|-------|
 | `OTEL_INSTRUMENTATION_GENAI_EMITTERS` | Baseline + extras selection | Values: `span`, `span_metric`, `span_metric_event`, plus extras
 | `OTEL_INSTRUMENTATION_GENAI_EMITTERS_<CATEGORY>` | Category overrides | Directives: append / prepend / replace / replace-category / replace-same-name |
-| `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES` | `span|events|both|none` | **Requires** `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental` |
-| `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT(_MODE)` | Legacy capture controls | Deprecated path still honored |
+| `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` | Enable/disable message capture | Truthy enables capture; default disabled |
+| `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE` | `SPAN_ONLY|EVENT_ONLY|SPAN_AND_EVENT|NONE` | Defaults to `SPAN_AND_EVENT` when capture enabled |
 | `OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS` | Evaluator config grammar | `Evaluator(Type(metric(opt=val)))` syntax supported |
 | `OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION` | Aggregate vs per-evaluator emission | Boolean |
 | `OTEL_INSTRUMENTATION_GENAI_EVALS_INTERVAL` | Eval worker poll interval | Default 5.0 seconds |
@@ -214,7 +214,8 @@ pip install opentelemetry-util-genai \
 
 export OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental
 export OTEL_INSTRUMENTATION_GENAI_EMITTERS=span_metric_event,traceloop_compat
-export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGES=events
+export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
+export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT_MODE=EVENT_ONLY
 export OTEL_INSTRUMENTATION_GENAI_EVALUATION_SAMPLE_RATE=0.5
 export OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS="Deepeval(LLMInvocation(bias,toxicity))"
 

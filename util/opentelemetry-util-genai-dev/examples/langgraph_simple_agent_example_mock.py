@@ -79,6 +79,7 @@ logs.get_logger_provider().add_log_record_processor(
 def _mock_langgraph_execution(question: str) -> Dict[str, Any]:
     """Return mocked LangGraph execution details for the supplied question."""
 
+    shared_trace_id = uuid.uuid4()
     question_key = question.strip().lower()
     capital_answers = {
         "what is the capital of france?": "Paris is the capital of France.",
@@ -121,6 +122,7 @@ def _mock_langgraph_execution(question: str) -> Dict[str, Any]:
         "system_fingerprint": f"fp-{uuid.uuid4().hex[:8]}",
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "trace_id": shared_trace_id,
         "agent_run_id": uuid.uuid4(),
         "llm_run_id": uuid.uuid4(),
         "agent_initialization_delay": random.uniform(0.01, 0.05),
@@ -138,56 +140,38 @@ def run_mock_agent_with_telemetry(question: str) -> str:
     print(f"QUESTION: {question}")
     print(f"{'=' * 80}\n")
 
-    print(f"\n{'=' * 80}")
-    print("create_agent span...")
-    print(f"{'=' * 80}\n")
-
-    agent_create = AgentInvocation(
-        name="simple_capital_agent",
-        operation="create_agent",
-        agent_type="qa",
-        description="Simple agent that answers capital city questions from knowledge.",
-        model=mocked["requested_model"],
-        provider="openai",
-        framework="langgraph",
-        system_instructions=(
-            "You are a helpful assistant that answers questions about capital "
-            "cities using your knowledge."
-        ),
-    )
-    agent_create.agent_name = agent_create.name
-    agent_create.agent_id = str(agent_create.run_id)
-    agent_create.attributes["agent.version"] = "1.0"
-    agent_create.attributes["agent.temperature"] = mocked["invocation_params"][
-        "temperature"
-    ]
-
-    handler.start_agent(agent_create)
-    time.sleep(mocked["agent_initialization_delay"])
-    handler.stop_agent(agent_create)
+    # print(f"\n{'=' * 80}")
+    # print("create_agent span...")
+    # print(f"{'=' * 80}\n")
 
     print(f"\n{'=' * 80}")
     print("invoke_agent span")
     print(f"{'=' * 80}\n")
 
-    agent_invoke = AgentInvocation(
+    agent_invocation = AgentInvocation(
         name="simple_capital_agent",
         operation="invoke_agent",
         agent_type="qa",
+        description="Simple agent that answers capital city questions from knowledge.",
         model=mocked["requested_model"],
         provider="openai",
         framework="langgraph",
         input_context=question,
-        run_id=mocked["agent_run_id"],
-        parent_run_id=agent_create.run_id,
     )
-    agent_invoke.agent_name = agent_invoke.name
-    agent_invoke.agent_id = agent_create.agent_id
-    agent_invoke.attributes["agent.temperature"] = mocked["invocation_params"][
-        "temperature"
-    ]
+    agent_invocation.agent_name = agent_invocation.name
+    agent_invocation.attributes["agent.version"] = "1.0"
+    agent_invocation.attributes["agent.temperature"] = mocked[
+        "invocation_params"
+    ]["temperature"]
 
-    handler.start_agent(agent_invoke)
+    agent_invocation = handler.start_agent(agent_invocation)
+    if getattr(agent_invocation, "agent_id", None) is None:
+        agent_invocation.agent_id = str(agent_invocation.run_id)
+    trace_id = getattr(agent_invocation, "trace_id", None)
+
+    print(f"\n{'=' * 80}")
+    print("start LLMInvocation span")
+    print(f"{'=' * 80}\n")
 
     user_message = InputMessage(role="user", parts=[Text(content=question)])
     assistant_message = OutputMessage(
@@ -221,15 +205,22 @@ def run_mock_agent_with_telemetry(question: str) -> str:
         response_system_fingerprint=mocked["system_fingerprint"],
         request_service_tier=mocked["invocation_params"]["service_tier"],
         run_id=mocked["llm_run_id"],
-        parent_run_id=agent_invoke.run_id,
-        agent_name=agent_invoke.name,
-        agent_id=str(agent_invoke.run_id),
+        parent_run_id=agent_invocation.run_id,
+        agent_name=agent_invocation.name,
+        agent_id=getattr(agent_invocation, "agent_id", None),
     )
     llm_invocation.input_tokens = mocked["input_tokens"]
     llm_invocation.output_tokens = mocked["output_tokens"]
 
-    handler.start_llm(llm_invocation)
+    if trace_id is not None:
+        llm_invocation.trace_id = trace_id  # type: ignore[attr-defined]
+    llm_invocation = handler.start_llm(llm_invocation)
     time.sleep(mocked["llm_latency"])
+
+    print(f"\n{'=' * 80}")
+    print("stop LLMInvocation span")
+    print(f"{'=' * 80}\n")
+
     handler.stop_llm(llm_invocation)
 
     print(f"{'=' * 80}")
@@ -243,13 +234,16 @@ def run_mock_agent_with_telemetry(question: str) -> str:
     )
     print(f"{'=' * 80}")
 
-    agent_invoke.output_result = mocked["answer"]
-    handler.stop_agent(agent_invoke)
+    agent_invocation.output_result = mocked["answer"]
+    handler.stop_agent(agent_invocation)
 
     print(f"{'=' * 80}")
     print(f"FINAL ANSWER: {mocked['answer']}")
     print(f"{'=' * 80}\n")
 
+    print("Waiting for evaluations to complete...\n")
+    handler.wait_for_evaluations(60.0)
+    print("Finished waiting for evaluations\n")
     return mocked["answer"]
 
 
@@ -258,10 +252,10 @@ def main() -> None:
 
     questions = [
         "What is the capital of France?",
-        "What is the capital of Japan?",
-        "What is the capital of Brazil?",
-        "What is the capital of Australia?",
-        "What is the capital of Canada?",
+        # "What is the capital of Japan?",
+        # "What is the capital of Brazil?",
+        # "What is the capital of Australia?",
+        # "What is the capital of Canada?",
     ]
     question = random.choice(questions)
 
@@ -270,7 +264,10 @@ def main() -> None:
     print(f"\n{'=' * 80}")
     print("\nWaiting for metrics export...")
     print(f"{'=' * 80}\n")
-    time.sleep(6)
+
+    print("Sleeping for 60 seconds to allow metrics export...")
+    time.sleep(60)
+    print("Fnished sleeeping")
 
 
 if __name__ == "__main__":

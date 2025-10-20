@@ -65,6 +65,10 @@ def test_events_with_content_capture(sample_invocation, monkeypatch):
 
     assert inputs and inputs[0]["parts"][0]["content"] == "hello user"
     assert outputs and outputs[0]["parts"][0]["content"] == "hello back"
+    assert sample_invocation.trace_id is not None
+    assert sample_invocation.span_id is not None
+    assert event.trace_id == sample_invocation.trace_id
+    assert event.span_id == sample_invocation.span_id
 
 
 class _RecordingEvaluationEmitter:

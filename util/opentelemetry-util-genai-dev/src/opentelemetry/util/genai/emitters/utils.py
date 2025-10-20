@@ -26,6 +26,11 @@ from ..attributes import (
     GEN_AI_FRAMEWORK,
     GEN_AI_REQUEST_ENCODING_FORMATS,
 )
+from ..span_context import (
+    build_otel_context,
+    extract_span_context,
+    store_span_context,
+)
 from ..types import (
     AgentInvocation,
     EmbeddingInvocation,
@@ -53,6 +58,52 @@ _SEMCONV_GEN_AI_KEYS: set[str] = {
     for value in GenAI.__dict__.values()
     if isinstance(value, str) and value.startswith("gen_ai.")
 }
+
+
+def _ensure_span_context(entity: Any) -> None:
+    """Populate cached span context metadata on the entity if missing."""
+
+    if entity is None:
+        return
+    if getattr(entity, "span_context", None) is not None:
+        return
+    span = getattr(entity, "span", None)
+    if span is None:
+        return
+    span_context = extract_span_context(span)
+    store_span_context(entity, span_context)
+
+
+def _evaluation_to_log_record(
+    invocation: GenAI,
+    event_name: str,
+    attributes: Dict[str, Any],
+    body: Dict[str, Any] | None = None,
+) -> SDKLogRecord:
+    """Create a log record for an evaluation result."""
+
+    _ensure_span_context(invocation)
+    otel_context = build_otel_context(
+        getattr(invocation, "span", None),
+        getattr(invocation, "span_context", None),
+    )
+    trace_id = getattr(invocation, "trace_id", None)
+    span_id = getattr(invocation, "span_id", None)
+    trace_flags = getattr(invocation, "trace_flags", None)
+
+    record = SDKLogRecord(
+        body=body or None,
+        attributes=attributes,
+        event_name=event_name,
+        context=otel_context,
+    )
+    if trace_id is not None:
+        record.trace_id = trace_id  # type: ignore[attr-defined]
+    if span_id is not None:
+        record.span_id = span_id  # type: ignore[attr-defined]
+    if trace_flags is not None:
+        record.trace_flags = trace_flags  # type: ignore[attr-defined]
+    return record
 
 
 def filter_semconv_gen_ai_attributes(
@@ -321,6 +372,15 @@ def _llm_invocation_to_log_record(
     capture_content: bool,
 ) -> Optional[SDKLogRecord]:
     """Create a log record for an LLM invocation"""
+    _ensure_span_context(invocation)
+    otel_context = build_otel_context(
+        getattr(invocation, "span", None),
+        getattr(invocation, "span_context", None),
+    )
+    trace_id = getattr(invocation, "trace_id", None)
+    span_id = getattr(invocation, "span_id", None)
+    trace_flags = getattr(invocation, "trace_flags", None)
+
     attributes: Dict[str, Any] = {
         "event.name": "gen_ai.client.inference.operation.details",
     }
@@ -495,11 +555,19 @@ def _llm_invocation_to_log_record(
             output_msgs.append(output_msg)
         body[GenAI.GEN_AI_OUTPUT_MESSAGES] = output_msgs
 
-    return SDKLogRecord(
+    record = SDKLogRecord(
         body=body or None,
         attributes=attributes,
         event_name="gen_ai.client.inference.operation.details",
+        context=otel_context,
     )
+    if trace_id is not None:
+        record.trace_id = trace_id  # type: ignore[attr-defined]
+    if span_id is not None:
+        record.span_id = span_id  # type: ignore[attr-defined]
+    if trace_flags is not None:
+        record.trace_flags = trace_flags  # type: ignore[attr-defined]
+    return record
 
 
 def _get_metric_attributes(
@@ -587,6 +655,14 @@ def _workflow_to_log_record(
     workflow: Workflow, capture_content: bool
 ) -> Optional[SDKLogRecord]:
     """Create a log record for a workflow event."""
+    _ensure_span_context(workflow)
+    otel_context = build_otel_context(
+        getattr(workflow, "span", None),
+        getattr(workflow, "span_context", None),
+    )
+    trace_id = getattr(workflow, "trace_id", None)
+    span_id = getattr(workflow, "span_id", None)
+    trace_flags = getattr(workflow, "trace_flags", None)
     attributes: Dict[str, Any] = {
         "event.name": "gen_ai.client.workflow.operation.details",
         "gen_ai.workflow.name": workflow.name,
@@ -607,11 +683,19 @@ def _workflow_to_log_record(
         if workflow.final_output:
             body["final_output"] = workflow.final_output
 
-    return SDKLogRecord(
+    record = SDKLogRecord(
         body=body or None,
         attributes=attributes,
         event_name="gen_ai.client.workflow.operation.details",
+        context=otel_context,
     )
+    if trace_id is not None:
+        record.trace_id = trace_id  # type: ignore[attr-defined]
+    if span_id is not None:
+        record.span_id = span_id  # type: ignore[attr-defined]
+    if trace_flags is not None:
+        record.trace_flags = trace_flags  # type: ignore[attr-defined]
+    return record
 
 
 def _agent_to_log_record(
@@ -620,6 +704,15 @@ def _agent_to_log_record(
     """Create a log record for agent event"""
     if not capture_content or not agent.system_instructions:
         return None
+
+    _ensure_span_context(agent)
+    otel_context = build_otel_context(
+        getattr(agent, "span", None),
+        getattr(agent, "span_context", None),
+    )
+    trace_id = getattr(agent, "trace_id", None)
+    span_id = getattr(agent, "span_id", None)
+    trace_flags = getattr(agent, "trace_flags", None)
 
     attributes: Dict[str, Any] = {
         "event.name": "gen_ai.client.agent.operation.details",
@@ -631,11 +724,19 @@ def _agent_to_log_record(
 
     body = agent.system_instructions
 
-    return SDKLogRecord(
+    record = SDKLogRecord(
         body=body,
         attributes=attributes,
         event_name="gen_ai.client.agent.operation.details",
+        context=otel_context,
     )
+    if trace_id is not None:
+        record.trace_id = trace_id  # type: ignore[attr-defined]
+    if span_id is not None:
+        record.span_id = span_id  # type: ignore[attr-defined]
+    if trace_flags is not None:
+        record.trace_flags = trace_flags  # type: ignore[attr-defined]
+    return record
 
 
 def _task_to_log_record(
@@ -647,6 +748,15 @@ def _task_to_log_record(
     the message structure pattern for consistency.
     """
     # Attributes contain metadata (not content)
+    _ensure_span_context(task)
+    otel_context = build_otel_context(
+        getattr(task, "span", None),
+        getattr(task, "span_context", None),
+    )
+    trace_id = getattr(task, "trace_id", None)
+    span_id = getattr(task, "span_id", None)
+    trace_flags = getattr(task, "trace_flags", None)
+
     attributes: Dict[str, Any] = {
         "event.name": "gen_ai.client.task.operation.details",
         "gen_ai.task.name": task.name,
@@ -679,17 +789,33 @@ def _task_to_log_record(
         if task.output_data:
             body["output_data"] = ""
 
-    return SDKLogRecord(
+    record = SDKLogRecord(
         body=body or None,
         attributes=attributes,
         event_name="gen_ai.client.task.operation.details",
+        context=otel_context,
     )
+    if trace_id is not None:
+        record.trace_id = trace_id  # type: ignore[attr-defined]
+    if span_id is not None:
+        record.span_id = span_id  # type: ignore[attr-defined]
+    if trace_flags is not None:
+        record.trace_flags = trace_flags  # type: ignore[attr-defined]
+    return record
 
 
 def _embedding_to_log_record(
     embedding: EmbeddingInvocation, capture_content: bool
 ) -> Optional[SDKLogRecord]:
     """Create a log record for an embedding event."""
+    _ensure_span_context(embedding)
+    otel_context = build_otel_context(
+        getattr(embedding, "span", None),
+        getattr(embedding, "span_context", None),
+    )
+    trace_id = getattr(embedding, "trace_id", None)
+    span_id = getattr(embedding, "span_id", None)
+    trace_flags = getattr(embedding, "trace_flags", None)
     # Attributes contain metadata (not content)
     attributes: Dict[str, Any] = {
         "event.name": "gen_ai.client.embedding.operation.details",
@@ -737,8 +863,16 @@ def _embedding_to_log_record(
             # Emit structure with empty content when capture is disabled
             body[GEN_AI_EMBEDDINGS_INPUT_TEXTS] = []
 
-    return SDKLogRecord(
+    record = SDKLogRecord(
         body=body or None,
         attributes=attributes,
         event_name="gen_ai.client.embedding.operation.details",
+        context=otel_context,
     )
+    if trace_id is not None:
+        record.trace_id = trace_id  # type: ignore[attr-defined]
+    if span_id is not None:
+        record.span_id = span_id  # type: ignore[attr-defined]
+    if trace_flags is not None:
+        record.trace_flags = trace_flags  # type: ignore[attr-defined]
+    return record

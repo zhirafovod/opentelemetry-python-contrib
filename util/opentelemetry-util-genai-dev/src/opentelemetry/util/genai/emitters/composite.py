@@ -4,7 +4,7 @@ import logging
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 from ..interfaces import EmitterMeta, EmitterProtocol
-from ..types import Error, EvaluationResult
+from ..types import Error, EvaluationResult, GenAI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,6 +112,25 @@ class CompositeEmitter(EmitterMeta):
         error: Error | None = None,
         results: Sequence[EvaluationResult] | None = None,
     ) -> None:
+        try:
+            from opentelemetry.util.genai.debug import genai_debug_log
+        except (
+            Exception
+        ):  # pragma: no cover - fallback if debug module missing
+
+            def genai_debug_log(*_args: Any, **_kwargs: Any) -> None:
+                return None
+
+        try:
+            genai_debug_log(
+                "composite.dispatch.begin",
+                obj if isinstance(obj, GenAI) else None,
+                method=method_name,
+                categories=list(categories),
+                result_count=len(results or ()),
+            )
+        except Exception:  # pragma: no cover - defensive
+            pass
         for category in categories:
             emitters = self._categories.get(category)
             if not emitters:
@@ -134,6 +153,13 @@ class CompositeEmitter(EmitterMeta):
                     if handles is not None and target is not None:
                         if not handles(target):
                             continue
+                    genai_debug_log(
+                        "composite.dispatch.emit",
+                        target if isinstance(target, GenAI) else None,
+                        method=method_name,
+                        category=category,
+                        emitter=getattr(emitter, "name", repr(emitter)),
+                    )
                     handler(*args)
                 except Exception:  # pragma: no cover - defensive
                     _LOGGER.debug(
@@ -143,3 +169,11 @@ class CompositeEmitter(EmitterMeta):
                         category,
                         exc_info=True,
                     )
+        try:
+            genai_debug_log(
+                "composite.dispatch.end",
+                obj if isinstance(obj, GenAI) else None,
+                method=method_name,
+            )
+        except Exception:  # pragma: no cover - defensive
+            pass

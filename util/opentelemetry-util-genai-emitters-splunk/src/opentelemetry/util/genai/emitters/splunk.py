@@ -15,8 +15,6 @@ from typing import (
     cast,
 )
 
-from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord
-
 # NOTE: We intentionally rely on the core ("original") evaluation metrics emitter
 # for recording canonical evaluation metrics. The Splunk emitters now focus solely
 # on providing a custom aggregated event schema for evaluation results and do NOT
@@ -24,6 +22,7 @@ from opentelemetry.sdk._logs._internal import LogRecord as SDKLogRecord
 from opentelemetry.util.genai.emitters.spec import EmitterSpec
 from opentelemetry.util.genai.emitters.utils import (
     _agent_to_log_record,
+    _evaluation_to_log_record,
     _llm_invocation_to_log_record,
 )
 from opentelemetry.util.genai.interfaces import EmitterMeta
@@ -32,6 +31,14 @@ from opentelemetry.util.genai.types import (
     EvaluationResult,
     LLMInvocation,
 )
+
+try:  # optional debug logging
+    from opentelemetry.util.genai.debug import genai_debug_log
+except Exception:  # pragma: no cover
+
+    def genai_debug_log(*_a: Any, **_k: Any) -> None:  # type: ignore
+        return None
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -156,12 +163,29 @@ class SplunkConversationEventsEmitter(EmitterMeta):
         # Emit semantic convention-aligned events for LLM & Agent invocations.
         if isinstance(obj, LLMInvocation):
             try:
+                genai_debug_log(
+                    "emitter.splunk.conversation.on_end",
+                    obj,
+                    output_messages=len(
+                        getattr(obj, "output_messages", []) or []
+                    ),
+                )
+            except Exception:  # pragma: no cover
+                pass
+            try:
                 rec = _llm_invocation_to_log_record(obj, self._capture_content)
                 if rec:
                     self._event_logger.emit(rec)
             except Exception:  # pragma: no cover - defensive
                 pass
         elif isinstance(obj, AgentInvocation):
+            try:
+                genai_debug_log(
+                    "emitter.splunk.conversation.on_end.agent",
+                    obj,
+                )
+            except Exception:  # pragma: no cover
+                pass
             try:
                 rec = _agent_to_log_record(obj, self._capture_content)
                 if rec:
@@ -240,6 +264,14 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
     ) -> None:
         if not records or self._event_logger is None:
             return
+        try:
+            genai_debug_log(
+                "emitter.splunk.evaluations.emit",
+                invocation,
+                records_count=len(records),
+            )
+        except Exception:  # pragma: no cover
+            pass
         # Build messages & system instructions
         input_messages = _coerce_messages(
             invocation.input_messages, self._capture_content
@@ -366,10 +398,17 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
             attrs.setdefault("span_id", span_id_hex)
 
         # SDKLogRecord signature in current OTel version used elsewhere: body, attributes, event_name
-        record = SDKLogRecord(
-            body=None,
-            attributes=attrs,
-            event_name=_EVENT_NAME_EVALUATIONS,
+        body = {
+            "gen_ai.system.instructions": system_instructions or None,
+            "gen_ai.input.messages": input_messages or None,
+            "gen_ai.output.messages": output_messages or None,
+            "gen_ai.evaluations": evaluations,
+        }
+        record = _evaluation_to_log_record(
+            invocation,
+            _EVENT_NAME_EVALUATIONS,
+            attrs,
+            body=body,
         )
         try:
             self._event_logger.emit(record)
@@ -451,14 +490,14 @@ def splunk_emitters() -> list[EmitterSpec]:
     def _conversation_factory(ctx: Any) -> SplunkConversationEventsEmitter:
         capture_mode = getattr(ctx, "capture_event_content", False)
         return SplunkConversationEventsEmitter(
-            event_logger=getattr(ctx, "event_logger", None),
+            event_logger=getattr(ctx, "content_logger", None),
             capture_content=cast(bool, capture_mode),
         )
 
     def _evaluation_factory(ctx: Any) -> SplunkEvaluationResultsEmitter:
         capture_mode = getattr(ctx, "capture_event_content", False)
         return SplunkEvaluationResultsEmitter(
-            event_logger=getattr(ctx, "event_logger", None),
+            event_logger=getattr(ctx, "content_logger", None),
             capture_content=cast(bool, capture_mode),
         )
 

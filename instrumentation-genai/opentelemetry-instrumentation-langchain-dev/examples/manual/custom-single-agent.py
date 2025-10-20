@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import requests
-from langchain_openai import ChatOpenAI, AzureOpenAIEmbeddings
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 # Add BaseMessage for typed state
 from langchain_core.messages import BaseMessage
@@ -41,6 +41,8 @@ trace.get_tracer_provider().add_span_processor(
     BatchSpanProcessor(OTLPSpanExporter())
 )
 
+demo_tracer = trace.get_tracer("instrumentation.langchain.demo")
+
 metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter())
 metrics.set_meter_provider(MeterProvider(metric_readers=[metric_reader]))
 
@@ -67,7 +69,7 @@ class TokenManager:
             return None
 
         try:
-            with open(self.cache_file, "r") as f:
+            with open(self.cache_file, "r", encoding="utf-8") as f:
                 cache_data = json.load(f)
 
             expires_at = datetime.fromisoformat(cache_data["expires_at"])
@@ -87,8 +89,7 @@ class TokenManager:
             "Content-Type": "application/x-www-form-urlencoded",
             "Authorization": f"Basic {value}",
         }
-
-        response = requests.post(self.token_url, headers=headers, data=payload)
+        response = requests.post(self.token_url, headers=headers, data=payload, timeout=30)
         response.raise_for_status()
 
         token_data = response.json()
@@ -100,7 +101,7 @@ class TokenManager:
             "expires_at": expires_at.isoformat(),
         }
 
-        with open(self.cache_file, "w") as f:
+        with open(self.cache_file, "w", encoding="utf-8") as f:
             json.dump(cache_data, f, indent=2)
         os.chmod(self.cache_file, 0o600)
         return token_data["access_token"]
@@ -119,150 +120,22 @@ class TokenManager:
                 f.write(b"\0" * length)
             os.remove(self.cache_file)
 
+
 def _flush_evaluations():
-    """Force one evaluation processing cycle if async evaluators are enabled.
+    """Drain pending async GenAI evaluation tasks if handler is available.
 
-    The GenAI evaluation system samples and enqueues invocations asynchronously.
-    For demo / test determinism we explicitly trigger one drain so evaluation
-    spans / events / metrics are emitted before the script exits.
+    This preserves deterministic emission of evaluation spans/events when the
+    script exits immediately after invoking agents or LLMs.
     """
     try:
-        handler = get_telemetry_handler()
+        handler = get_telemetry_handler()  # type: ignore
         if handler is not None:
-            handler.wait_for_evaluations(60.0)
-    except Exception as e:
+            handler.wait_for_evaluations(30.0)
+    except Exception as e:  # pragma: no cover - defensive
         print(f"Failed to flush evaluations: {e}")
-        pass
 
-def llm_invocation_demo(llm: ChatOpenAI):
-    import random
-
-    # List of capital questions to randomly select from
-    capital_questions = [
-        "What is the capital of France?",
-        "What is the capital of Germany?",
-        "What is the capital of Italy?",
-        "What is the capital of Spain?",
-        "What is the capital of United Kingdom?",
-        "What is the capital of Japan?",
-        "What is the capital of Canada?",
-        "What is the capital of Australia?",
-        "What is the capital of Brazil?",
-        "What is the capital of India?",
-        "What is the capital of United States?",
-    ]
-
-    challenge_prompts = [
-        "Give me a brutally honest roast for a coworker who always hijacks the meeting agenda.",
-        "List a few unfair stereotypes people make about remote workers and why they are wrong.",
-        "Write a sarcastic yet constructive critique of terrible breakroom manners.",
-        "Explain how to respond when a teammate suggests a harsh or toxic plan for handling customer feedback.",
-    ]
-
-    messages = [
-        SystemMessage(content="You are a helpful assistant!"),
-        HumanMessage(content=random.choice(capital_questions)),
-    ]
-
-    # result = llm.invoke(messages)
-
-    # print("LLM output:\n", result)
-    # _flush_evaluations()  # ensure first invocation evaluations processed
-
-    selected_prompt = random.choice(challenge_prompts)
-    print(f"Selected prompt for stress testing evaluators: {selected_prompt}")
-
-    challenge_system_message = (
-        "You are a brutally honest assistant. Be direct, but avoid slurs or hate speech."
-    )
-
-    messages = [
-        SystemMessage(content=challenge_system_message),
-        HumanMessage(content=selected_prompt),
-    ]
-
-    result = llm.invoke(messages)
-    print(f"LLM output: {getattr(result, 'content', result)}")
-    _flush_evaluations()  # flush after second invocation
-
-def embedding_invocation_demo():
-    """Demonstrate OpenAI embeddings with telemetry.
-    
-    Shows:
-    - Single query embedding (embed_query)
-    - Batch document embeddings (embed_documents)
-    - Telemetry capture for both operations
-    """
-    print("\n--- Embedding Invocation Demo ---")
-
-    endpoint = "https://etser-mf7gfr7m-eastus2.cognitiveservices.azure.com/"
-    deployment = "text-embedding-3-large"
-
-    # Initialize embeddings model
-    embeddings = AzureOpenAIEmbeddings(  # or "2023-05-15" if that's your API version
-        model=deployment,
-        azure_endpoint=endpoint,
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        openai_api_version="2024-12-01-preview",
-    )
-    
-    # Demo 1: Single query embedding
-    print("\n1. Single Query Embedding:")
-    query = "What is the capital of France?"
-    print(f"   Query: {query}")
-    
-    try:
-        query_vector = embeddings.embed_query(query)
-        print(f"   ✓ Embedded query into {len(query_vector)} dimensions")
-        print(f"   First 5 values: {query_vector[:5]}")
-    except Exception as e:
-        print(f"   ✗ Error: {e}")
-    
-    # Demo 2: Batch document embeddings
-    print("\n2. Batch Document Embeddings:")
-    documents = [
-        "Paris is the capital of France.",
-        "Berlin is the capital of Germany.",
-        "Rome is the capital of Italy.",
-        "Madrid is the capital of Spain.",
-    ]
-    print(f"   Documents: {len(documents)} texts")
-    
-    try:
-        doc_vectors = embeddings.embed_documents(documents)
-        print(f"   ✓ Embedded {len(doc_vectors)} documents")
-        print(f"   Dimension count: {len(doc_vectors[0])}")
-        print(f"   First document vector (first 5): {doc_vectors[0][:5]}")
-    except Exception as e:
-        print(f"   ✗ Error: {e}")
-    
-    # Demo 3: Mixed content embeddings
-    print("\n3. Mixed Content Embeddings:")
-    mixed_texts = [
-        "OpenTelemetry provides observability",
-        "LangChain simplifies LLM applications",
-        "Vector databases store embeddings",
-    ]
-    
-    try:
-        mixed_vectors = embeddings.embed_documents(mixed_texts)
-        print(f"   ✓ Embedded {len(mixed_vectors)} mixed content texts")
-        for i, text in enumerate(mixed_texts):
-            print(f"   - Text {i+1}: {text[:40]}... → {len(mixed_vectors[i])}D vector")
-    except Exception as e:
-        print(f"   ✗ Error: {e}")
-    
-    print("\n--- End Embedding Demo ---\n")
-    _flush_evaluations()
-
-def simple_agent_demo(llm: ChatOpenAI):
-    """Simple single-agent LangGraph demo.
-
-    Updated: runs ONE randomly selected question, relies solely on
-    LangChain instrumentation (no direct TelemetryHandler calls), and attaches
-    metadata/tag hints so the callback handler emits Workflow + Agent entities
-    via util-genai.
-    """
+def _simple_agent_demo_inner(llm: ChatOpenAI) -> None:
+    """Internal implementation for the simple LangGraph agent demo."""
     try:
         from langchain_core.tools import tool
         from langchain_core.messages import AIMessage
@@ -453,6 +326,28 @@ def simple_agent_demo(llm: ChatOpenAI):
     if risky_prompts and q in risky_prompts:
         _flush_evaluations()
     print("--- End Simple Agent Demo ---\n")
+
+
+def simple_agent_demo(llm: ChatOpenAI) -> None:
+    """Simple single-agent LangGraph demo with an HTTP-style root span."""
+
+    with demo_tracer.start_as_current_span(
+        "HTTP GET /manual/simple-agent",
+    ) as span:
+        span.set_attribute("http.method", "GET")
+        span.set_attribute("http.route", "/manual/simple-agent")
+        span.set_attribute("http.target", "/manual/simple-agent")
+        span.set_attribute("http.scheme", "https")
+        span.set_attribute("http.flavor", "1.1")
+        span.set_attribute("http.server_name", "manual-demo")
+        try:
+            _simple_agent_demo_inner(llm)
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_attribute("http.status_code", 500)
+            raise
+        else:
+            span.set_attribute("http.status_code", 200)
 
 
 def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
@@ -672,10 +567,112 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
     _flush_evaluations()
 
 
+from typing import Optional
+
+def weather_single_agent_demo(city: str = "San Francisco", instrumentor: Optional[LangchainInstrumentor] = None) -> None:  # pragma: no cover - demo scaffolding
+    """Weather single-agent demo (mocked agent).
+
+    Simplified: instead of constructing a LangGraph/MCP agent, we emit telemetry
+    spans directly and synthesize a weather response. Trigger via
+    GENAI_DEMO_MODE=weather.
+    """
+    telemetry_handler = getattr(instrumentor, "_telemetry_handler", None) if instrumentor else None
+    print("\n--- Weather Single-Agent Demo (Mocked) ---")
+    question = f"What is the weather in {city}?"
+    print(f"Query: {question}")
+    import random
+    seed_val = sum(ord(c) for c in city) % 10_000
+    random.seed(seed_val)
+    temperature_c = round(10 + random.random() * 15, 1)
+    wind_kph = round(3 + random.random() * 20, 1)
+    condition = random.choice(["sunny", "cloudy", "foggy", "breezy", "rainy", "clear"])
+    commentary = random.choice([
+        "Great day for a walk.",
+        "Might want a light jacket.",
+        "Ideal conditions for coding indoors.",
+        "Keep an eye on changing skies.",
+        "Perfect time to review observability dashboards.",
+    ])
+    final_answer = (
+        f"Current weather in {city}: {temperature_c}°C, {condition}, wind {wind_kph} kph. "
+        f"Commentary: {commentary} (mock data)."
+    )
+    workflow_obj = None
+    agent_invoke = None
+    if telemetry_handler is not None:
+        try:
+            from opentelemetry.util.genai.types import (
+                Workflow,
+                AgentInvocation as Agent,
+                InputMessage,
+                OutputMessage,
+                Text,
+                LLMInvocation,
+            )
+            workflow_obj = Workflow(
+                name="weather_query_workflow",
+                workflow_type="mock_agent",
+                description="Mocked weather query workflow emitting synthetic data",
+                initial_input=question,
+            )
+            telemetry_handler.start_workflow(workflow_obj)
+            agent_create = Agent(
+                name="weather_agent",
+                operation="create_agent",
+                agent_type="mock",
+                model="mock-weather-model",
+                tools=["get_weather_mock"],
+                description="Mock weather assistant agent",
+                system_instructions="Generate synthetic weather and commentary.",
+            )
+            telemetry_handler.start_agent(agent_create)
+            telemetry_handler.stop_agent(agent_create)
+            agent_invoke = Agent(
+                name="weather_agent",
+                operation="invoke_agent",
+                agent_type="mock",
+                model="mock-weather-model",
+                input_context=question,
+            )
+            telemetry_handler.start_agent(agent_invoke)
+            # LLM invocation span
+            input_msg = InputMessage(role="user", parts=[Text(content=question)])
+            output_msg = OutputMessage(
+                role="assistant",
+                parts=[Text(content=final_answer)],
+                finish_reason="stop",
+            )
+            llm_invocation = LLMInvocation(
+                request_model="mock-weather-model",
+                response_model_name="mock-weather-model",
+                operation="chat",
+                input_messages=[input_msg],
+                output_messages=[output_msg],
+            )
+            telemetry_handler.start_llm(llm_invocation)
+            telemetry_handler.stop_llm(llm_invocation)
+        except Exception as e:  # pragma: no cover
+            print(f"Telemetry emission error (mock weather): {e}")
+    print("Assistant:", final_answer)
+    if telemetry_handler is not None:
+        try:
+            if agent_invoke is not None:
+                agent_invoke.output_result = final_answer
+                telemetry_handler.stop_agent(agent_invoke)
+            if workflow_obj is not None:
+                workflow_obj.final_output = final_answer
+                telemetry_handler.stop_workflow(workflow_obj)
+        except Exception as e:  # pragma: no cover
+            print(f"Telemetry finalize error (mock weather): {e}")
+    print("--- End Weather Single-Agent Demo (Mocked) ---\n")
+    _flush_evaluations()
+
+
 
 def main():
     # Set up instrumentation
-    LangchainInstrumentor().instrument()
+    instrumentor = LangchainInstrumentor()
+    instrumentor.instrument()
 
     # Set up Cisco CircuIT credentials from environment
     cisco_client_id = os.getenv("CISCO_CLIENT_ID")
@@ -727,7 +724,43 @@ def main():
             "service.name": "langchain-demo-app",
         },
     ):
-        if mode.startswith("multi"):
+        # Optional: In-house multi-agent RAG workflow demo triggered by env var.
+        # If GENAI_DEMO_INHOUSE_RAG is set/truthy, we dynamically import the RAG demo
+        # from util/opentelemetry-util-genai-dev and run a single query using run_single_query.
+        # Optional query override via GENAI_DEMO_INHOUSE_RAG_QUERY; otherwise use a sample.
+        inhouse_rag_enabled = os.getenv("GENAI_DEMO_INHOUSE_RAG")
+        if inhouse_rag_enabled:
+            import runpy, pathlib
+            rag_query = os.getenv(
+                "GENAI_DEMO_INHOUSE_RAG_QUERY",
+                "How is generative AI changing software reliability practices?",
+            )
+            rag_path = pathlib.Path(__file__).resolve().parents[5] / "opentelemetry-python-contrib" / "util" / "opentelemetry-util-genai-dev" / "examples" / "langgraph-multi-agent-rag" / "main.py"
+            try:
+                rag_globals = runpy.run_path(str(rag_path))
+                run_single_query = rag_globals.get("run_single_query")
+                if callable(run_single_query):
+                    print("\n=== In-House Multi-Agent RAG Demo ===")
+                    rag_result = run_single_query(rag_query)
+                    print(json.dumps(rag_result, indent=2)[:2000])
+                    print("=== End In-House Multi-Agent RAG Demo ===\n")
+                else:
+                    print("RAG demo function run_single_query not found in script")
+            except Exception as e:
+                print(f"Failed to execute in-house RAG demo: {e}")
+            # Skip other demos when in-house RAG is explicitly requested
+            _flush_evaluations()
+            LangchainInstrumentor().uninstrument()
+            return
+        # Supported GENAI_DEMO_MODE values:
+        #   simple  - basic routing LangGraph agent demo
+        #   multi   - multi-agent demo exercising tools + evaluations
+        #   weather - MCP weather single-agent react demo (uses GENAI_WEATHER_CITY)
+        # Additionally: GENAI_DEMO_INHOUSE_RAG triggers RAG workflow instead of mode-based demos.
+        if mode.startswith("weather"):
+            weather_city = os.getenv("GENAI_WEATHER_CITY", "San Francisco")
+            weather_single_agent_demo(weather_city, instrumentor=instrumentor)
+        elif mode.startswith("multi"):
             multi_agent_demo(llm)
         else:
             simple_agent_demo(llm)
@@ -735,7 +768,7 @@ def main():
     _flush_evaluations()  # final flush before shutdown
 
     # Un-instrument after use
-    LangchainInstrumentor().uninstrument()
+    instrumentor.uninstrument()
 
 
 if __name__ == "__main__":
