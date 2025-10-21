@@ -508,12 +508,17 @@ class DeepevalEvaluator(Evaluator):
         from contextlib import redirect_stderr, redirect_stdout
 
         from deepeval import evaluate as deepeval_evaluate
-        from deepeval.evaluate.configs import AsyncConfig, DisplayConfig
+        from deepeval.evaluate.configs import (
+            AsyncConfig,
+            CacheConfig,
+            DisplayConfig,
+        )
 
         display_config = DisplayConfig(
             show_indicator=False, print_results=False
         )
         async_config = AsyncConfig(run_async=False)
+        cache_config = CacheConfig(write_cache=False, use_cache=False)
         stdout_buffer = io.StringIO()
         stderr_buffer = io.StringIO()
         with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
@@ -521,6 +526,7 @@ class DeepevalEvaluator(Evaluator):
                 [test_case],
                 list(metrics),
                 async_config=async_config,
+                cache_config=cache_config,
                 display_config=display_config,
             )
         captured_stdout = stdout_buffer.getvalue().strip()
