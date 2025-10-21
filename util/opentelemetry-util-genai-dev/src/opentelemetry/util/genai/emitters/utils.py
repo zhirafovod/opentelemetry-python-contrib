@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 
 from opentelemetry import trace
 from opentelemetry._logs import (
@@ -107,7 +107,7 @@ def _evaluation_to_log_record(
 
 
 def filter_semconv_gen_ai_attributes(
-    attributes: Mapping[str, Any] | None,
+    attributes: Union[Mapping[str, Any], None],
     *,
     extras: Iterable[str] = (),
 ) -> dict[str, Any]:
@@ -632,7 +632,7 @@ def _record_token_metrics(
 
 def _record_duration(
     duration_histogram: Histogram,
-    invocation: LLMInvocation | EmbeddingInvocation | ToolCall,
+    invocation: Union[LLMInvocation, EmbeddingInvocation, ToolCall],
     metric_attributes: Dict[str, AttributeValue],
     *,
     span: Optional[Span] = None,

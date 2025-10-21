@@ -1,6 +1,7 @@
 import importlib
 import os
 import unittest
+from typing import Optional
 from unittest.mock import patch
 
 from opentelemetry.util.genai.environment_variables import (
@@ -44,7 +45,7 @@ class _StaticEvaluator(Evaluator):
         self,
         metrics=None,
         *,
-        invocation_type: str | None = None,
+        invocation_type: Optional[str] = None,
         options=None,
     ) -> None:
         super().__init__(

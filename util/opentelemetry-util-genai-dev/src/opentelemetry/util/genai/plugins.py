@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Sequence, Union
 
 from opentelemetry.util._importlib_metadata import (
     entry_points,  # pyright: ignore[reportUnknownVariableType]
@@ -13,7 +13,7 @@ _logger = logging.getLogger(__name__)
 
 
 def load_emitter_specs(
-    names: Sequence[str] | None = None,
+    names: Union[Sequence[str], None] = None,
 ) -> list[EmitterSpec]:
     """Load emitter specs declared under the ``opentelemetry_util_genai_emitters`` entry point.
 

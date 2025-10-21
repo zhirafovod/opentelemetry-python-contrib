@@ -5,7 +5,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Mapping, Protocol, Sequence, Union
 
 from ..callbacks import CompletionCallback
 from ..environment_variables import (
@@ -76,8 +76,8 @@ class Manager(CompletionCallback):
         self,
         handler: "TelemetryHandler",
         *,
-        interval: float | None = None,
-        aggregate_results: bool | None = None,
+        interval: Union[float, None] = None,
+        aggregate_results: Union[bool, None] = None,
     ) -> None:
         self._handler = handler
         evaluation_sample_rate = _read_evaluation_sample_rate()
@@ -92,7 +92,7 @@ class Manager(CompletionCallback):
         self._evaluators = self._instantiate_evaluators(self._plans)
         self._queue: queue.Queue[GenAI] = queue.Queue()
         self._shutdown = threading.Event()
-        self._worker: threading.Thread | None = None
+        self._worker: Union[threading.Thread, None] = None
         if self.has_evaluators:
             self._worker = threading.Thread(
                 target=self._worker_loop,
@@ -153,7 +153,7 @@ class Manager(CompletionCallback):
                 "Failed to enqueue invocation for evaluation", exc_info=True
             )
 
-    def wait_for_all(self, timeout: float | None = None) -> None:
+    def wait_for_all(self, timeout: Union[float, None] = None) -> None:
         if not self.has_evaluators:
             return
         if timeout is None:
@@ -254,11 +254,14 @@ class Manager(CompletionCallback):
         return flattened
 
     def _flag_invocation(self, invocation: GenAI) -> None:
+        # print(f"_flag_invocation:")
         if not self.has_evaluators:
             return
         attributes = getattr(invocation, "attributes", None)
+        # print(f"attributes inside _flag_invocation: {attributes}")
         if isinstance(attributes, dict):
             attributes.setdefault("gen_ai.evaluation.executed", True)
+        # print(f"attributes inside _flag_invocation: {attributes['gen_ai.evaluation.executed']}")
 
     # Configuration ------------------------------------------------------
     def _load_plans(self) -> Sequence[EvaluatorPlan]:
@@ -398,7 +401,7 @@ class Manager(CompletionCallback):
 # Environment parsing helpers
 
 
-def _read_raw_evaluator_config() -> str | None:
+def _read_raw_evaluator_config() -> Union[str, None]:
     return _get_env(OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS)
 
 
@@ -437,7 +440,7 @@ def _read_evaluation_sample_rate() -> float:
     return value
 
 
-def _get_env(name: str) -> str | None:
+def _get_env(name: str) -> Union[str, None]:
     import os
 
     return os.environ.get(name)

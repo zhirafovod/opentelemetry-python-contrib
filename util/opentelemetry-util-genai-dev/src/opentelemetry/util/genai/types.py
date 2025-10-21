@@ -57,7 +57,7 @@ def _new_str_any_dict() -> dict[str, Any]:
     return {}
 
 
-@dataclass(kw_only=True)
+@dataclass
 class GenAI:
     """Base type for all GenAI telemetry entities."""
 
@@ -119,16 +119,16 @@ class GenAI:
 class ToolCall(GenAI):
     """Represents a single tool call invocation (Phase 4)."""
 
-    arguments: Any
-    name: str
-    id: Optional[str]
+    arguments: Any = field(default=None)
+    name: str = field(default="")
+    id: Optional[str] = field(default=None)
     type: Literal["tool_call"] = "tool_call"
 
 
 @dataclass()
 class ToolCallResponse:
-    response: Any
-    id: Optional[str]
+    response: Any = field(default=None)
+    id: Optional[str] = field(default=None)
     type: Literal["tool_call_response"] = "tool_call_response"
 
 
@@ -139,7 +139,7 @@ FinishReason = Literal[
 
 @dataclass()
 class Text:
-    content: str
+    content: str = field(default="")
     type: Literal["text"] = "text"
 
 
@@ -148,15 +148,15 @@ MessagePart = Union[Text, "ToolCall", ToolCallResponse, Any]
 
 @dataclass()
 class InputMessage:
-    role: str
-    parts: list[MessagePart]
+    role: str = field(default="")
+    parts: list[MessagePart] = field(default_factory=list)
 
 
 @dataclass()
 class OutputMessage:
-    role: str
-    parts: list[MessagePart]
-    finish_reason: Union[str, FinishReason]
+    role: str = field(default="")
+    parts: list[MessagePart] = field(default_factory=list)
+    finish_reason: Union[str, FinishReason] = field(default="")
 
 
 @dataclass
@@ -169,6 +169,7 @@ class LLMInvocation(GenAI):
     """
 
     request_model: str = field(
+        default="",
         metadata={"semconv": GenAIAttributes.GEN_AI_REQUEST_MODEL}
     )
     input_messages: List[InputMessage] = field(
@@ -270,8 +271,8 @@ class LLMInvocation(GenAI):
 
 @dataclass
 class Error:
-    message: str
-    type: Type[BaseException]
+    message: str = field(default="")
+    type: Type[BaseException] = field(default=Exception)
 
 
 @dataclass
@@ -282,7 +283,7 @@ class EvaluationResult:
     breaking callers that rely only on the current contract.
     """
 
-    metric_name: str
+    metric_name: str = field(default="")
     score: Optional[float] = None
     label: Optional[str] = None
     explanation: Optional[str] = None
@@ -341,7 +342,7 @@ class Workflow(GenAI):
         parent_run_id: Optional parent workflow/trace identifier
     """
 
-    name: str
+    name: str = field(default="")
     workflow_type: Optional[str] = None  # sequential, parallel, graph, dynamic
     description: Optional[str] = None
     initial_input: Optional[str] = None  # User's initial query/request
@@ -357,8 +358,9 @@ class AgentInvocation(GenAI):
     and agent invocation (execution) phases.
     """
 
-    name: str
+    name: str = field(default="")
     operation: Literal["create_agent", "invoke_agent"] = field(
+        default="create_agent",
         metadata={"semconv": GenAIAttributes.GEN_AI_OPERATION_NAME}
     )
     agent_type: Optional[str] = (
@@ -387,7 +389,7 @@ class Task(GenAI):
     scenarios through flexible parent relationships.
     """
 
-    name: str
+    name: str = field(default="")
     objective: Optional[str] = None  # what the task aims to achieve
     task_type: Optional[str] = (
         None  # planning, execution, reflection, tool_use, etc.
