@@ -35,6 +35,7 @@ from opentelemetry.util.genai.types import (
     GenAI,
     LLMInvocation,
     Text,
+    ToolCall,
 )
 
 try:  # Optional debug logging import
@@ -130,6 +131,16 @@ class DeepevalEvaluator(Evaluator):
     def _evaluate_llm(
         self, invocation: LLMInvocation
     ) -> Sequence[EvaluationResult]:
+        if self._is_tool_only_response(invocation):
+            try:
+                genai_debug_log(
+                    "evaluator.deepeval.skip.tool_only_llm",
+                    invocation,
+                    operation=invocation.operation,
+                )
+            except Exception:  # pragma: no cover
+                pass
+            return []
         return self._evaluate_generic(invocation, "LLMInvocation")
 
     def _evaluate_agent(
@@ -539,6 +550,65 @@ class DeepevalEvaluator(Evaluator):
             if chunk and chunk not in deduped:
                 deduped.append(chunk)
         return deduped
+
+    @staticmethod
+    def _is_tool_only_response(invocation: LLMInvocation) -> bool:
+        if not isinstance(invocation, LLMInvocation):
+            return False
+        messages = getattr(invocation, "output_messages", None) or []
+        has_text = False
+        has_tool_call = False
+        finish_reasons: set[str] = set()
+        for message in messages:
+            finish_reason = getattr(message, "finish_reason", None)
+            if isinstance(finish_reason, str):
+                finish_reasons.add(finish_reason.lower())
+            parts = getattr(message, "parts", ())
+            for part in parts or ():
+                if isinstance(part, Text):
+                    if part.content and part.content.strip():
+                        has_text = True
+                        break
+                elif isinstance(part, ToolCall):
+                    has_tool_call = True
+                else:
+                    part_type = getattr(part, "type", None)
+                    if (
+                        isinstance(part_type, str)
+                        and part_type.lower() == "tool_call"
+                    ):
+                        has_tool_call = True
+            if has_text:
+                break
+        if has_text:
+            return False
+        implied_reasons = (
+            getattr(invocation, "response_finish_reasons", None) or ()
+        )
+        for reason in implied_reasons:
+            if isinstance(reason, str):
+                finish_reasons.add(reason.lower())
+        attributes = getattr(invocation, "attributes", None)
+        if isinstance(attributes, MappingABC):
+            attr_reasons = attributes.get("gen_ai.response.finish_reasons")
+            if isinstance(attr_reasons, SequenceABC) and not isinstance(
+                attr_reasons, (str, bytes, bytearray)
+            ):
+                for reason in attr_reasons:
+                    if isinstance(reason, str):
+                        finish_reasons.add(reason.lower())
+            elif isinstance(attr_reasons, str):
+                finish_reasons.add(attr_reasons.lower())
+        if has_tool_call:
+            return True
+        if "tool_calls" in finish_reasons:
+            return True
+        operation = getattr(invocation, "operation", None)
+        if isinstance(operation, str) and operation.lower().startswith(
+            "execute_tool"
+        ):
+            return True
+        return False
 
     def _build_test_case(
         self, invocation: GenAI, invocation_type: str
