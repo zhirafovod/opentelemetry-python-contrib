@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Mapping as MappingABC
@@ -134,6 +135,18 @@ class DeepevalEvaluator(Evaluator):
     def _evaluate_agent(
         self, invocation: AgentInvocation
     ) -> Sequence[EvaluationResult]:
+        # only evaluate for operation=invoke
+        operation = getattr(invocation, "operation", None)
+        if operation != "invoke":
+            try:
+                genai_debug_log(
+                    "evaluator.deepeval.skip.non_invoke_agent",
+                    invocation,
+                    operation=invocation.operation,
+                )
+            except Exception:  # pragma: no cover
+                pass
+            return []
         return self._evaluate_generic(invocation, "AgentInvocation")
 
     def _evaluate_generic(
@@ -452,6 +465,81 @@ class DeepevalEvaluator(Evaluator):
         except TypeError:  # pragma: no cover - signature variant
             return GEval(steps=steps, **kwargs)
 
+    @staticmethod
+    def _agent_text_chunks(value: Any) -> list[str]:
+        """Extract textual content from agent payload structures."""
+
+        chunks: list[str] = []
+
+        def _collect(current: Any) -> None:
+            if current is None:
+                return
+            if isinstance(current, Text):
+                text = current.content.strip()
+                if text:
+                    chunks.append(text)
+                return
+            if isinstance(current, str):
+                text = current.strip()
+                if not text:
+                    return
+                if text.startswith("{") or text.startswith("["):
+                    try:
+                        parsed = json.loads(text)
+                    except Exception:
+                        chunks.append(text)
+                        return
+                    _collect(parsed)
+                    return
+                chunks.append(text)
+                return
+            if isinstance(current, MappingABC):
+                any_key = False
+                for key in (
+                    "final_output",
+                    "output",
+                    "result",
+                    "response",
+                    "answer",
+                    "message",
+                    "messages",
+                    "content",
+                    "text",
+                    "value",
+                    "input",
+                    "prompt",
+                ):
+                    try:
+                        item = current.get(key)  # type: ignore[attr-defined]
+                    except Exception:
+                        continue
+                    if item is not None:
+                        any_key = True
+                        _collect(item)
+                if not any_key:
+                    for item in list(current.values()):
+                        _collect(item)
+                return
+            if isinstance(current, SequenceABC) and not isinstance(
+                current, (str, bytes, bytearray)
+            ):
+                for item in current:
+                    _collect(item)
+                return
+            try:
+                text = str(current).strip()
+            except Exception:
+                return
+            if text:
+                chunks.append(text)
+
+        _collect(value)
+        deduped: list[str] = []
+        for chunk in chunks:
+            if chunk and chunk not in deduped:
+                deduped.append(chunk)
+        return deduped
+
     def _build_test_case(
         self, invocation: GenAI, invocation_type: str
     ) -> Any | None:
@@ -474,32 +562,37 @@ class DeepevalEvaluator(Evaluator):
             )
         if isinstance(invocation, AgentInvocation):
             input_chunks: list[str] = []
-            if invocation.system_instructions:
-                input_chunks.append(str(invocation.system_instructions))
-            if invocation.input_context:
-                input_chunks.append(str(invocation.input_context))
-            input_text = "\n\n".join(
-                chunk
-                for chunk in input_chunks
-                if isinstance(chunk, str) and chunk
+            input_chunks.extend(
+                self._agent_text_chunks(invocation.system_instructions)
             )
-            output_text = invocation.output_result or ""
+            input_chunks.extend(
+                self._agent_text_chunks(invocation.input_context)
+            )
+            input_text = "\n\n".join(
+                chunk for chunk in input_chunks if chunk
+            ).strip()
+            output_chunks = self._agent_text_chunks(invocation.output_result)
+            output_text = "\n\n".join(
+                chunk for chunk in output_chunks if chunk
+            ).strip()
             if not input_text or not output_text:
                 return None
             context: list[str] | None = None
             if invocation.tools:
                 context = ["Tools: " + ", ".join(invocation.tools)]
+            metadata = {
+                "agent_name": invocation.name,
+                "agent_type": invocation.agent_type,
+                **(invocation.attributes or {}),
+            }
+            metadata = {k: v for k, v in metadata.items() if v is not None}
             return LLMTestCase(
                 input=input_text,
                 actual_output=output_text,
                 context=context,
                 retrieval_context=self._extract_retrieval_context(invocation),
-                additional_metadata={
-                    "agent_name": invocation.name,
-                    "agent_type": invocation.agent_type,
-                    **(invocation.attributes or {}),
-                },
-                name=invocation.operation,
+                additional_metadata=metadata or None,
+                name=invocation.operation or invocation.name,
             )
         return None
 
