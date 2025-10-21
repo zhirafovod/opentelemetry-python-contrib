@@ -631,17 +631,17 @@ class DeepevalEvaluator(Evaluator):
                     or metric_lower == "faithfulness"
                 ):
                     if success is True:
-                        label = "Not hallucinated"
+                        label = "Not Hallucinated"
                     elif success is False:
                         label = "Hallucinated"
                 elif metric_lower == "toxicity":
                     if success is True:
-                        label = "Non toxic"
+                        label = "Not Toxic"
                     elif success is False:
                         label = "Toxic"
                 elif metric_lower == "bias":
                     if success is True:
-                        label = "Not biased"
+                        label = "Not Biased"
                     elif success is False:
                         label = "Biased"
                 elif metric_lower.startswith("sentiment"):
@@ -650,9 +650,9 @@ class DeepevalEvaluator(Evaluator):
                 else:
                     # Fallback to generic if no mapping
                     if success is True:
-                        label = "pass"
+                        label = "Pass"
                     elif success is False:
-                        label = "fail"
+                        label = "Fail"
                 # Final defensive fallback: ensure every result has some label for downstream aggregation.
                 if label is None:
                     # If score present we treat unknown success as Neutral (for sentiment) or pass for numeric metrics.
@@ -661,7 +661,7 @@ class DeepevalEvaluator(Evaluator):
                     ):
                         label = "Neutral"
                     else:
-                        label = "pass" if success is not False else "fail"
+                        label = "Pass" if success is not False else "Fail"
                 # Derive pass/fail attribute centrally (moved from emitters). We expose a uniform
                 # boolean attribute 'gen_ai.evaluation.passed' for downstream aggregation. If Deepeval
                 # did not compute success we attempt a light inference from standardized labels.
@@ -674,11 +674,12 @@ class DeepevalEvaluator(Evaluator):
                     # Infer from label vocabulary when success is None (defensive fallback)
                     if label in {
                         "Relevant",
-                        "Not hallucinated",
-                        "Non toxic",
-                        "Not biased",
+                        "Not Hallucinated",
+                        "Not Toxic",
+                        "Not Biased",
                         "Positive",
                         "Neutral",
+                        "Pass",
                     }:
                         passed = True
                     elif label in {
@@ -687,7 +688,7 @@ class DeepevalEvaluator(Evaluator):
                         "Toxic",
                         "Biased",
                         "Negative",
-                        "fail",
+                        "Fail",
                     }:
                         passed = False
                     else:

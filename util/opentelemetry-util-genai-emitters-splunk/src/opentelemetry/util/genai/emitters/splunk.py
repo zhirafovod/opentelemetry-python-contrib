@@ -43,7 +43,7 @@ except Exception:  # pragma: no cover
 
 _LOGGER = logging.getLogger(__name__)
 
-_EVENT_NAME_EVALUATIONS = "gen_ai.splunk.evaluations"
+_EVENT_NAME_EVALUATIONS = "gen_ai.evaluation.results"
 _RANGE_ATTRIBUTE_KEYS = (
     "score_range",
     "range",
@@ -335,8 +335,14 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
         if invocation.request_model:
             attrs["gen_ai.request.model"] = invocation.request_model
         resp_id = getattr(invocation, "response_id", None)
+        response_id_value: Optional[str] = None
         if isinstance(resp_id, str) and resp_id:
             attrs["gen_ai.response.id"] = resp_id
+            response_id_value = resp_id
+        elif invocation.attributes:
+            candidate_resp_id = invocation.attributes.get("gen_ai.response.id")
+            if isinstance(candidate_resp_id, str) and candidate_resp_id:
+                response_id_value = candidate_resp_id
         if getattr(invocation, "response_model_name", None):
             attrs["gen_ai.response.model"] = invocation.response_model_name
         # Usage tokens if available
@@ -363,27 +369,42 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
         for (
             result,
             _normalized,
-            range_label,
+            _range_label,
         ) in (
             records
         ):  # normalized retained only for potential future enrichment
-            ev: Dict[str, Any] = {
-                "gen_ai.operation.name": "evaluation",
-                "gen_ai.evaluation.name": result.metric_name.lower(),
-            }
+            ev: Dict[str, Any] = {}
+            metric_name = self._canonical_metric_name(result.metric_name)
+            if metric_name:
+                ev["gen_ai.evaluation.name"] = metric_name
+            elif getattr(result, "metric_name", None):
+                fallback_name = str(result.metric_name).strip().lower()
+                if fallback_name:
+                    ev["gen_ai.evaluation.name"] = fallback_name
             if isinstance(result.score, (int, float)):
-                ev["gen_ai.evaluation.score"] = result.score
+                ev["gen_ai.evaluation.score.value"] = result.score
             if result.label is not None:
-                ev["gen_ai.evaluation.label"] = result.label
-            # Provide numeric range label if present
-            if range_label:
-                ev["gen_ai.evaluation.range"] = range_label
-            # Map explanation -> reasoning (Splunk format requirement)
+                ev["gen_ai.evaluation.score.label"] = result.label
             if result.explanation:
-                ev["gen_ai.evaluation.reasoning"] = result.explanation
-            # Preserve original attributes under a nested dict if present
+                ev["gen_ai.evaluation.explanation"] = result.explanation
+            passed_value: Optional[bool] = None
+            attr_response_id: Optional[str] = None
             if result.attributes:
-                ev["gen_ai.evaluation.attributes"] = dict(result.attributes)
+                passed_attr = result.attributes.get("gen_ai.evaluation.passed")
+                if isinstance(passed_attr, bool):
+                    passed_value = passed_attr
+                elif isinstance(passed_attr, str):
+                    lowered = passed_attr.strip().lower()
+                    if lowered in {"true", "false"}:
+                        passed_value = lowered == "true"
+                candidate_resp = result.attributes.get("gen_ai.response.id")
+                if isinstance(candidate_resp, str) and candidate_resp:
+                    attr_response_id = candidate_resp
+            if passed_value is not None:
+                ev["gen_ai.evaluation.passed"] = passed_value
+            response_identifier = attr_response_id or response_id_value
+            if response_identifier:
+                ev["gen_ai.response.id"] = response_identifier
             if result.error is not None:
                 ev["gen_ai.evaluation.error.type"] = (
                     result.error.type.__qualname__
@@ -392,8 +413,8 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
                     ev["gen_ai.evaluation.error.message"] = (
                         result.error.message
                     )
-            evaluations.append(ev)
-        attrs["gen_ai.evaluations"] = evaluations
+            if ev:
+                evaluations.append(ev)
 
         # Add conversation content arrays
         if _INCLUDE_EVALUATION_MESSAGE_CONTENT:
@@ -477,6 +498,23 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
             )
         normalized = max(0.0, min(1.0, normalized))
         return normalized, f"[{start},{end}]"
+
+    @staticmethod
+    def _canonical_metric_name(metric_name: Optional[str]) -> str:
+        if not metric_name:
+            return ""
+        text = str(metric_name).strip().lower()
+        if not text:
+            return ""
+        text = re.sub(r"\s*\[.*\]\s*$", "", text)
+        text = text.replace(" ", "_")
+        mapping = {
+            "answer_relevancy": "relevance",
+            "answer_relevance": "relevance",
+            "answer_relevancy_metric": "relevance",
+            "answer_relevance_metric": "relevance",
+        }
+        return mapping.get(text, text)
 
     def _serialize_result(
         self,
