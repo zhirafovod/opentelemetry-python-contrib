@@ -378,8 +378,19 @@ class Manager(CompletionCallback):
                 continue
             per_type: dict[str, Sequence[MetricConfig]] = {}
             for type_name, metrics in defaults.items():
+                filtered_metrics: list[str] = []
+                for metric in metrics:
+                    if metric is None:
+                        continue
+                    text = str(metric).strip()
+                    if not text:
+                        continue
+                    if text.lower() == "length":
+                        continue
+                    filtered_metrics.append(text)
                 entries = [
-                    MetricConfig(name=metric, options={}) for metric in metrics
+                    MetricConfig(name=metric, options={})
+                    for metric in filtered_metrics
                 ]
                 if entries:
                     per_type[type_name] = entries

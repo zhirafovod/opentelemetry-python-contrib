@@ -96,7 +96,6 @@ def _wrap_factory(cls):
 register_evaluator(
     "length",
     _wrap_factory(LengthEvaluator),
-    default_metrics=lambda: {"LLMInvocation": ("length",)},
 )
 
 __all__ = [
