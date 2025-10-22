@@ -31,6 +31,7 @@ from ..types import (
     Workflow,
 )
 from .base import Evaluator
+from .normalize import normalize_invocation
 from .registry import get_default_metrics, get_evaluator, list_evaluators
 
 _LOGGER = logging.getLogger(__name__)
@@ -210,6 +211,27 @@ class Manager(CompletionCallback):
     ) -> Sequence[Sequence[EvaluationResult]]:
         if not self.has_evaluators:
             return ()
+        # Centralized skip policy via normalization flags
+        try:
+            canonical = normalize_invocation(invocation)
+            # Skip tool-call only LLM responses
+            if (
+                canonical.type_name == "LLMInvocation"
+                and canonical.is_tool_only_llm
+            ):
+                _LOGGER.debug("Skipping evaluation for tool-only LLM output")
+                return ()
+            # Skip agent operations other than invoke
+            if (
+                canonical.type_name == "AgentInvocation"
+                and canonical.is_agent_non_invoke
+            ):
+                _LOGGER.debug(
+                    "Skipping evaluation for non-invoke agent operation"
+                )
+                return ()
+        except Exception:  # pragma: no cover - defensive
+            pass
         type_name = type(invocation).__name__
         evaluators = self._evaluators.get(type_name, ())
         if not evaluators:

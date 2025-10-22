@@ -104,9 +104,20 @@ This note summarizes issues observed in the current evaluators implementation an
 
 ## Suggested File Additions
 
+-
+
+## Change Log
+
+- Added `evaluators/normalize.py` providing canonical extraction and flags.
+- Manager now consults normalization flags to skip:
+  - Tool‑call only `LLMInvocation`s.
+  - Non‑invoke `AgentInvocation`s.
+- Deepeval now builds `LLMTestCase` from the normalizer and no longer performs bespoke agent input/output aggregation.
+- Deepeval no longer performs tool‑only skip (centralized in Manager).
+- Previous ad‑hoc `length` default metric removed from builtin registration; Manager filters it from defaults (to be moved into a distinct policy/config module in a later phase).
+
 - `opentelemetry/util/genai/evaluators/normalize.py`
 - `opentelemetry/util/genai/evaluators/policy.py` (optional)
 - `opentelemetry/util/genai/evaluators/deepeval_metrics.py`
 - `opentelemetry/util/genai/evaluators/deepeval_adapter.py`
 - `opentelemetry/util/genai/evaluators/deepeval_runner.py`
-

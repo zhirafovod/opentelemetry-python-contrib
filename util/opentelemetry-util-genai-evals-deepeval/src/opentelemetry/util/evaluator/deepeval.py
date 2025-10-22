@@ -24,6 +24,9 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from opentelemetry.util.genai.evaluators.base import Evaluator
+from opentelemetry.util.genai.evaluators.normalize import (
+    normalize_invocation as _normalize_invocation,
+)
 from opentelemetry.util.genai.evaluators.registry import (
     EvaluatorRegistration,
     register_evaluator,
@@ -131,16 +134,7 @@ class DeepevalEvaluator(Evaluator):
     def _evaluate_llm(
         self, invocation: LLMInvocation
     ) -> Sequence[EvaluationResult]:
-        if self._is_tool_only_response(invocation):
-            try:
-                genai_debug_log(
-                    "evaluator.deepeval.skip.tool_only_llm",
-                    invocation,
-                    operation=invocation.operation,
-                )
-            except Exception:  # pragma: no cover
-                pass
-            return []
+        # Tool-call only detection handled centrally by Manager.
         return self._evaluate_generic(invocation, "LLMInvocation")
 
     def _evaluate_agent(
@@ -615,54 +609,23 @@ class DeepevalEvaluator(Evaluator):
     ) -> Any | None:
         from deepeval.test_case import LLMTestCase
 
-        if isinstance(invocation, LLMInvocation):
-            input_text = self._serialize_messages(invocation.input_messages)
-            output_text = self._serialize_messages(invocation.output_messages)
-            context = self._extract_context(invocation)
-            retrieval_context = self._extract_retrieval_context(invocation)
-            if not input_text or not output_text:
+        if isinstance(invocation, (LLMInvocation, AgentInvocation)):
+            canonical = _normalize_invocation(invocation)
+            # If both empty, nothing to evaluate.
+            if not canonical.input_text and not canonical.output_text:
                 return None
+            name = (
+                invocation.request_model
+                if isinstance(invocation, LLMInvocation)
+                else (invocation.operation or invocation.name)
+            )
             return LLMTestCase(
-                input=input_text,
-                actual_output=output_text,
-                context=context,
-                retrieval_context=retrieval_context,
-                additional_metadata=invocation.attributes or None,
-                name=invocation.request_model,
-            )
-        if isinstance(invocation, AgentInvocation):
-            input_chunks: list[str] = []
-            input_chunks.extend(
-                self._agent_text_chunks(invocation.system_instructions)
-            )
-            input_chunks.extend(
-                self._agent_text_chunks(invocation.input_context)
-            )
-            input_text = "\n\n".join(
-                chunk for chunk in input_chunks if chunk
-            ).strip()
-            output_chunks = self._agent_text_chunks(invocation.output_result)
-            output_text = "\n\n".join(
-                chunk for chunk in output_chunks if chunk
-            ).strip()
-            if not input_text or not output_text:
-                return None
-            context: list[str] | None = None
-            if invocation.tools:
-                context = ["Tools: " + ", ".join(invocation.tools)]
-            metadata = {
-                "agent_name": invocation.name,
-                "agent_type": invocation.agent_type,
-                **(invocation.attributes or {}),
-            }
-            metadata = {k: v for k, v in metadata.items() if v is not None}
-            return LLMTestCase(
-                input=input_text,
-                actual_output=output_text,
-                context=context,
-                retrieval_context=self._extract_retrieval_context(invocation),
-                additional_metadata=metadata or None,
-                name=invocation.operation or invocation.name,
+                input=canonical.input_text or "",
+                actual_output=canonical.output_text or "",
+                context=canonical.context,
+                retrieval_context=canonical.retrieval_context,
+                additional_metadata=canonical.metadata or None,
+                name=name,
             )
         return None
 
