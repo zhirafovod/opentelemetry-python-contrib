@@ -115,6 +115,12 @@ This note summarizes issues observed in the current evaluators implementation an
 - Deepeval now builds `LLMTestCase` from the normalizer and no longer performs bespoke agent input/output aggregation.
 - Deepeval no longer performs tool‑only skip (centralized in Manager).
 - Previous ad‑hoc `length` default metric removed from builtin registration; Manager filters it from defaults (to be moved into a distinct policy/config module in a later phase).
+- Added Deepeval helpers:
+  - `deepeval_adapter.py` (LLMTestCase builder from normalized data)
+  - `deepeval_metrics.py` (metric registry, option coercion, metric instantiation, custom GEval builders)
+  - `deepeval_runner.py` (captured evaluation runner)
+  - Slimmed `deepeval.py` to orchestrate the above helpers.
+- Fixed `_build_test_case` regression (accidental `@staticmethod` decoration) that prevented Deepeval evaluations from running and reinstated calls for LLM invocations.
 
 - `opentelemetry/util/genai/evaluators/normalize.py`
 - `opentelemetry/util/genai/evaluators/policy.py` (optional)

@@ -15,18 +15,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from collections.abc import Mapping as MappingABC
-from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from opentelemetry.util.genai.evaluators.base import Evaluator
-from opentelemetry.util.genai.evaluators.normalize import (
-    normalize_invocation as _normalize_invocation,
-)
 from opentelemetry.util.genai.evaluators.registry import (
     EvaluatorRegistration,
     register_evaluator,
@@ -37,9 +32,19 @@ from opentelemetry.util.genai.types import (
     EvaluationResult,
     GenAI,
     LLMInvocation,
-    Text,
-    ToolCall,
 )
+
+from .deepeval_adapter import build_llm_test_case as _build_llm_test_case
+from .deepeval_metrics import (
+    METRIC_REGISTRY as _DEEPEVAL_METRIC_REGISTRY,
+)
+from .deepeval_metrics import (
+    coerce_option as _coerce_option,
+)
+from .deepeval_metrics import (
+    instantiate_metrics as _instantiate_metrics,
+)
+from .deepeval_runner import run_evaluation as _run_deepeval
 
 try:  # Optional debug logging import
     from opentelemetry.util.genai.debug import genai_debug_log
@@ -84,20 +89,7 @@ class _MetricSpec:
     options: Mapping[str, Any]
 
 
-_METRIC_REGISTRY: Mapping[str, str] = {
-    # name -> deepeval.metrics class attribute or sentinel for custom build
-    "bias": "BiasMetric",
-    "toxicity": "ToxicityMetric",
-    "answer_relevancy": "AnswerRelevancyMetric",
-    # Synonyms for answer relevancy accepted in user configuration; all map to
-    # the same underlying Deepeval metric class. Emission canonicalization
-    # later will normalize variants (answer relevancy / answer_relevancy / answer relevance)
-    "answer_relevance": "AnswerRelevancyMetric",
-    "relevance": "AnswerRelevancyMetric",
-    "faithfulness": "FaithfulnessMetric",
-    "hallucination": "__custom_hallucination__",  # custom GEval metric
-    "sentiment": "__custom_sentiment__",  # custom GEval sentiment metric
-}
+_METRIC_REGISTRY: Mapping[str, str] = _DEEPEVAL_METRIC_REGISTRY
 
 
 class DeepevalEvaluator(Evaluator):
@@ -247,8 +239,8 @@ class DeepevalEvaluator(Evaluator):
         # Do not fail early if API key missing; underlying Deepeval/OpenAI usage
         # will produce an error which we surface as evaluation error results.
         try:
-            metrics, skipped_results = self._instantiate_metrics(
-                metric_specs, test_case
+            metrics, skipped_results = _instantiate_metrics(
+                metric_specs, test_case, self._default_model()
             )
         except Exception as exc:  # pragma: no cover - defensive
             return self._error_results(str(exc), type(exc))
@@ -264,7 +256,7 @@ class DeepevalEvaluator(Evaluator):
                 "No Deepeval metrics available", RuntimeError
             )
         try:
-            evaluation = self._run_deepeval(test_case, metrics)
+            evaluation = _run_deepeval(test_case, metrics, genai_debug_log)
         except (
             Exception
         ) as exc:  # pragma: no cover - dependency/runtime failure
@@ -301,371 +293,27 @@ class DeepevalEvaluator(Evaluator):
                 )
                 continue
             parsed_options = {
-                opt_key: self._coerce_option(opt_value)
+                opt_key: _coerce_option(opt_value)
                 for opt_key, opt_value in options.items()
             }
             specs.append(_MetricSpec(name=key, options=parsed_options))
         return specs
 
-    def _instantiate_metrics(  # pragma: no cover - exercised via tests
-        self, specs: Sequence[_MetricSpec], test_case: Any
-    ) -> tuple[Sequence[Any], Sequence[EvaluationResult]]:
-        from importlib import import_module
-
-        metrics_module = import_module("deepeval.metrics")
-        registry = _METRIC_REGISTRY
-        instances: list[Any] = []
-        skipped: list[EvaluationResult] = []
-        default_model = self._default_model()
-        for spec in specs:
-            if "__error__" in spec.options:
-                raise ValueError(spec.options["__error__"])
-            metric_class_name = registry[spec.name]
-            if metric_class_name == "__custom_hallucination__":
-                try:
-                    instances.append(
-                        self._build_hallucination_metric(
-                            spec.options, default_model
-                        )
-                    )
-                except Exception as exc:  # pragma: no cover - defensive
-                    raise RuntimeError(
-                        f"Failed to instantiate hallucination metric: {exc}"
-                    ) from exc
-                continue
-            if metric_class_name == "__custom_sentiment__":
-                try:
-                    instances.append(
-                        self._build_sentiment_metric(
-                            spec.options, default_model
-                        )
-                    )
-                except Exception as exc:  # pragma: no cover - defensive
-                    raise RuntimeError(
-                        f"Failed to instantiate sentiment metric: {exc}"
-                    ) from exc
-                continue
-            metric_cls = getattr(metrics_module, metric_class_name, None)
-            if metric_cls is None:  # pragma: no cover - defensive
-                raise RuntimeError(
-                    f"Deepeval metric class '{metric_class_name}' not found"
-                )
-            missing = self._missing_required_params(metric_cls, test_case)
-            if missing:
-                message = (
-                    "Missing required Deepeval test case fields "
-                    f"{', '.join(missing)} for metric '{spec.name}'."
-                )
-                _LOGGER.info(
-                    "Skipping Deepeval metric '%s': %s", spec.name, message
-                )
-                skipped.append(
-                    EvaluationResult(
-                        metric_name=spec.name,
-                        label="skipped",
-                        explanation=message,
-                        error=Error(message=message, type=ValueError),
-                        attributes={
-                            "deepeval.error": message,
-                            "deepeval.skipped": True,
-                            "deepeval.missing_params": missing,
-                        },
-                    )
-                )
-                continue
-            # spec.options already coerced into primitive values
-            kwargs = dict(spec.options)
-            if default_model and "model" not in kwargs:
-                kwargs["model"] = default_model
-            try:
-                instances.append(metric_cls(**kwargs))
-            except TypeError as exc:
-                raise TypeError(
-                    f"Failed to instantiate Deepeval metric '{spec.name}': {exc}"
-                )
-        return instances, skipped
+    # removed; see deepeval_metrics.instantiate_metrics
 
     # ---- Custom metric builders ------------------------------------
-    def _build_hallucination_metric(
-        self, options: Mapping[str, Any], default_model: str | None
-    ) -> Any:
-        """Create a GEval-based hallucination metric (input/output only).
+    # removed; see deepeval_metrics.build_hallucination_metric
 
-        Avoids complex dynamic getattr chains by importing the exact classes
-        we need; falls back gracefully if signature differences are detected.
-        """
-        from deepeval.metrics import (
-            GEval,  # direct import (simpler & explicit)
-        )
-        from deepeval.test_case import LLMTestCaseParams
-
-        criteria = (
-            "Assess if the output hallucinates by introducing facts, details, or claims not directly supported "
-            "or implied by the input. Score 1 for fully grounded outputs (no fabrications) and 0 for severe hallucination."  # noqa: E501
-        )
-        steps = [
-            "Review the input to extract all key facts and scope.",
-            "Scan the output for any unsubstantiated additions, contradictions, or extrapolations beyond the input.",
-            "Rate factual alignment: 1 = no hallucination, 0 = high hallucination risk.",
-        ]
-        threshold = options.get("threshold") if options else None
-        model_override = options.get("model") if options else None
-        strict_mode = options.get("strict_mode") if options else None
-        if hasattr(LLMTestCaseParams, "INPUT_OUTPUT"):
-            params = getattr(LLMTestCaseParams, "INPUT_OUTPUT")
-        else:  # pragma: no cover - legacy fallback
-            params = [LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT]
-        kwargs: dict[str, Any] = {
-            "name": "hallucination",
-            "criteria": criteria,
-            "evaluation_params": params,
-            "threshold": threshold
-            if isinstance(threshold, (int, float))
-            else 0.7,
-            "model": model_override or default_model or "gpt-4o-mini",
-        }
-        if strict_mode is not None:
-            kwargs["strict_mode"] = bool(strict_mode)
-        # Attempt primary signature (evaluation_steps), fallback to steps
-        try:  # Preferred newer signature
-            return GEval(evaluation_steps=steps, **kwargs)
-        except TypeError:  # Older signature variant
-            return GEval(steps=steps, **kwargs)
-
-    def _build_sentiment_metric(
-        self, options: Mapping[str, Any], default_model: str | None
-    ) -> Any:
-        """Create a GEval-based sentiment metric approximating VADER.
-
-        The GEval prompt will ask the model to classify sentiment and produce a
-        normalized score in [-1,1]. We then map to [0,1] for histogram score while
-        deriving a pseudo VADER-style distribution (neg/neu/pos) emitted as attributes.
-        """
-        from deepeval.metrics import GEval
-        from deepeval.test_case import LLMTestCaseParams
-
-        criteria = "Determine the overall sentiment polarity of the output text: -1 very negative, 0 neutral, +1 very positive."
-        steps = [
-            "Read the text and note words/phrases indicating sentiment.",
-            "Judge if overall tone is negative, neutral, or positive.",
-            "Assign a numeric polarity in [-1,1] capturing intensity (e.g. strong positive ~0.8+).",
-        ]
-        if hasattr(LLMTestCaseParams, "ACTUAL_OUTPUT"):
-            params = [LLMTestCaseParams.ACTUAL_OUTPUT]
-        else:  # pragma: no cover - legacy fallback
-            params = [LLMTestCaseParams.INPUT_OUTPUT]
-        model_override = options.get("model") if options else None
-        threshold = options.get("threshold") if options else None
-        kwargs: dict[str, Any] = {
-            "name": "sentiment [geval]",
-            "criteria": criteria,
-            "evaluation_params": params,
-            "threshold": threshold
-            if isinstance(threshold, (int, float))
-            else 0.0,  # threshold not really used for pass/fail; keep 0
-            "model": model_override or default_model or "gpt-4o-mini",
-        }
-        try:
-            return GEval(evaluation_steps=steps, **kwargs)
-        except TypeError:  # pragma: no cover - signature variant
-            return GEval(steps=steps, **kwargs)
-
-    @staticmethod
-    def _agent_text_chunks(value: Any) -> list[str]:
-        """Extract textual content from agent payload structures."""
-
-        chunks: list[str] = []
-
-        def _collect(current: Any) -> None:
-            if current is None:
-                return
-            if isinstance(current, Text):
-                text = current.content.strip()
-                if text:
-                    chunks.append(text)
-                return
-            if isinstance(current, str):
-                text = current.strip()
-                if not text:
-                    return
-                if text.startswith("{") or text.startswith("["):
-                    try:
-                        parsed = json.loads(text)
-                    except Exception:
-                        chunks.append(text)
-                        return
-                    _collect(parsed)
-                    return
-                chunks.append(text)
-                return
-            if isinstance(current, MappingABC):
-                any_key = False
-                for key in (
-                    "final_output",
-                    "output",
-                    "result",
-                    "response",
-                    "answer",
-                    "message",
-                    "messages",
-                    "content",
-                    "text",
-                    "value",
-                    "input",
-                    "prompt",
-                ):
-                    try:
-                        item = current.get(key)  # type: ignore[attr-defined]
-                    except Exception:
-                        continue
-                    if item is not None:
-                        any_key = True
-                        _collect(item)
-                if not any_key:
-                    for item in list(current.values()):
-                        _collect(item)
-                return
-            if isinstance(current, SequenceABC) and not isinstance(
-                current, (str, bytes, bytearray)
-            ):
-                for item in current:
-                    _collect(item)
-                return
-            try:
-                text = str(current).strip()
-            except Exception:
-                return
-            if text:
-                chunks.append(text)
-
-        _collect(value)
-        deduped: list[str] = []
-        for chunk in chunks:
-            if chunk and chunk not in deduped:
-                deduped.append(chunk)
-        return deduped
-
-    @staticmethod
-    def _is_tool_only_response(invocation: LLMInvocation) -> bool:
-        if not isinstance(invocation, LLMInvocation):
-            return False
-        messages = getattr(invocation, "output_messages", None) or []
-        has_text = False
-        has_tool_call = False
-        finish_reasons: set[str] = set()
-        for message in messages:
-            finish_reason = getattr(message, "finish_reason", None)
-            if isinstance(finish_reason, str):
-                finish_reasons.add(finish_reason.lower())
-            parts = getattr(message, "parts", ())
-            for part in parts or ():
-                if isinstance(part, Text):
-                    if part.content and part.content.strip():
-                        has_text = True
-                        break
-                elif isinstance(part, ToolCall):
-                    has_tool_call = True
-                else:
-                    part_type = getattr(part, "type", None)
-                    if (
-                        isinstance(part_type, str)
-                        and part_type.lower() == "tool_call"
-                    ):
-                        has_tool_call = True
-            if has_text:
-                break
-        if has_text:
-            return False
-        implied_reasons = (
-            getattr(invocation, "response_finish_reasons", None) or ()
-        )
-        for reason in implied_reasons:
-            if isinstance(reason, str):
-                finish_reasons.add(reason.lower())
-        attributes = getattr(invocation, "attributes", None)
-        if isinstance(attributes, MappingABC):
-            attr_reasons = attributes.get("gen_ai.response.finish_reasons")
-            if isinstance(attr_reasons, SequenceABC) and not isinstance(
-                attr_reasons, (str, bytes, bytearray)
-            ):
-                for reason in attr_reasons:
-                    if isinstance(reason, str):
-                        finish_reasons.add(reason.lower())
-            elif isinstance(attr_reasons, str):
-                finish_reasons.add(attr_reasons.lower())
-        if has_tool_call:
-            return True
-        if "tool_calls" in finish_reasons:
-            return True
-        operation = getattr(invocation, "operation", None)
-        if isinstance(operation, str) and operation.lower().startswith(
-            "execute_tool"
-        ):
-            return True
-        return False
+    # removed; see deepeval_metrics.build_sentiment_metric
 
     def _build_test_case(
         self, invocation: GenAI, invocation_type: str
     ) -> Any | None:
-        from deepeval.test_case import LLMTestCase
-
         if isinstance(invocation, (LLMInvocation, AgentInvocation)):
-            canonical = _normalize_invocation(invocation)
-            # If both empty, nothing to evaluate.
-            if not canonical.input_text and not canonical.output_text:
-                return None
-            name = (
-                invocation.request_model
-                if isinstance(invocation, LLMInvocation)
-                else (invocation.operation or invocation.name)
-            )
-            return LLMTestCase(
-                input=canonical.input_text or "",
-                actual_output=canonical.output_text or "",
-                context=canonical.context,
-                retrieval_context=canonical.retrieval_context,
-                additional_metadata=canonical.metadata or None,
-                name=name,
-            )
+            return _build_llm_test_case(invocation)
         return None
 
-    def _run_deepeval(self, test_case: Any, metrics: Sequence[Any]) -> Any:
-        import io
-        from contextlib import redirect_stderr, redirect_stdout
-
-        from deepeval import evaluate as deepeval_evaluate
-        from deepeval.evaluate.configs import (
-            AsyncConfig,
-            CacheConfig,
-            DisplayConfig,
-        )
-
-        display_config = DisplayConfig(
-            show_indicator=False, print_results=False
-        )
-        async_config = AsyncConfig(run_async=False)
-        cache_config = CacheConfig(write_cache=False, use_cache=False)
-        stdout_buffer = io.StringIO()
-        stderr_buffer = io.StringIO()
-        with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
-            result = deepeval_evaluate(
-                [test_case],
-                list(metrics),
-                async_config=async_config,
-                cache_config=cache_config,
-                display_config=display_config,
-            )
-        captured_stdout = stdout_buffer.getvalue().strip()
-        captured_stderr = stderr_buffer.getvalue().strip()
-        if captured_stdout:
-            genai_debug_log(
-                "evaluator.deepeval.stdout", None, output=captured_stdout
-            )
-        if captured_stderr:
-            genai_debug_log(
-                "evaluator.deepeval.stderr", None, output=captured_stderr
-            )
-        return result
+    # removed; see deepeval_runner.run_evaluation
 
     def _convert_results(self, evaluation: Any) -> Sequence[EvaluationResult]:
         results: list[EvaluationResult] = []
@@ -931,94 +579,18 @@ class DeepevalEvaluator(Evaluator):
         except ValueError:
             return text
 
-    @staticmethod
-    def _serialize_messages(messages: Sequence[Any]) -> str:
-        chunks: list[str] = []
-        for message in messages or []:
-            parts = getattr(message, "parts", [])
-            for part in parts:
-                if isinstance(part, Text):
-                    chunks.append(part.content)
-        return "\n".join(chunk for chunk in chunks if chunk).strip()
+    # message serialization moved to normalizer
 
     @staticmethod
-    def _extract_context(invocation: LLMInvocation) -> list[str] | None:
-        context_values: list[str] = []
-        attr = invocation.attributes or {}
-        for key in ("context", "additional_context"):
-            context_values.extend(
-                DeepevalEvaluator._flatten_to_strings(attr.get(key))
-            )
-        return [value for value in context_values if value] or None
+    # context extraction moved to normalizer
 
     @staticmethod
-    def _extract_retrieval_context(invocation: GenAI) -> list[str] | None:
-        attr = invocation.attributes or {}
-        retrieval_values: list[str] = []
-        for key in (
-            "retrieval_context",
-            "retrieved_context",
-            "retrieved_documents",
-            "documents",
-            "sources",
-            "evidence",
-        ):
-            retrieval_values.extend(
-                DeepevalEvaluator._flatten_to_strings(attr.get(key))
-            )
-        return [value for value in retrieval_values if value] or None
+    # retrieval context extraction moved to normalizer
 
     @staticmethod
-    def _flatten_to_strings(value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [value]
-        if isinstance(value, MappingABC):
-            for key in ("content", "page_content", "text", "body", "value"):
-                try:
-                    inner = value.get(key)  # type: ignore[index]
-                except Exception:  # pragma: no cover
-                    inner = None
-                if isinstance(inner, str):
-                    return [inner]
-                if inner is not None:
-                    return DeepevalEvaluator._flatten_to_strings(inner)
-            try:
-                coerced = str(value)  # type: ignore[arg-type]
-                return [coerced]
-            except Exception:  # pragma: no cover - defensive
-                return []
-        if isinstance(value, SequenceABC) and not isinstance(
-            value, (str, bytes, bytearray)
-        ):
-            flattened: list[str] = []
-            for item in value:  # type: ignore[assignment]
-                flattened.extend(DeepevalEvaluator._flatten_to_strings(item))
-            return flattened
-        return [str(value)]
+    # flatten helper moved to normalizer
 
-    def _missing_required_params(
-        self, metric_cls: Any, test_case: Any
-    ) -> list[str]:
-        required = getattr(metric_cls, "_required_params", [])
-        missing: list[str] = []
-        for param in required:
-            attr_name = getattr(param, "value", str(param))
-            value = getattr(test_case, attr_name, None)
-            if value is None:
-                missing.append(attr_name)
-                continue
-            if isinstance(value, str) and not value.strip():
-                missing.append(attr_name)
-                continue
-            if isinstance(value, SequenceABC) and not isinstance(
-                value, (str, bytes, bytearray)
-            ):
-                flattened = self._flatten_to_strings(value)
-                if not flattened:
-                    missing.append(attr_name)
-        return missing
+    # per-metric param check handled in deepeval_metrics
 
     @staticmethod
     def _default_model() -> str | None:
