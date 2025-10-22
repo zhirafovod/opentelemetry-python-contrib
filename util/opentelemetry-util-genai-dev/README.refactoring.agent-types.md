@@ -7,38 +7,25 @@
 - **Evaluation skip logic expected `"invoke"`** – Normalization and evaluator adapters gated on the legacy literal `invoke`, meaning spec-compliant `invoke_agent` operations were silently skipped.
 - **Span naming already matched the spec** – We intentionally preserved the existing span/attribute formatting (`create_agent {name}` / `invoke_agent {name}`) throughout the refactor.
 
-## Refactoring Proposal
-1. **Split the data model**
-   - Introduce `AgentCreation` (mirrors shared fields but fixes `operation` to `create_agent`).
-   - Restrict `AgentInvocation` to the invocation phase (fix `operation` to `invoke_agent` and move invoke-only fields there).
-   - Share common behaviour via a lightweight base mixin if needed.
-2. **Lifecycle API adjustments**
-   - Add `TelemetryHandler.start_agent_creation/stop_agent_creation/fail_agent_creation` (thin wrappers around shared helpers) while keeping backwards-compatible `start_agent` that dispatches on instance type.
-   - Update emitter pipeline registrations so each emitter knows how to handle `AgentCreation` and `AgentInvocation`.
-3. **Instrumentation updates**
-   - Make LangChain callback handler instantiate the appropriate util type (`AgentCreation` for create operations, `AgentInvocation` for invoke).
-   - Audit other emitters/instrumentations (e.g., OpenAI agents, Span translator) for the same change.
-4. **Evaluation alignment**
-   - Update normalization to treat `AgentInvocation` as evaluable by default and skip instances of `AgentCreation`.
-   - Fix evaluator guards (Deepeval and any others) to expect `invoke_agent`.
-5. **Semantic attribute enforcement**
-   - Ensure both classes expose consistent `semantic_convention_attributes`, keeping span names and `gen_ai.operation.name` aligned with the spec.
-6. **Testing & docs**
-   - Extend unit tests to cover both types, especially evaluation skip logic and span emission.
-   - Update public docs/examples to use the new types explicitly.
+## Completed Changes
+- Added a shared `_BaseAgent` plus explicit `AgentCreation` (fixed `operation="create_agent"`) and `AgentInvocation` (fixed `operation="invoke_agent"` with invoke-only fields); exporter list updated accordingly (`util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/types.py`).
+- Telemetry handler now branches on the concrete agent type: only invocation phases push identity, run evaluations, or pop the stack; generic `start/finish/fail` paths accept either class (`util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/handler.py`).
+- Span/content emitters, evaluation emitters, and shared utils accept both agent classes while only capturing invoke-specific payloads (e.g., input/output content) for `AgentInvocation` (`.../emitters/span.py`, `.../emitters/content_events.py`, `.../emitters/utils.py`).
+- Evaluation pipeline recognizes the split: manager skips `AgentCreation`, normalization flags only non-`invoke_agent` operations, Deepeval adapter requires the spec literal, and `_GENAI_TYPE_LOOKUP` includes the new class (`.../evaluators/manager.py`, `.../evaluators/normalize.py`, `util/opentelemetry-util-genai-evals-deepeval/src/.../deepeval.py`).
+- LangChain instrumentation now instantiates `AgentCreation` vs `AgentInvocation`, adjusts context propagation, and updates docs/examples; OpenAI agent tests use `invoke_agent`/`create_agent` explicitly (`instrumentation-genai/opentelemetry-instrumentation-langchain-dev/.../callback_handler.py`, docs/examples, and OpenAI agent unit tests).
+- Examples, tests, and utility emitters have been refreshed to use the new types directly (e.g., `langgraph_*` demos, evaluation/metrics tests, NLTK evaluator).
+- Documented the refactor scope in this README (new file added to track ongoing work).
 
-## Task Breakdown
-1. **Data model**
-   - Create `AgentCreation` data class.
-   - Update `AgentInvocation` to hard-code `operation="invoke_agent"`.
-2. **Handler & emitters**
-   - Refactor handler lifecycle methods to dispatch on the new types.
-   - Adjust span/content/metrics/evaluation emitters to accept `AgentCreation`.
-3. **Instrumentation**
-   - Update LangChain callback handler (and other integrations) to instantiate the correct class.
-4. **Evaluation pipeline**
-   - Fix `normalize_invocation` and manager `_GENAI_TYPE_LOOKUP`.
-   - Align Deepeval adapter (and other plugins) with the `invoke_agent` literal.
-5. **Verification**
-   - Refresh examples/tests to assert both agent phases behave as expected.
-   - Document the changes in package README / changelog once implemented.
+## Next Steps
+- **Testing**  
+  - Run and update automated tests across modules (`pytest util/opentelemetry-util-genai-dev/tests`, `util/opentelemetry-util-genai-evals-*`, instrumentation suites) to confirm the split didn’t introduce regressions.  
+  - Add dedicated tests covering agent creation spans/events and ensuring evaluations are skipped.
+- **Documentation & examples**  
+  - Update public-facing guides and changelog to explain the new data model and migration steps.  
+  - Review remaining examples/integration snippets for references to the old `operation` literals.
+- **Dependent packages**  
+  - Audit other instrumentation packages (e.g., tracer translators, Splunk emitter, Traceloop translator) for any lingering assumptions about `AgentInvocation.operation`.  
+  - Coordinate version bumps for packages that depend on the old class shape.
+- **Tooling & schema**  
+  - Consider adding linting or mypy rules preventing direct string comparisons against `operation`.  
+  - Explore exposing helper constructors or factory functions to simplify creation/invocation lifecycle management for SDK users.
