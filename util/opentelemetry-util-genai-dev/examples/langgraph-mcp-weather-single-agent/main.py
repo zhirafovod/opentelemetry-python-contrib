@@ -1,3 +1,25 @@
+"""LangGraph MCP Weather Single-Agent Example.
+
+Run modes:
+1. Default (no CLI args): starts a Flask server exposing endpoints:
+    - GET /          API info
+    - GET /health    Health check
+    - POST /weather  Body: {"city": "City Name"}
+
+2. Single-shot CLI execution: run one weather query and exit without
+    starting the server.
+
+    Examples:
+         python main.py --city "San Francisco"
+         python main.py --city "Berlin" --format json
+
+Exit codes (single-shot mode):
+    0 success
+    1 invalid arguments
+    2 missing or failed model initialization
+    3 processing error
+"""
+
 import asyncio
 import base64
 import json
@@ -785,5 +807,78 @@ async def process_weather_request(city: str) -> str:
 
 
 if __name__ == "__main__":
-    # Disable Flask request logs by setting debug=False and custom logging
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="Run weather agent server (default) or single-shot query"
+    )
+    parser.add_argument(
+        "--city",
+        help="If provided, run a single weather query for the given city and exit",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format for single-shot mode (default: text)",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true", help="Enable verbose logging"
+    )
+
+    args = parser.parse_args()
+
+    if args.city:
+        # Single-shot mode
+        if args.verbose:
+            print("[single-shot] Starting single weather query")
+        if not model or not agent:
+            print(
+                "ERROR: Cisco AI model not initialized. Ensure credentials are set before single-shot usage."
+            )
+            sys.exit(2)
+
+        # Refresh token before invocation (same logic as endpoint)
+        if token_manager:
+            try:
+                fresh_token = token_manager.get_token()
+                model.default_headers["api-key"] = fresh_token
+            except Exception as e:
+                print(f"ERROR: Failed to refresh Cisco token: {e}")
+                sys.exit(2)
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                process_weather_request(args.city)
+            )
+        except Exception as e:
+            print(f"ERROR: Failed to process weather request: {e}")
+            sys.exit(3)
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+        if args.format == "json":
+            output_obj = {
+                "city": args.city,
+                "response": result,
+                "status": "success"
+                if not result.startswith("Error")
+                else "error",
+                "powered_by": "Cisco AI",
+            }
+            print(json.dumps(output_obj, indent=2))
+        else:
+            print(result)
+
+        if result.startswith("Error"):
+            sys.exit(3)
+        sys.exit(0)
+    else:
+        # Server mode (default behavior unchanged)
+        app.run(host="0.0.0.0", port=8005, debug=False)
