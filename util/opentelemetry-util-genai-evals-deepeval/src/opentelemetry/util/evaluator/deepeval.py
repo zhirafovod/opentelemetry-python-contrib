@@ -89,6 +89,203 @@ class _MetricSpec:
     options: Mapping[str, Any]
 
 
+@dataclass
+class _MetricContext:
+    name: str
+    key: str
+    raw_score: Any
+    score: float | None
+    raw_threshold: Any
+    threshold: float | None
+    success: Any
+    reason: str | None
+    error: Error | None
+    attributes: dict[str, Any]
+
+
+def _safe_float(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _build_metric_context(metric: Any, test: Any) -> _MetricContext:
+    name = getattr(metric, "name", "deepeval")
+    key = str(name).lower()
+    raw_score = getattr(metric, "score", None)
+    score = _safe_float(raw_score)
+    raw_threshold = getattr(metric, "threshold", None)
+    threshold = _safe_float(raw_threshold)
+    success = getattr(metric, "success", None)
+    reason = getattr(metric, "reason", None)
+    evaluation_model = getattr(metric, "evaluation_model", None)
+    evaluation_cost = getattr(metric, "evaluation_cost", None)
+    error_msg = getattr(metric, "error", None)
+
+    attributes: dict[str, Any] = {"deepeval.success": success}
+    if raw_threshold is not None:
+        attributes["deepeval.threshold"] = raw_threshold
+    if evaluation_model:
+        attributes["deepeval.evaluation_model"] = evaluation_model
+    if evaluation_cost is not None:
+        attributes["deepeval.evaluation_cost"] = evaluation_cost
+    if getattr(test, "name", None):
+        attributes.setdefault("deepeval.test_case", getattr(test, "name"))
+    if getattr(test, "success", None) is not None:
+        attributes.setdefault(
+            "deepeval.test_success", getattr(test, "success")
+        )
+
+    error = (
+        Error(message=str(error_msg), type=RuntimeError) if error_msg else None
+    )
+    return _MetricContext(
+        name=name,
+        key=key,
+        raw_score=raw_score,
+        score=score,
+        raw_threshold=raw_threshold,
+        threshold=threshold,
+        success=success,
+        reason=reason,
+        error=error,
+        attributes=attributes,
+    )
+
+
+def _determine_label(ctx: _MetricContext) -> str | None:
+    key = ctx.key
+    success = ctx.success
+    score = ctx.score
+    threshold = ctx.threshold
+
+    if key in {"relevance", "answer_relevancy", "answer_relevance"}:
+        if success is True:
+            return "Relevant"
+        if success is False:
+            return "Irrelevant"
+        if isinstance(score, (int, float)):
+            effective_threshold = (
+                float(threshold)
+                if isinstance(threshold, (int, float))
+                else 0.5
+            )
+            return "Relevant" if score >= effective_threshold else "Irrelevant"
+        return "Irrelevant"
+
+    if key.startswith("hallucination") or key == "faithfulness":
+        if success is True:
+            return "Not Hallucinated"
+        if success is False:
+            return "Hallucinated"
+        return None
+
+    if key == "toxicity":
+        if success is True:
+            return "Not Toxic"
+        if success is False:
+            return "Toxic"
+        return None
+
+    if key == "bias":
+        if success is True:
+            return "Not Biased"
+        if success is False:
+            return "Biased"
+        return None
+
+    if key.startswith("sentiment"):
+        return None  # handled in sentiment post-processing
+
+    if success is True:
+        return "Pass"
+    if success is False:
+        return "Fail"
+
+    if key.startswith("sentiment") and isinstance(score, (int, float)):
+        return "Neutral"
+    return "Pass" if success is not False else "Fail"
+
+
+def _derive_passed(label: str | None, success: Any) -> bool | None:
+    if isinstance(success, bool):
+        return success
+    if not label:
+        return None
+    normalized = label.strip()
+    if normalized in {
+        "Relevant",
+        "Not Hallucinated",
+        "Not Toxic",
+        "Not Biased",
+        "Positive",
+        "Neutral",
+        "Pass",
+    }:
+        return True
+    if normalized in {
+        "Irrelevant",
+        "Hallucinated",
+        "Toxic",
+        "Biased",
+        "Negative",
+        "Fail",
+    }:
+        return False
+    return None
+
+
+def _apply_sentiment_postprocessing(
+    ctx: _MetricContext, label: str | None
+) -> tuple[float | None, str | None]:
+    if ctx.name not in {"sentiment", "sentiment [geval]"}:
+        return ctx.score, label
+    if ctx.score is None:
+        return ctx.score, label
+    try:
+        compound = max(-1.0, min(1.0, float(ctx.score)))
+    except Exception:
+        return ctx.score, label
+    mapped = (compound + 1.0) / 2.0
+    ctx.attributes.setdefault(
+        "deepeval.sentiment.compound", round(compound, 6)
+    )
+
+    if label is None:
+        if compound >= 0.25:
+            label = "Positive"
+        elif compound <= -0.25:
+            label = "Negative"
+        else:
+            label = "Neutral"
+
+    try:
+        neg_strength = 1 - mapped
+        pos_strength = mapped
+        neu_strength = 1 - abs(compound)
+        total = neg_strength + neu_strength + pos_strength
+        if total > 0:
+            neg_strength /= total
+            neu_strength /= total
+            pos_strength /= total
+        ctx.attributes.update(
+            {
+                "deepeval.sentiment.neg": round(neg_strength, 6),
+                "deepeval.sentiment.neu": round(neu_strength, 6),
+                "deepeval.sentiment.pos": round(pos_strength, 6),
+                "deepeval.sentiment.compound": round(compound, 6),
+            }
+        )
+    except Exception:
+        pass
+    return mapped, label
+
+
 _METRIC_REGISTRY: Mapping[str, str] = _DEEPEVAL_METRIC_REGISTRY
 
 
@@ -326,218 +523,23 @@ class DeepevalEvaluator(Evaluator):
         for test in test_results:
             metrics_data = getattr(test, "metrics_data", []) or []
             for metric in metrics_data:
-                name = getattr(metric, "name", "deepeval")
-                raw_score = getattr(metric, "score", None)
-                score: float | None
-                if isinstance(raw_score, (int, float)):
-                    score = float(raw_score)
-                elif isinstance(raw_score, str):
-                    try:
-                        score = float(raw_score.strip())
-                    except Exception:  # pragma: no cover - defensive
-                        score = None
-                else:
-                    score = None
-                reason = getattr(metric, "reason", None)
-                success = getattr(metric, "success", None)
-                threshold = getattr(metric, "threshold", None)
-                evaluation_model = getattr(metric, "evaluation_model", None)
-                evaluation_cost = getattr(metric, "evaluation_cost", None)
-                # verbose_logs = getattr(metric, "verbose_logs", None)
-                # strict_mode = getattr(metric, "strict_mode", None)
-                error_msg = getattr(metric, "error", None)
-                attributes: dict[str, Any] = {
-                    "deepeval.success": success,
-                }
-                if threshold is not None:
-                    attributes["deepeval.threshold"] = threshold
-                if evaluation_model:
-                    attributes["deepeval.evaluation_model"] = evaluation_model
-                if evaluation_cost is not None:
-                    attributes["deepeval.evaluation_cost"] = evaluation_cost
-                # if verbose_logs:
-                #     attributes["deepeval.verbose_logs"] = verbose_logs
-                # if strict_mode is not None:
-                #     attributes["deepeval.strict_mode"] = strict_mode
-                if getattr(test, "name", None):
-                    attributes.setdefault(
-                        "deepeval.test_case", getattr(test, "name")
-                    )
-                if getattr(test, "success", None) is not None:
-                    attributes.setdefault(
-                        "deepeval.test_success", getattr(test, "success")
-                    )
-                error = None
-                if error_msg:
-                    error = Error(message=str(error_msg), type=RuntimeError)
-                label: str | None = None
-                # Metric-specific labeling overrides generic pass/fail
-                metric_lower = str(name).lower()
-                if metric_lower in {
-                    "relevance",
-                    "answer_relevancy",
-                    "answer_relevance",
-                }:
-                    # Only allow 'Relevant' / 'Irrelevant'. If Deepeval supplied success we trust it.
-                    if success is True:
-                        label = "Relevant"
-                    elif success is False:
-                        label = "Irrelevant"
-                    else:
-                        # Derive based on score and threshold (if both numeric). If absent, default to Irrelevant conservatively when score is None.
-                        if isinstance(score, (int, float)) and isinstance(
-                            threshold, (int, float)
-                        ):
-                            label = (
-                                "Relevant"
-                                if score >= float(threshold)
-                                else "Irrelevant"
-                            )
-                        elif isinstance(score, (int, float)):
-                            # Assume default threshold 0.5 if unspecified.
-                            label = (
-                                "Relevant" if score >= 0.5 else "Irrelevant"
-                            )
-                        else:
-                            label = "Irrelevant"
-                elif (
-                    metric_lower.startswith("hallucination")
-                    or metric_lower == "faithfulness"
-                ):
-                    if success is True:
-                        label = "Not Hallucinated"
-                    elif success is False:
-                        label = "Hallucinated"
-                elif metric_lower == "toxicity":
-                    if success is True:
-                        label = "Not Toxic"
-                    elif success is False:
-                        label = "Toxic"
-                elif metric_lower == "bias":
-                    if success is True:
-                        label = "Not Biased"
-                    elif success is False:
-                        label = "Biased"
-                elif metric_lower.startswith("sentiment"):
-                    # Sentiment multi-class; we derive below from compound/score if not provided
-                    pass
-                else:
-                    # Fallback to generic if no mapping
-                    if success is True:
-                        label = "Pass"
-                    elif success is False:
-                        label = "Fail"
-                # Final defensive fallback: ensure every result has some label for downstream aggregation.
-                if label is None:
-                    # If score present we treat unknown success as Neutral (for sentiment) or pass for numeric metrics.
-                    if metric_lower.startswith("sentiment") and isinstance(
-                        score, (int, float)
-                    ):
-                        label = "Neutral"
-                    else:
-                        label = "Pass" if success is not False else "Fail"
-                # Derive pass/fail attribute centrally (moved from emitters). We expose a uniform
-                # boolean attribute 'gen_ai.evaluation.passed' for downstream aggregation. If Deepeval
-                # did not compute success we attempt a light inference from standardized labels.
-                passed: bool | None
-                if success is True:
-                    passed = True
-                elif success is False:
-                    passed = False
-                else:
-                    # Infer from label vocabulary when success is None (defensive fallback)
-                    if label in {
-                        "Relevant",
-                        "Not Hallucinated",
-                        "Not Toxic",
-                        "Not Biased",
-                        "Positive",
-                        "Neutral",
-                        "Pass",
-                    }:
-                        passed = True
-                    elif label in {
-                        "Irrelevant",
-                        "Hallucinated",
-                        "Toxic",
-                        "Biased",
-                        "Negative",
-                        "Fail",
-                    }:
-                        passed = False
-                    else:
-                        passed = None
-                # Custom sentiment transformation: maintain original compound, map recorded score to [0,1]
-                if (
-                    name in {"sentiment", "sentiment [geval]"}
-                    and score is not None
-                ):
-                    try:
-                        compound = max(-1.0, min(1.0, score))
-                        mapped = (compound + 1.0) / 2.0  # [0,1]
-                        score = mapped
-                        attributes.setdefault(
-                            "deepeval.sentiment.compound", round(compound, 6)
-                        )
-                        # Derive sentiment label if not already set by upstream success mapping
-                        if label is None:
-                            if compound >= 0.25:
-                                label = "Positive"
-                            elif compound <= -0.25:
-                                label = "Negative"
-                            else:
-                                label = "Neutral"
-                    except Exception:  # pragma: no cover - defensive
-                        pass
-                results.append(
-                    EvaluationResult(
-                        metric_name=name,
-                        score=score,
-                        label=label,
-                        explanation=reason,
-                        error=error,
-                        attributes=attributes,
-                    )
+                ctx = _build_metric_context(metric, test)
+                label = _determine_label(ctx)
+                score, label = _apply_sentiment_postprocessing(ctx, label)
+                ctx.score = score
+                passed = _derive_passed(label, ctx.success)
+
+                result = EvaluationResult(
+                    metric_name=ctx.name,
+                    score=score,
+                    label=label,
+                    explanation=ctx.reason,
+                    error=ctx.error,
+                    attributes=ctx.attributes,
                 )
+                results.append(result)
                 if passed is not None:
-                    # Only set after EvaluationResult to avoid mutating attributes seen earlier if any consumer copies them pre-insertion
-                    attributes["gen_ai.evaluation.passed"] = passed
-                # Post-process custom sentiment distribution (after mapping)
-                if name in {"sentiment", "sentiment [geval]"} and isinstance(
-                    score, (int, float)
-                ):
-                    # Score expected in [-1,1]; clamp then transform.
-                    try:
-                        compound_val = attributes.get(
-                            "deepeval.sentiment.compound", (score * 2.0) - 1.0
-                        )
-                        clamped = max(-1.0, min(1.0, float(compound_val)))
-                        pos_strength = float(score)
-                        neg_strength = 1 - pos_strength
-                        neu_strength = 1 - abs(clamped)
-                        total = neg_strength + neu_strength + pos_strength
-                        if total > 0:
-                            neg_strength /= total
-                            neu_strength /= total
-                            pos_strength /= total
-                        attributes.update(
-                            {
-                                "deepeval.sentiment.neg": round(
-                                    neg_strength, 6
-                                ),
-                                "deepeval.sentiment.neu": round(
-                                    neu_strength, 6
-                                ),
-                                "deepeval.sentiment.pos": round(
-                                    pos_strength, 6
-                                ),
-                                "deepeval.sentiment.compound": round(
-                                    clamped, 6
-                                ),
-                            }
-                        )
-                    except Exception:
-                        pass
+                    ctx.attributes["gen_ai.evaluation.passed"] = passed
         return results
 
     def _error_results(

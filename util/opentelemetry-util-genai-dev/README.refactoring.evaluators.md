@@ -121,6 +121,7 @@ This note summarizes issues observed in the current evaluators implementation an
   - `deepeval_runner.py` (captured evaluation runner)
   - Slimmed `deepeval.py` to orchestrate the above helpers.
 - Fixed `_build_test_case` regression (accidental `@staticmethod` decoration) that prevented Deepeval evaluations from running and reinstated calls for LLM invocations.
+- Simplified `_convert_results` via reusable helper utilities (`_MetricContext`, safe coercion, label/pass derivation, sentiment post-processing) to improve readability and reduce duplication.
 
 - `opentelemetry/util/genai/evaluators/normalize.py`
 - `opentelemetry/util/genai/evaluators/policy.py` (optional)
