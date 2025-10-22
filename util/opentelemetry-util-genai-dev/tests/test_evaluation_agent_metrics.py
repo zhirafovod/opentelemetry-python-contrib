@@ -24,7 +24,7 @@ class _RecordingHistogram:
 def test_agent_evaluation_metric_includes_agent_identity():
     hist = _RecordingHistogram()
     emitter = EvaluationMetricsEmitter(hist)
-    agent = AgentInvocation(name="router", operation="invoke_agent")
+    agent = AgentInvocation(name="router")
     agent.agent_name = "router"  # identity fields reused for emission
     agent.agent_id = str(agent.run_id)
     agent.model = "gpt-agent"

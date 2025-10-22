@@ -150,7 +150,6 @@ def run_mock_agent_with_telemetry(question: str) -> str:
 
     agent_invocation = AgentInvocation(
         name="simple_capital_agent",
-        operation="invoke_agent",
         agent_type="qa",
         description="Simple agent that answers capital city questions from knowledge.",
         model=mocked["requested_model"],

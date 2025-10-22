@@ -603,7 +603,8 @@ def weather_single_agent_demo(city: str = "San Francisco", instrumentor: Optiona
         try:
             from opentelemetry.util.genai.types import (
                 Workflow,
-                AgentInvocation as Agent,
+                AgentCreation,
+                AgentInvocation,
                 InputMessage,
                 OutputMessage,
                 Text,
@@ -616,9 +617,8 @@ def weather_single_agent_demo(city: str = "San Francisco", instrumentor: Optiona
                 initial_input=question,
             )
             telemetry_handler.start_workflow(workflow_obj)
-            agent_create = Agent(
+            agent_create = AgentCreation(
                 name="weather_agent",
-                operation="create_agent",
                 agent_type="mock",
                 model="mock-weather-model",
                 tools=["get_weather_mock"],
@@ -627,9 +627,8 @@ def weather_single_agent_demo(city: str = "San Francisco", instrumentor: Optiona
             )
             telemetry_handler.start_agent(agent_create)
             telemetry_handler.stop_agent(agent_create)
-            agent_invoke = Agent(
+            agent_invoke = AgentInvocation(
                 name="weather_agent",
-                operation="invoke_agent",
                 agent_type="mock",
                 model="mock-weather-model",
                 input_context=question,

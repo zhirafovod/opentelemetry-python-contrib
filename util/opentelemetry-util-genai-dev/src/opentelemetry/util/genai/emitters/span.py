@@ -41,6 +41,7 @@ from ..attributes import (
 from ..interfaces import EmitterMeta
 from ..span_context import extract_span_context, store_span_context
 from ..types import (
+    AgentCreation,
     AgentInvocation,
     ContentCapturingMode,
     EmbeddingInvocation,
@@ -271,7 +272,7 @@ class SpanEmitter(EmitterMeta):
         # Handle new agentic types
         if isinstance(invocation, Workflow):
             self._start_workflow(invocation)
-        elif isinstance(invocation, AgentInvocation):
+        elif isinstance(invocation, (AgentCreation, AgentInvocation)):
             self._start_agent(invocation)
         elif isinstance(invocation, Task):
             self._start_task(invocation)
@@ -301,7 +302,7 @@ class SpanEmitter(EmitterMeta):
     def on_end(self, invocation: LLMInvocation | EmbeddingInvocation) -> None:  # type: ignore[override]
         if isinstance(invocation, Workflow):
             self._finish_workflow(invocation)
-        elif isinstance(invocation, AgentInvocation):
+        elif isinstance(invocation, (AgentCreation, AgentInvocation)):
             self._finish_agent(invocation)
         elif isinstance(invocation, Task):
             self._finish_task(invocation)
@@ -325,7 +326,7 @@ class SpanEmitter(EmitterMeta):
     ) -> None:  # type: ignore[override]
         if isinstance(invocation, Workflow):
             self._error_workflow(error, invocation)
-        elif isinstance(invocation, AgentInvocation):
+        elif isinstance(invocation, (AgentCreation, AgentInvocation)):
             self._error_agent(error, invocation)
         elif isinstance(invocation, Task):
             self._error_task(error, invocation)
@@ -434,7 +435,7 @@ class SpanEmitter(EmitterMeta):
         span.end()
 
     # ---- Agent lifecycle -------------------------------------------------
-    def _start_agent(self, agent: AgentInvocation) -> None:
+    def _start_agent(self, agent: AgentCreation | AgentInvocation) -> None:
         """Start an agent span (create or invoke)."""
         # Span name per semantic conventions
         if agent.operation == "create_agent":
@@ -471,7 +472,11 @@ class SpanEmitter(EmitterMeta):
             span.set_attribute(
                 "gen_ai.system.instructions", json.dumps(system_parts)
             )
-        if agent.input_context and self._capture_content:
+        if (
+            isinstance(agent, AgentInvocation)
+            and agent.input_context
+            and self._capture_content
+        ):
             import json
 
             input_msg = {
@@ -485,13 +490,17 @@ class SpanEmitter(EmitterMeta):
             span, agent.semantic_convention_attributes()
         )
 
-    def _finish_agent(self, agent: AgentInvocation) -> None:
+    def _finish_agent(self, agent: AgentCreation | AgentInvocation) -> None:
         """Finish an agent span."""
         span = agent.span
         if span is None:
             return
         # Set output result if capture_content enabled
-        if agent.output_result and self._capture_content:
+        if (
+            isinstance(agent, AgentInvocation)
+            and agent.output_result
+            and self._capture_content
+        ):
             import json
 
             output_msg = {
@@ -513,7 +522,9 @@ class SpanEmitter(EmitterMeta):
                 pass
         span.end()
 
-    def _error_agent(self, error: Error, agent: AgentInvocation) -> None:
+    def _error_agent(
+        self, error: Error, agent: AgentCreation | AgentInvocation
+    ) -> None:
         """Fail an agent span with error status."""
         span = agent.span
         if span is None:

@@ -295,7 +295,7 @@ def test_attributes_for_span_dispatch(processor_setup):
     )
 
     agent_create_span = SimpleNamespace(
-        type=sp.SPAN_TYPE_AGENT, operation="create"
+        type=sp.SPAN_TYPE_AGENT, operation="create_agent"
     )
     assert (
         processor._attributes_for_span(agent_create_span)[
@@ -305,7 +305,7 @@ def test_attributes_for_span_dispatch(processor_setup):
     )
 
     agent_invoke_span = SimpleNamespace(
-        type=sp.SPAN_TYPE_AGENT, operation="invoke"
+        type=sp.SPAN_TYPE_AGENT, operation="invoke_agent"
     )
     assert (
         processor._attributes_for_span(agent_invoke_span)[
@@ -376,7 +376,9 @@ def test_span_lifecycle_and_shutdown(processor_setup):
         trace_id="trace-1",
         span_id="span-1",
         span_data=SimpleNamespace(
-            type=sp.SPAN_TYPE_AGENT, operation="invoke", name="agent"
+            type=sp.SPAN_TYPE_AGENT,
+            operation="invoke_agent",
+            name="agent",
         ),
         started_at="2024-01-01T00:00:00Z",
         ended_at="2024-01-01T00:00:02Z",

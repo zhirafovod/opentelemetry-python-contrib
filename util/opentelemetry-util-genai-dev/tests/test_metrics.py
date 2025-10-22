@@ -257,7 +257,6 @@ class TestMetricsEmission(unittest.TestCase):
             # Start an agent (push context)
             agent = AgentInvocation(
                 name="context_agent",
-                operation="invoke_agent",
                 model="model-x",
             )
             handler.start_agent(agent)

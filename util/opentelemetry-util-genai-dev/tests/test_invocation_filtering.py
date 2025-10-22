@@ -86,6 +86,6 @@ def test_invocation_type_filter(monkeypatch, _settings):
     emitter = captured[0]
 
     composite.on_start(LLMInvocation(request_model="demo"))
-    composite.on_start(AgentInvocation(name="worker", operation="invoke"))
+    composite.on_start(AgentInvocation(name="worker"))
 
     assert emitter.started == ["LLMInvocation"]

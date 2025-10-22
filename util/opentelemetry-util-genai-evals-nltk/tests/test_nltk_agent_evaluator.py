@@ -28,7 +28,6 @@ def test_agent_invocation_sentiment():
     try:
         agent = AgentInvocation(
             name="demo-agent",
-            operation="invoke_agent",
             system_instructions="You are a helpful agent",
             input_context="Process order",
             output_result="This is terrible service!",

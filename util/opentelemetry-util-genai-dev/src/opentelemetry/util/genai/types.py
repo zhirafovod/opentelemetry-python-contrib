@@ -349,18 +349,10 @@ class Workflow(GenAI):
 
 
 @dataclass
-class AgentInvocation(GenAI):
-    """Represents an agent in an agentic AI system.
-
-    An agent is an autonomous entity with capabilities (tools, models) that can
-    execute tasks. This dataclass supports both agent creation (initialization)
-    and agent invocation (execution) phases.
-    """
+class _BaseAgent(GenAI):
+    """Shared fields for agent lifecycle phases."""
 
     name: str
-    operation: Literal["create_agent", "invoke_agent"] = field(
-        metadata={"semconv": GenAIAttributes.GEN_AI_OPERATION_NAME}
-    )
     agent_type: Optional[str] = (
         None  # researcher, planner, executor, critic, etc.
     )
@@ -374,6 +366,29 @@ class AgentInvocation(GenAI):
     )  # primary model if applicable
     tools: list[str] = field(default_factory=list)  # available tool names
     system_instructions: Optional[str] = None  # System prompt/instructions
+
+
+@dataclass
+class AgentCreation(_BaseAgent):
+    """Represents agent creation/initialisation."""
+
+    operation: Literal["create_agent"] = field(
+        init=False,
+        default="create_agent",
+        metadata={"semconv": GenAIAttributes.GEN_AI_OPERATION_NAME},
+    )
+    input_context: Optional[str] = None  # optional initial context
+
+
+@dataclass
+class AgentInvocation(_BaseAgent):
+    """Represents agent execution (`invoke_agent`)."""
+
+    operation: Literal["invoke_agent"] = field(
+        init=False,
+        default="invoke_agent",
+        metadata={"semconv": GenAIAttributes.GEN_AI_OPERATION_NAME},
+    )
     input_context: Optional[str] = None  # Input for invoke operations
     output_result: Optional[str] = None  # Output for invoke operations
 
@@ -417,6 +432,7 @@ __all__ = [
     "EvaluationResult",
     # agentic AI types
     "Workflow",
+    "AgentCreation",
     "AgentInvocation",
     "Task",
     # backward compatibility normalization helpers

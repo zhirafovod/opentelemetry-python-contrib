@@ -39,6 +39,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
+    AgentCreation,
     AgentInvocation,
     InputMessage,
     LLMInvocation,
@@ -142,9 +143,8 @@ def run_mock_agent_with_telemetry(question: str) -> str:
     print("create_agent span...")
     print(f"{'=' * 80}\n")
 
-    agent_create = AgentInvocation(
+    agent_create = AgentCreation(
         name="simple_capital_agent",
-        operation="create_agent",
         agent_type="qa",
         description="Simple agent that answers capital city questions from knowledge.",
         model=mocked["requested_model"],
@@ -172,7 +172,6 @@ def run_mock_agent_with_telemetry(question: str) -> str:
 
     agent_invoke = AgentInvocation(
         name="simple_capital_agent",
-        operation="invoke_agent",
         agent_type="qa",
         model=mocked["requested_model"],
         provider="openai",

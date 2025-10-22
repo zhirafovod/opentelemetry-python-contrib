@@ -52,9 +52,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
-    AgentInvocation as Agent,
-)
-from opentelemetry.util.genai.types import (
+    AgentCreation,
+    AgentInvocation,
     InputMessage,
     LLMInvocation,
     OutputMessage,
@@ -362,9 +361,8 @@ def run_agent_with_telemetry(question: str):
     print(f"\n{'='*80}")
     print("Creating ReAct agent...")
     print(f"{'='*80}\n")
-    agent_obj = Agent(
+    agent_obj = AgentCreation(
         name="capital_agent",
-        operation="create",
         agent_type="react",
         description="ReAct agent that can look up capital cities",
         framework="langgraph",
@@ -390,9 +388,8 @@ def run_agent_with_telemetry(question: str):
     print(f"\n{'='*80}")
     print("Invoking agent...")
     print(f"{'='*80}\n")
-    agent_invocation = Agent(
+    agent_invocation = AgentInvocation(
         name="capital_agent",
-        operation="invoke",
         agent_type="react",
         framework="langgraph",
         model="gpt-4",

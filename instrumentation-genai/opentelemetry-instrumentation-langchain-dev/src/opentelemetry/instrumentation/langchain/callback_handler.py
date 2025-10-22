@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 from uuid import UUID
 
 from langchain_core.callbacks import (
@@ -49,7 +49,8 @@ from opentelemetry.util.genai.handler import (
 
 # util-genai deps
 from opentelemetry.util.genai.types import (
-    AgentInvocation as UtilAgent,
+    AgentCreation as UtilAgentCreation,
+    AgentInvocation as UtilAgentInvocation,
     Error as UtilError,
     GenAI,
     InputMessage as UtilInputMessage,
@@ -61,6 +62,12 @@ from opentelemetry.util.genai.types import (
 )
 from threading import Lock
 from .utils import get_property_value
+
+AgentEntity = Union[UtilAgentInvocation, UtilAgentCreation]
+AGENT_ENTITY_TYPES: Tuple[Type[GenAI], ...] = (
+    UtilAgentInvocation,
+    UtilAgentCreation,
+)
 
 
 def _sanitize_metadata_value(value: Any) -> Any:
@@ -199,7 +206,9 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         return self._entities.get(run_id)
 
     def _find_ancestor(
-        self, run_id: Optional[UUID], target_type: Type[GenAI]
+        self,
+        run_id: Optional[UUID],
+        target_type: Union[Type[GenAI], Tuple[Type[GenAI], ...]],
     ) -> Optional[GenAI]:
         current = self._get_entity(run_id)
         while current is not None:
@@ -208,9 +217,9 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             current = self._get_entity(current.parent_run_id)
         return None
 
-    def _find_agent(self, run_id: Optional[UUID]) -> Optional[UtilAgent]:
-        ancestor = self._find_ancestor(run_id, UtilAgent)
-        return ancestor if isinstance(ancestor, UtilAgent) else None
+    def _find_agent(self, run_id: Optional[UUID]) -> Optional[AgentEntity]:
+        ancestor = self._find_ancestor(run_id, AGENT_ENTITY_TYPES)
+        return ancestor if isinstance(ancestor, AGENT_ENTITY_TYPES) else None
 
     def _maybe_truncate(self, text: str) -> tuple[str, Optional[int]]:
         encoded = text.encode("utf-8")
@@ -296,7 +305,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         try:
             if isinstance(entity, UtilWorkflow):
                 self._telemetry_handler.start_workflow(entity)
-            elif isinstance(entity, UtilAgent):
+            elif isinstance(entity, AGENT_ENTITY_TYPES):
                 self._telemetry_handler.start_agent(entity)
                 # Provide default identity fields if not set
                 try:
@@ -345,7 +354,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 self._telemetry_handler.start_llm(entity)
             else:
                 self._telemetry_handler.start(entity)
-            if isinstance(entity, (UtilWorkflow, UtilAgent)):
+            if isinstance(entity, (UtilWorkflow,) + AGENT_ENTITY_TYPES):
                 stack = context_api.get_value(self._context_stack_key) or []
                 try:
                     new_stack = list(stack) + [entity.run_id]
@@ -362,7 +371,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         try:
             if isinstance(entity, UtilWorkflow):
                 self._telemetry_handler.stop_workflow(entity)
-            elif isinstance(entity, UtilAgent):
+            elif isinstance(entity, AGENT_ENTITY_TYPES):
                 self._telemetry_handler.stop_agent(entity)
             elif isinstance(entity, UtilTask):
                 self._telemetry_handler.stop_task(entity)
@@ -377,7 +386,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         except Exception:  # pragma: no cover - defensive
             pass
         finally:
-            if isinstance(entity, (UtilWorkflow, UtilAgent)):
+            if isinstance(entity, (UtilWorkflow,) + AGENT_ENTITY_TYPES):
                 try:
                     stack = context_api.get_value(self._context_stack_key) or []
                     if stack and stack[-1] == entity.run_id:
@@ -396,7 +405,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
     def _fail_entity(self, entity: GenAI, error: BaseException) -> None:
         util_error = UtilError(message=str(error), type=type(error))
         entity.attributes.setdefault("error_type", type(error).__name__)
-        if isinstance(entity, UtilAgent):
+        if isinstance(entity, AGENT_ENTITY_TYPES):
             entity.output_result = str(error)
         elif isinstance(entity, UtilTask):
             entity.output_data = str(error)
@@ -407,7 +416,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         try:
             if isinstance(entity, UtilWorkflow):
                 self._telemetry_handler.fail_workflow(entity, util_error)
-            elif isinstance(entity, UtilAgent):
+            elif isinstance(entity, AGENT_ENTITY_TYPES):
                 self._telemetry_handler.fail_agent(entity, util_error)
             elif isinstance(entity, UtilTask):
                 self._telemetry_handler.fail_task(entity, util_error)
@@ -537,7 +546,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         metadata_attrs: dict[str, Any],
         tags: Optional[list[str]],
         extra_attrs: Optional[dict[str, Any]] = None,
-    ) -> UtilAgent:
+    ) -> AgentEntity:
         extras: dict[str, Any] = extra_attrs.copy() if extra_attrs else {}
 
         raw_operation = None
@@ -546,10 +555,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 raw_operation = metadata_attrs.pop(key)
                 break
         op_text = str(raw_operation).lower() if isinstance(raw_operation, str) else ""
-        if "create" in op_text:
-            operation = "create_agent"
-        else:
-            operation = "invoke_agent"
+        operation = "create_agent" if "create" in op_text else "invoke_agent"
 
         agent_type = None
         for key in ("ls_agent_type", "agent_type"):
@@ -601,9 +607,8 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             extra=extras,
         )
 
-        agent = UtilAgent(
+        agent_kwargs = dict(
             name=name,
-            operation=operation,
             agent_type=agent_type,
             description=description,
             framework=framework,
@@ -614,6 +619,10 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             run_id=run_id,
             parent_run_id=parent_run_id,
         )
+        if operation == "create_agent":
+            agent: AgentEntity = UtilAgentCreation(**agent_kwargs)
+        else:
+            agent = UtilAgentInvocation(**agent_kwargs)
         self._store_serialized_payload(agent, "input_context", inputs)
         return agent
 
@@ -671,7 +680,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             description = metadata_attrs.pop("description", None)
         assigned_agent = metadata_attrs.pop("assigned_agent", None)
         source: Optional[str] = None
-        if isinstance(parent, UtilAgent):
+        if isinstance(parent, AGENT_ENTITY_TYPES):
             source = "agent"
         elif isinstance(parent, UtilWorkflow):
             source = "workflow"
@@ -781,7 +790,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         if not should_emit_events() and should_send_prompts():
             self._capture_prompt_data(entity, "outputs", {"outputs": outputs, "kwargs": kwargs})
 
-        if isinstance(entity, UtilAgent):
+        if isinstance(entity, AGENT_ENTITY_TYPES):
             self._store_serialized_payload(entity, "output_result", outputs)
         elif isinstance(entity, UtilWorkflow):
             self._store_serialized_payload(entity, "final_output", outputs)

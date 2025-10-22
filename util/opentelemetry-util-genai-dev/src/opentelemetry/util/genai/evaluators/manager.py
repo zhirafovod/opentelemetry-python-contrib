@@ -21,6 +21,7 @@ from opentelemetry.sdk.trace.sampling import Decision, TraceIdRatioBased
 
 from ..span_context import extract_span_context, store_span_context
 from ..types import (
+    AgentCreation,
     AgentInvocation,
     EmbeddingInvocation,
     EvaluationResult,
@@ -63,6 +64,7 @@ class EvaluatorPlan:
 _GENAI_TYPE_LOOKUP: Mapping[str, type[GenAI]] = {
     "LLMInvocation": LLMInvocation,
     "AgentInvocation": AgentInvocation,
+    "AgentCreation": AgentCreation,
     "EmbeddingInvocation": EmbeddingInvocation,
     "ToolCall": ToolCall,
     "Workflow": Workflow,
@@ -221,7 +223,11 @@ class Manager(CompletionCallback):
             ):
                 _LOGGER.debug("Skipping evaluation for tool-only LLM output")
                 return ()
-            # Skip agent operations other than invoke
+            # Skip agent creation operations
+            if canonical.type_name == "AgentCreation":
+                _LOGGER.debug("Skipping evaluation for agent creation")
+                return ()
+            # Skip unexpected agent operations
             if (
                 canonical.type_name == "AgentInvocation"
                 and canonical.is_agent_non_invoke

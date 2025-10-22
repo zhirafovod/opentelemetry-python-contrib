@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from opentelemetry.util.genai.types import (
+    AgentCreation,
     AgentInvocation,
     GenAI,
     LLMInvocation,
@@ -244,6 +245,25 @@ def normalize_invocation(invocation: GenAI) -> CanonicalEvalCase:
             is_agent_non_invoke=False,
         )
 
+    if isinstance(invocation, AgentCreation):
+        input_text = "\n\n".join(_collect_agent_inputs(invocation)).strip()
+        metadata = {
+            "agent_name": getattr(invocation, "name", None),
+            "agent_type": getattr(invocation, "agent_type", None),
+            **metadata,
+        }
+        metadata = {k: v for k, v in metadata.items() if v is not None}
+        return CanonicalEvalCase(
+            type_name=type_name,
+            input_text=input_text,
+            output_text="",
+            context=None,
+            retrieval_context=extract_retrieval_context(attrs),
+            metadata=metadata,
+            is_tool_only_llm=False,
+            is_agent_non_invoke=True,
+        )
+
     if isinstance(invocation, AgentInvocation):
         input_text = "\n\n".join(_collect_agent_inputs(invocation)).strip()
         output_text = "\n\n".join(_collect_agent_outputs(invocation)).strip()
@@ -265,7 +285,7 @@ def normalize_invocation(invocation: GenAI) -> CanonicalEvalCase:
             metadata=metadata,
             is_tool_only_llm=False,
             is_agent_non_invoke=getattr(invocation, "operation", None)
-            != "invoke",
+            != "invoke_agent",
         )
 
     # Fallback for other types

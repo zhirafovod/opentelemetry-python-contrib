@@ -76,6 +76,7 @@ from opentelemetry.util.genai.span_context import (
     store_span_context,
 )
 from opentelemetry.util.genai.types import (
+    AgentCreation,
     AgentInvocation,
     ContentCapturingMode,
     EmbeddingInvocation,
@@ -539,30 +540,36 @@ class TelemetryHandler:
         return workflow
 
     # Agent lifecycle -----------------------------------------------------
-    def start_agent(self, agent: AgentInvocation) -> AgentInvocation:
+    def start_agent(
+        self, agent: AgentCreation | AgentInvocation
+    ) -> AgentCreation | AgentInvocation:
         """Start an agent operation (create or invoke) and create a pending span entry."""
         self._refresh_capture_content()
         self._emitter.on_start(agent)
         # Push agent identity context (use run_id as canonical id)
-        try:
-            if agent.name:
-                self._agent_context_stack.append(
-                    (agent.name, str(agent.run_id))
-                )
-        except Exception:  # pragma: no cover - defensive
-            pass
+        if isinstance(agent, AgentInvocation):
+            try:
+                if agent.name:
+                    self._agent_context_stack.append(
+                        (agent.name, str(agent.run_id))
+                    )
+            except Exception:  # pragma: no cover - defensive
+                pass
         return agent
 
-    def stop_agent(self, agent: AgentInvocation) -> AgentInvocation:
+    def stop_agent(
+        self, agent: AgentCreation | AgentInvocation
+    ) -> AgentCreation | AgentInvocation:
         """Finalize an agent operation successfully and end its span."""
         agent.end_time = time.time()
         self._emitter.on_end(agent)
         self._notify_completion(agent)
         # Trigger agent evaluation once outputs are finalized.
-        try:  # pragma: no cover - defensive
-            self.evaluate_agent(agent)
-        except Exception:
-            pass
+        if isinstance(agent, AgentInvocation):
+            try:  # pragma: no cover - defensive
+                self.evaluate_agent(agent)
+            except Exception:
+                pass
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -572,18 +579,19 @@ class TelemetryHandler:
             except Exception:
                 pass
         # Pop context if matches top
-        try:
-            if self._agent_context_stack:
-                top_name, top_id = self._agent_context_stack[-1]
-                if top_name == agent.name and top_id == str(agent.run_id):
-                    self._agent_context_stack.pop()
-        except Exception:
-            pass
+        if isinstance(agent, AgentInvocation):
+            try:
+                if self._agent_context_stack:
+                    top_name, top_id = self._agent_context_stack[-1]
+                    if top_name == agent.name and top_id == str(agent.run_id):
+                        self._agent_context_stack.pop()
+            except Exception:
+                pass
         return agent
 
     def fail_agent(
-        self, agent: AgentInvocation, error: Error
-    ) -> AgentInvocation:
+        self, agent: AgentCreation | AgentInvocation, error: Error
+    ) -> AgentCreation | AgentInvocation:
         """Fail an agent operation and end its span with error status."""
         agent.end_time = time.time()
         self._emitter.on_error(error, agent)
@@ -597,13 +605,14 @@ class TelemetryHandler:
             except Exception:
                 pass
         # Pop context if this agent is active
-        try:
-            if self._agent_context_stack:
-                top_name, top_id = self._agent_context_stack[-1]
-                if top_name == agent.name and top_id == str(agent.run_id):
-                    self._agent_context_stack.pop()
-        except Exception:
-            pass
+        if isinstance(agent, AgentInvocation):
+            try:
+                if self._agent_context_stack:
+                    top_name, top_id = self._agent_context_stack[-1]
+                    if top_name == agent.name and top_id == str(agent.run_id):
+                        self._agent_context_stack.pop()
+            except Exception:
+                pass
         return agent
 
     # Task lifecycle ------------------------------------------------------
@@ -672,6 +681,12 @@ class TelemetryHandler:
 
         Mirrors evaluate_llm to allow explicit agent evaluation triggering.
         """
+        if not isinstance(agent, AgentInvocation):
+            _LOGGER.debug(
+                "Skipping agent evaluation for non-invocation type: %s",
+                type(agent).__name__,
+            )
+            return []
         manager = getattr(self, "_evaluation_manager", None)
         if manager is None or not manager.has_evaluators:
             return []
@@ -697,7 +712,7 @@ class TelemetryHandler:
         """Generic start method for any invocation type."""
         if isinstance(obj, Workflow):
             return self.start_workflow(obj)
-        if isinstance(obj, AgentInvocation):
+        if isinstance(obj, (AgentCreation, AgentInvocation)):
             return self.start_agent(obj)
         if isinstance(obj, Task):
             return self.start_task(obj)
@@ -713,7 +728,7 @@ class TelemetryHandler:
         """Generic finish method for any invocation type."""
         if isinstance(obj, Workflow):
             return self.stop_workflow(obj)
-        if isinstance(obj, AgentInvocation):
+        if isinstance(obj, (AgentCreation, AgentInvocation)):
             return self.stop_agent(obj)
         if isinstance(obj, Task):
             return self.stop_task(obj)
@@ -729,7 +744,7 @@ class TelemetryHandler:
         """Generic fail method for any invocation type."""
         if isinstance(obj, Workflow):
             return self.fail_workflow(obj, error)
-        if isinstance(obj, AgentInvocation):
+        if isinstance(obj, (AgentCreation, AgentInvocation)):
             return self.fail_agent(obj, error)
         if isinstance(obj, Task):
             return self.fail_task(obj, error)

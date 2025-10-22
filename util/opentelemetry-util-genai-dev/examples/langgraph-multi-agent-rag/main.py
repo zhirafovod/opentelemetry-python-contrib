@@ -51,9 +51,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 # GenAI Utils imports
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
-    AgentInvocation as Agent,
-)
-from opentelemetry.util.genai.types import (
+    AgentInvocation,
     InputMessage,
     LLMInvocation,
     OutputMessage,
@@ -653,9 +651,8 @@ def research_agent(state: AgentState):
     )
 
     # Create Agent span
-    agent = Agent(
+    agent = AgentInvocation(
         name="research_agent",
-        operation="invoke",
         agent_type="research",
         framework="langgraph",
         model="gpt-4o-mini",
@@ -779,9 +776,8 @@ def memory_agent(state: AgentState):
     query = state.get("research_query", "")
 
     # Create Agent span
-    agent = Agent(
+    agent = AgentInvocation(
         name="memory_agent",
-        operation="invoke",
         agent_type="memory",
         framework="langgraph",
         model="gpt-4o-mini",
@@ -965,9 +961,8 @@ def synthesizer_agent(state: AgentState):
     query = state.get("research_query", "")
 
     # Create Agent span
-    agent = Agent(
+    agent = AgentInvocation(
         name="synthesizer_agent",
-        operation="invoke",
         agent_type="synthesizer",
         framework="langgraph",
         model="gpt-4o-mini",

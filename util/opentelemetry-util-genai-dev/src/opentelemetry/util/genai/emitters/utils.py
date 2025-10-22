@@ -32,6 +32,7 @@ from ..span_context import (
     store_span_context,
 )
 from ..types import (
+    AgentCreation,
     AgentInvocation,
     EmbeddingInvocation,
     InputMessage,
@@ -699,7 +700,7 @@ def _workflow_to_log_record(
 
 
 def _agent_to_log_record(
-    agent: AgentInvocation, capture_content: bool
+    agent: AgentCreation | AgentInvocation, capture_content: bool
 ) -> Optional[SDKLogRecord]:
     """Create a log record for agent event"""
     if not capture_content or not agent.system_instructions:

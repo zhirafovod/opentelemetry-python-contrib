@@ -161,7 +161,7 @@ def test_agent_create_span_records_attributes():
     try:
         with trace("workflow"):
             with agent_span(
-                operation="create",
+                operation="create_agent",
                 name="support_bot",
                 description="Answers support questions",
                 agent_id="agt_123",
@@ -201,7 +201,7 @@ def test_agent_name_override_applied_to_agent_spans():
 
     try:
         with trace("workflow"):
-            with agent_span(operation="invoke", name="support_bot"):
+            with agent_span(operation="invoke_agent", name="support_bot"):
                 pass
 
         spans = exporter.get_finished_spans()

@@ -331,7 +331,7 @@ class DeepevalEvaluator(Evaluator):
     ) -> Sequence[EvaluationResult]:
         # only evaluate for operation=invoke
         operation = getattr(invocation, "operation", None)
-        if operation != "invoke":
+        if operation != "invoke_agent":
             try:
                 genai_debug_log(
                     "evaluator.deepeval.skip.non_invoke_agent",

@@ -61,9 +61,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 # Import GenAI telemetry utilities
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
-    AgentInvocation as Agent,
-)
-from opentelemetry.util.genai.types import (
+    AgentCreation,
+    AgentInvocation,
     InputMessage,
     LLMInvocation,
     OutputMessage,
@@ -607,9 +606,8 @@ async def process_weather_request(city: str) -> str:
     handler.start_workflow(workflow)
 
     # Create agent (represents agent creation/initialization)
-    agent_create = Agent(
+    agent_create = AgentCreation(
         name="weather_agent",
-        operation="create",
         agent_type="react",
         framework="langgraph",
         model="gpt-4o-mini",
@@ -621,9 +619,8 @@ async def process_weather_request(city: str) -> str:
     handler.stop_agent(agent_create)
 
     # Invoke agent (represents agent execution)
-    agent_obj = Agent(
+    agent_obj = AgentInvocation(
         name="weather_agent",
-        operation="invoke",
         agent_type="react",
         framework="langgraph",
         model="gpt-4o-mini",
