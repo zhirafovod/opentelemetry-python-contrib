@@ -703,7 +703,7 @@ def _agent_to_log_record(
     agent: AgentCreation | AgentInvocation, capture_content: bool
 ) -> Optional[SDKLogRecord]:
     """Create a log record for agent event"""
-    if not capture_content or not agent.system_instructions:
+    if not capture_content:
         return None
 
     _ensure_span_context(agent)
@@ -723,7 +723,17 @@ def _agent_to_log_record(
     attributes[GenAI.GEN_AI_AGENT_NAME] = agent.name
     attributes[GenAI.GEN_AI_AGENT_ID] = str(agent.run_id)
 
-    body = agent.system_instructions
+    body: Dict[str, Any] = {}
+    if agent.system_instructions:
+        body["system_instructions"] = agent.system_instructions
+    input_context = getattr(agent, "input_context", None)
+    if input_context:
+        body["input_context"] = input_context
+    output_result = getattr(agent, "output_result", None)
+    if output_result:
+        body["output_result"] = output_result
+    if not body:
+        return None
 
     record = SDKLogRecord(
         body=body,

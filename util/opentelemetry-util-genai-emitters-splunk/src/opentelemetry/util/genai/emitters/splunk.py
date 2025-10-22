@@ -30,6 +30,7 @@ from opentelemetry.util.genai.interfaces import EmitterMeta
 from opentelemetry.util.genai.types import (
     AgentInvocation,
     EvaluationResult,
+    GenAI,
     LLMInvocation,
 )
 
@@ -158,7 +159,16 @@ class SplunkConversationEventsEmitter(EmitterMeta):
         self._capture_content = capture_content
 
     def handles(self, obj: Any) -> bool:
-        return isinstance(obj, LLMInvocation)
+        try:
+            genai_debug_log(
+                "splunk_evaluations.handles",
+                obj if isinstance(obj, GenAI) else None,
+                accepted=True,
+                obj_type=type(obj).__name__ if obj is not None else None,
+            )
+        except Exception:  # pragma: no cover
+            pass
+        return True
 
     def on_start(self, obj: Any) -> None:
         return None
@@ -230,7 +240,7 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
         self._capture_content = capture_content
 
     def handles(self, obj: Any) -> bool:
-        return isinstance(obj, LLMInvocation)
+        return isinstance(obj, (LLMInvocation, AgentInvocation))
 
     # Explicit no-op implementations to satisfy emitter protocol expectations
     def on_start(self, obj: Any) -> None:  # pragma: no cover - no-op
@@ -244,8 +254,28 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
         results: Sequence[EvaluationResult],
         obj: Any | None = None,
     ) -> None:
-        invocation = obj if isinstance(obj, LLMInvocation) else None
-        if invocation is None or not results:
+        invocation = (
+            obj if isinstance(obj, (LLMInvocation, AgentInvocation)) else None
+        )
+        if invocation is None:
+            try:
+                genai_debug_log(
+                    "emitter.splunk.evaluations.skip",
+                    None,
+                    reason="unsupported_invocation_type",
+                )
+            except Exception:  # pragma: no cover
+                pass
+            return
+        if not results:
+            try:
+                genai_debug_log(
+                    "emitter.splunk.evaluations.skip",
+                    invocation,
+                    reason="empty_results",
+                )
+            except Exception:  # pragma: no cover
+                pass
             return
         # Manager now handles aggregation; it emits either one aggregated batch
         # or multiple smaller batches. Each call here represents what should be
@@ -265,10 +295,19 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
 
     def _emit_event(
         self,
-        invocation: LLMInvocation,
+        invocation: GenAI,
         records: List[Tuple[EvaluationResult, Optional[float], Optional[str]]],
     ) -> None:
         if not records or self._event_logger is None:
+            try:
+                genai_debug_log(
+                    "emitter.splunk.evaluations.skip",
+                    invocation if isinstance(invocation, GenAI) else None,
+                    reason="no_records_or_logger",
+                    record_count=len(records),
+                )
+            except Exception:  # pragma: no cover
+                pass
             return
         try:
             genai_debug_log(
@@ -283,17 +322,37 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
         output_messages = None
         system_instructions: Sequence[Any] = []
         if _INCLUDE_EVALUATION_MESSAGE_CONTENT:
-            input_messages = _coerce_messages(
-                invocation.input_messages, self._capture_content
+            input_messages = (
+                _coerce_messages(
+                    invocation.input_messages, self._capture_content
+                )
+                if isinstance(invocation, LLMInvocation)
+                else _coerce_iterable(
+                    getattr(invocation, "input_context", None)
+                )
             )
-            output_messages = _coerce_messages(
-                invocation.output_messages, self._capture_content
+            output_messages = (
+                _coerce_messages(
+                    invocation.output_messages, self._capture_content
+                )
+                if isinstance(invocation, LLMInvocation)
+                else _coerce_iterable(
+                    getattr(invocation, "output_result", None)
+                )
             )
-            system_instruction = invocation.attributes.get(
-                "system_instruction"
-            ) or invocation.attributes.get("system_instructions")
-            if not system_instruction and getattr(invocation, "system", None):
-                system_instruction = invocation.system
+            system_instruction = None
+            if isinstance(invocation, LLMInvocation):
+                system_instruction = invocation.attributes.get(
+                    "system_instruction"
+                ) or invocation.attributes.get("system_instructions")
+                if not system_instruction and getattr(
+                    invocation, "system", None
+                ):
+                    system_instruction = invocation.system
+            elif isinstance(invocation, AgentInvocation):
+                system_instruction = getattr(
+                    invocation, "system_instructions", None
+                )
             system_instructions = (
                 _coerce_iterable(system_instruction)
                 if system_instruction is not None
@@ -329,11 +388,14 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
                 "gen_ai.system_instructions",
             ):
                 attrs.pop(key, None)
-        if invocation.provider:
+        if getattr(invocation, "provider", None):
             attrs["gen_ai.system"] = invocation.provider
             attrs["gen_ai.provider.name"] = invocation.provider
-        if invocation.request_model:
-            attrs["gen_ai.request.model"] = invocation.request_model
+        model_name = getattr(invocation, "request_model", None) or getattr(
+            invocation, "model", None
+        )
+        if model_name:
+            attrs["gen_ai.request.model"] = model_name
         resp_id = getattr(invocation, "response_id", None)
         response_id_value: Optional[str] = None
         if isinstance(resp_id, str) and resp_id:
@@ -352,17 +414,28 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
             attrs["gen_ai.usage.output_tokens"] = invocation.output_tokens
         # Finish reasons (aggregate from output messages)
         finish_reasons: List[str] = []
-        for msg in invocation.output_messages or []:
-            fr = getattr(msg, "finish_reason", None) or getattr(
-                msg, "finish_reasons", None
-            )
-            if fr:
-                if isinstance(fr, (list, tuple)):
-                    finish_reasons.extend([str(x) for x in fr])  # type: ignore[arg-type]
-                else:
-                    finish_reasons.append(str(fr))
+        if isinstance(invocation, LLMInvocation):
+            for msg in invocation.output_messages or []:
+                fr = getattr(msg, "finish_reason", None) or getattr(
+                    msg, "finish_reasons", None
+                )
+                if fr:
+                    if isinstance(fr, (list, tuple)):
+                        finish_reasons.extend([str(x) for x in fr])  # type: ignore[arg-type]
+                    else:
+                        finish_reasons.append(str(fr))
         if finish_reasons:
             attrs["gen_ai.response.finish_reasons"] = finish_reasons
+        if isinstance(invocation, AgentInvocation):
+            if getattr(invocation, "name", None):
+                attrs["gen_ai.agent.name"] = invocation.name
+            agent_type = getattr(invocation, "agent_type", None)
+            if agent_type:
+                attrs["gen_ai.agent.type"] = agent_type
+            description = getattr(invocation, "description", None)
+            if description:
+                attrs["gen_ai.agent.description"] = description
+            attrs["gen_ai.agent.id"] = str(invocation.run_id)
 
         # Evaluation results array
         evaluations: list[Dict[str, Any]] = []
@@ -450,10 +523,39 @@ class SplunkEvaluationResultsEmitter(EmitterMeta):
             attrs,
             body=body,
         )
+        if record is None:
+            try:
+                genai_debug_log(
+                    "emitter.splunk.evaluations.skip",
+                    invocation if isinstance(invocation, GenAI) else None,
+                    reason="record_none",
+                )
+            except Exception:  # pragma: no cover
+                pass
+            return
         try:
             self._event_logger.emit(record)
-        except Exception:  # pragma: no cover - defensive
-            pass
+            try:
+                genai_debug_log(
+                    "emitter.splunk.evaluations.emitted",
+                    invocation if isinstance(invocation, GenAI) else None,
+                    record_count=len(records),
+                )
+            except Exception:  # pragma: no cover
+                pass
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOGGER.debug(
+                "SplunkEvaluationResultsEmitter failed to emit evaluation event",
+                exc_info=True,
+            )
+            try:
+                genai_debug_log(
+                    "emitter.splunk.evaluations.error",
+                    invocation if isinstance(invocation, GenAI) else None,
+                    error=repr(exc),
+                )
+            except Exception:  # pragma: no cover
+                pass
 
     # _record_metric removed (metrics no longer emitted)
 

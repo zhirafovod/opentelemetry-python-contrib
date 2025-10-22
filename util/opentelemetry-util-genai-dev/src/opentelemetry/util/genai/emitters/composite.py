@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
+from ..debug import genai_debug_log
 from ..interfaces import EmitterMeta, EmitterProtocol
 from ..types import Error, EvaluationResult, GenAI
 
@@ -67,6 +68,7 @@ class CompositeEmitter(EmitterMeta):
         obj: Any | None = None,
     ) -> None:  # type: ignore[override]
         if not results:
+            genai_debug_log("emitter.on_evaluation_results.empty", obj)
             return
         self._dispatch(
             (_EVALUATION_CATEGORY,),
@@ -113,15 +115,6 @@ class CompositeEmitter(EmitterMeta):
         results: Sequence[EvaluationResult] | None = None,
     ) -> None:
         try:
-            from opentelemetry.util.genai.debug import genai_debug_log
-        except (
-            Exception
-        ):  # pragma: no cover - fallback if debug module missing
-
-            def genai_debug_log(*_args: Any, **_kwargs: Any) -> None:
-                return None
-
-        try:
             genai_debug_log(
                 "composite.dispatch.begin",
                 obj if isinstance(obj, GenAI) else None,
@@ -152,6 +145,20 @@ class CompositeEmitter(EmitterMeta):
                     handles = getattr(emitter, "handles", None)
                     if handles is not None and target is not None:
                         if not handles(target):
+                            try:
+                                genai_debug_log(
+                                    "composite.dispatch.skip",
+                                    target
+                                    if isinstance(target, GenAI)
+                                    else None,
+                                    method=method_name,
+                                    category=category,
+                                    emitter=getattr(
+                                        emitter, "name", repr(emitter)
+                                    ),
+                                )
+                            except Exception:  # pragma: no cover
+                                pass
                             continue
                     genai_debug_log(
                         "composite.dispatch.emit",

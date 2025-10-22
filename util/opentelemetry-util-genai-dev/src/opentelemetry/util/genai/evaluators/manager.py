@@ -32,7 +32,7 @@ from ..types import (
     Workflow,
 )
 from .base import Evaluator
-from .normalize import normalize_invocation
+from .normalize import is_tool_only_llm
 from .registry import get_default_metrics, get_evaluator, list_evaluators
 
 _LOGGER = logging.getLogger(__name__)
@@ -178,8 +178,8 @@ class Manager(CompletionCallback):
     def evaluate_now(self, invocation: GenAI) -> list[EvaluationResult]:
         """Synchronously evaluate an invocation."""
 
-        buckets = self._collect_results(invocation)
-        flattened = self._emit_results(invocation, buckets)
+        buckets = self._evaluate_invocation(invocation)
+        flattened = self._publish_results(invocation, buckets)
         self._flag_invocation(invocation)
         return flattened
 
@@ -204,40 +204,17 @@ class Manager(CompletionCallback):
     def _process_invocation(self, invocation: GenAI) -> None:
         if not self.has_evaluators:
             return
-        buckets = self._collect_results(invocation)
-        self._emit_results(invocation, buckets)
+        buckets = self._evaluate_invocation(invocation)
+        self._publish_results(invocation, buckets)
         self._flag_invocation(invocation)
 
-    def _collect_results(
+    def _evaluate_invocation(
         self, invocation: GenAI
     ) -> Sequence[Sequence[EvaluationResult]]:
         if not self.has_evaluators:
             return ()
-        # Centralized skip policy via normalization flags
-        try:
-            canonical = normalize_invocation(invocation)
-            # Skip tool-call only LLM responses
-            if (
-                canonical.type_name == "LLMInvocation"
-                and canonical.is_tool_only_llm
-            ):
-                _LOGGER.debug("Skipping evaluation for tool-only LLM output")
-                return ()
-            # Skip agent creation operations
-            if canonical.type_name == "AgentCreation":
-                _LOGGER.debug("Skipping evaluation for agent creation")
-                return ()
-            # Skip unexpected agent operations
-            if (
-                canonical.type_name == "AgentInvocation"
-                and canonical.is_agent_non_invoke
-            ):
-                _LOGGER.debug(
-                    "Skipping evaluation for non-invoke agent operation"
-                )
-                return ()
-        except Exception:  # pragma: no cover - defensive
-            pass
+        if self._should_skip(invocation):
+            return ()
         type_name = type(invocation).__name__
         evaluators = self._evaluators.get(type_name, ())
         if not evaluators:
@@ -253,7 +230,7 @@ class Manager(CompletionCallback):
                 buckets.append(list(results))
         return buckets
 
-    def _emit_results(
+    def _publish_results(
         self,
         invocation: GenAI,
         buckets: Sequence[Sequence[EvaluationResult]],
@@ -280,6 +257,30 @@ class Manager(CompletionCallback):
             if bucket:
                 self._handler.evaluation_results(invocation, list(bucket))
         return flattened
+
+    def _should_skip(self, invocation: GenAI) -> bool:
+        """Centralised evaluation skip policy."""
+        try:
+            if isinstance(invocation, LLMInvocation):
+                if is_tool_only_llm(invocation):
+                    _LOGGER.debug(
+                        "Skipping evaluation for tool-only LLM output"
+                    )
+                    return True
+            elif isinstance(invocation, AgentCreation):
+                _LOGGER.debug("Skipping evaluation for agent creation")
+                return True
+            elif isinstance(invocation, AgentInvocation):
+                operation = getattr(invocation, "operation", "invoke_agent")
+                if operation != "invoke_agent":
+                    _LOGGER.debug(
+                        "Skipping evaluation for non-invoke agent operation: %s",
+                        operation,
+                    )
+                    return True
+        except Exception:  # pragma: no cover - defensive
+            _LOGGER.debug("Skip policy evaluation failed", exc_info=True)
+        return False
 
     def _flag_invocation(self, invocation: GenAI) -> None:
         if not self.has_evaluators:

@@ -156,6 +156,10 @@ def run_mock_agent_with_telemetry(question: str) -> str:
         provider="openai",
         framework="langgraph",
         input_context=question,
+        system_instructions=(
+            "Provide concise answers about world capital cities. "
+            "Use internal knowledge only; do not call external tools."
+        ),
     )
     agent_invocation.agent_name = agent_invocation.name
     agent_invocation.attributes["agent.version"] = "1.0"

@@ -564,12 +564,6 @@ class TelemetryHandler:
         agent.end_time = time.time()
         self._emitter.on_end(agent)
         self._notify_completion(agent)
-        # Trigger agent evaluation once outputs are finalized.
-        if isinstance(agent, AgentInvocation):
-            try:  # pragma: no cover - defensive
-                self.evaluate_agent(agent)
-            except Exception:
-                pass
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
