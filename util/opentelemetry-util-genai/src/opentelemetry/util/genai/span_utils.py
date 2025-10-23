@@ -13,8 +13,9 @@
 # limitations under the License.
 
 from dataclasses import asdict
-from typing import List
+from typing import Any, Dict, List, Optional
 
+from opentelemetry._logs import Logger, LogRecord
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAI,
 )
@@ -122,7 +123,71 @@ def _apply_error_attributes(span: Span, error: Error) -> None:
         span.set_attribute(ErrorAttributes.ERROR_TYPE, error.type.__qualname__)
 
 
+def _build_event_attributes(invocation: LLMInvocation) -> Dict[str, Any]:
+    attributes: Dict[str, Any] = {
+        GenAI.GEN_AI_OPERATION_NAME: GenAI.GenAiOperationNameValues.CHAT.value,
+    }
+    if invocation.request_model:
+        attributes[GenAI.GEN_AI_REQUEST_MODEL] = invocation.request_model
+    if invocation.provider is not None:
+        attributes[GenAI.GEN_AI_PROVIDER_NAME] = invocation.provider
+    if invocation.output_messages:
+        attributes[GenAI.GEN_AI_RESPONSE_FINISH_REASONS] = [
+            gen.finish_reason for gen in invocation.output_messages
+        ]
+    if invocation.response_model_name is not None:
+        attributes[GenAI.GEN_AI_RESPONSE_MODEL] = (
+            invocation.response_model_name
+        )
+    if invocation.response_id is not None:
+        attributes[GenAI.GEN_AI_RESPONSE_ID] = invocation.response_id
+    if invocation.input_tokens is not None:
+        attributes[GenAI.GEN_AI_USAGE_INPUT_TOKENS] = invocation.input_tokens
+    if invocation.output_tokens is not None:
+        attributes[GenAI.GEN_AI_USAGE_OUTPUT_TOKENS] = invocation.output_tokens
+    if invocation.attributes:
+        attributes.update(invocation.attributes)
+    return attributes
+
+
+def _build_event_body(invocation: LLMInvocation) -> Optional[Dict[str, str]]:
+    body: Dict[str, str] = {}
+    if invocation.input_messages:
+        body["input_messages"] = gen_ai_json_dumps(
+            [asdict(message) for message in invocation.input_messages]
+        )
+    if invocation.output_messages:
+        body["output_messages"] = gen_ai_json_dumps(
+            [asdict(message) for message in invocation.output_messages]
+        )
+    return body or None
+
+
+def _emit_content_event(logger: Logger, invocation: LLMInvocation) -> None:
+    if not is_experimental_mode():
+        return
+    try:
+        content_mode = get_content_capturing_mode()
+    except ValueError:
+        return
+    if content_mode not in (
+        ContentCapturingMode.EVENT_ONLY,
+        ContentCapturingMode.SPAN_AND_EVENT,
+    ):
+        return
+
+    event_body = _build_event_body(invocation)
+    event_attributes = _build_event_attributes(invocation)
+    log_record = LogRecord(
+        event_name="gen_ai.client.inference.operation.details",
+        attributes=event_attributes,
+        body=event_body,
+    )
+    logger.emit(log_record)
+
+
 __all__ = [
     "_apply_finish_attributes",
     "_apply_error_attributes",
+    "_emit_content_event",
 ]
