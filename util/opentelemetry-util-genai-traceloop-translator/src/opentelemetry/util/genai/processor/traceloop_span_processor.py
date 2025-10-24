@@ -32,7 +32,9 @@ from opentelemetry.util.genai.handler import (
     get_telemetry_handler,
     TelemetryHandler,
 )
-from opentelemetry.util.genai.emitters.content_normalizer import normalize_traceloop_content
+from opentelemetry.util.genai.emitters.content_normalizer import (
+    normalize_traceloop_content,
+)
 
 _ENV_RULES = "OTEL_GENAI_SPAN_TRANSFORM_RULES"
 
@@ -53,7 +55,9 @@ class TransformationRule:
     name_transformations: Dict[str, str] = field(default_factory=dict)
     traceloop_attributes: Dict[str, Any] = field(default_factory=dict)
 
-    def matches(self, span: ReadableSpan) -> bool:  # pragma: no cover - simple logic
+    def matches(
+        self, span: ReadableSpan
+    ) -> bool:  # pragma: no cover - simple logic
         if self.match_name:
             if not fnmatch.fnmatch(span.name, self.match_name):
                 return False
@@ -77,7 +81,9 @@ class TransformationRule:
             for k, expected in self.match_attributes.items():
                 if k not in span.attributes:
                     return False
-                if expected is not None and str(span.attributes.get(k)) != str(expected):
+                if expected is not None and str(span.attributes.get(k)) != str(
+                    expected
+                ):
                     return False
         return True
 
@@ -96,15 +102,22 @@ def _load_rules_from_env() -> List[TransformationRule]:
         for r in rules_spec:
             if not isinstance(r, dict):
                 continue
-            match = r.get("match", {}) if isinstance(r.get("match"), dict) else {}
+            match = (
+                r.get("match", {}) if isinstance(r.get("match"), dict) else {}
+            )
             rules.append(
                 TransformationRule(
                     match_name=match.get("name"),
                     match_scope=match.get("scope"),
                     match_attributes=match.get("attributes", {}) or {},
-                    attribute_transformations=r.get("attribute_transformations", {}) or {},
-                    name_transformations=r.get("name_transformations", {}) or {},
-                    traceloop_attributes=r.get("traceloop_attributes", {}) or {},
+                    attribute_transformations=r.get(
+                        "attribute_transformations", {}
+                    )
+                    or {},
+                    name_transformations=r.get("name_transformations", {})
+                    or {},
+                    traceloop_attributes=r.get("traceloop_attributes", {})
+                    or {},
                 )
             )
         return rules
@@ -154,7 +167,9 @@ class TraceloopSpanProcessor(SpanProcessor):
         if self.rules:
             logging.getLogger(__name__).debug(
                 "TraceloopSpanProcessor loaded %d transformation rules (explicit=%d env=%d)",
-                len(self.rules), len(rules or []), len(env_rules)
+                len(self.rules),
+                len(rules or []),
+                len(env_rules),
             )
         # Dedup guard: ensure we only emit one synthetic invocation per original span
         # (helps when user code ends span multiple times or processor accidentally registered twice)
@@ -194,7 +209,10 @@ class TraceloopSpanProcessor(SpanProcessor):
         # Check attributes for AI/LLM markers (if any attributes present)
         if span.attributes:
             # Check for traceloop entity attributes (highest priority)
-            if "traceloop.entity.input" in span.attributes or "traceloop.entity.output" in span.attributes:
+            if (
+                "traceloop.entity.input" in span.attributes
+                or "traceloop.entity.output" in span.attributes
+            ):
                 return True
             # Check for other AI/LLM markers
             for attr_key in span.attributes.keys():
@@ -220,13 +238,15 @@ class TraceloopSpanProcessor(SpanProcessor):
             # Skip spans we already produced (recursion guard) - check FIRST before span_filter
             if span.attributes and "_traceloop_processed" in span.attributes:
                 return
-            
+
             # Check if this span should be transformed (cheap heuristic)
             if not self.span_filter(span):
                 return
-            
+
             # Per-span dedup guard: avoid emitting multiple synthetic spans if on_end invoked repeatedly.
-            span_id_int = getattr(getattr(span, "context", None), "span_id", None)
+            span_id_int = getattr(
+                getattr(span, "context", None), "span_id", None
+            )
             if span_id_int is not None:
                 if span_id_int in self._processed_span_ids:
                     return
@@ -247,7 +267,10 @@ class TraceloopSpanProcessor(SpanProcessor):
             if applied_rule is not None:
                 attr_tx = applied_rule.attribute_transformations
                 name_tx = applied_rule.name_transformations
-                extra_tl_attrs = {**applied_rule.traceloop_attributes, **sentinel}
+                extra_tl_attrs = {
+                    **applied_rule.traceloop_attributes,
+                    **sentinel,
+                }
             else:
                 attr_tx = self.attribute_transformations
                 name_tx = self.name_transformations
@@ -286,10 +309,14 @@ class TraceloopSpanProcessor(SpanProcessor):
                             span.update_name(new_name)  # type: ignore[attr-defined]
                         except Exception:
                             # Fallback: add override attribute if update fails
-                            span.attributes.setdefault("gen_ai.override.span_name", new_name)  # type: ignore[attr-defined]
+                            span.attributes.setdefault(
+                                "gen_ai.override.span_name", new_name
+                            )  # type: ignore[attr-defined]
                     elif new_name:
                         # Provide override attr for downstream processors/exporters
-                        span.attributes.setdefault("gen_ai.override.span_name", new_name)  # type: ignore[attr-defined]
+                        span.attributes.setdefault(
+                            "gen_ai.override.span_name", new_name
+                        )  # type: ignore[attr-defined]
                 except Exception as name_err:  # pragma: no cover
                     logging.getLogger(__name__).debug(
                         "Span name mutation failed: %s", name_err
@@ -345,10 +372,15 @@ class TraceloopSpanProcessor(SpanProcessor):
             if old in base:
                 value = base.pop(old)
                 # Special handling for entity input/output - normalize and serialize
-                if old in ("traceloop.entity.input", "traceloop.entity.output"):
+                if old in (
+                    "traceloop.entity.input",
+                    "traceloop.entity.output",
+                ):
                     try:
                         direction = "input" if "input" in old else "output"
-                        normalized = normalize_traceloop_content(value, direction)
+                        normalized = normalize_traceloop_content(
+                            value, direction
+                        )
                         value = json.dumps(normalized)
                     except Exception as e:
                         # If normalization fails, try to serialize as-is
@@ -356,7 +388,11 @@ class TraceloopSpanProcessor(SpanProcessor):
                             f"Failed to normalize {old}: {e}, using raw value"
                         )
                         try:
-                            value = json.dumps(value) if not isinstance(value, str) else value
+                            value = (
+                                json.dumps(value)
+                                if not isinstance(value, str)
+                                else value
+                            )
                         except Exception:
                             value = str(value)
                 base[new] = value
@@ -366,7 +402,9 @@ class TraceloopSpanProcessor(SpanProcessor):
         return base
 
     def _derive_new_name(
-        self, original_name: str, name_transformations: Optional[Dict[str, str]]
+        self,
+        original_name: str,
+        name_transformations: Optional[Dict[str, str]],
     ) -> Optional[str]:
         if not name_transformations:
             return None
@@ -400,13 +438,15 @@ class TraceloopSpanProcessor(SpanProcessor):
                 traceloop_attributes.copy(), attribute_transformations
             )
             base_attrs.update(transformed_tl_attrs)
-        
+
         # Final cleanup: remove any remaining traceloop.* keys that weren't in the rename map
         # This catches any attributes added by the Traceloop SDK or other sources
-        keys_to_remove = [k for k in base_attrs.keys() if k.startswith("traceloop.")]
+        keys_to_remove = [
+            k for k in base_attrs.keys() if k.startswith("traceloop.")
+        ]
         for k in keys_to_remove:
             base_attrs.pop(k, None)
-        
+
         new_name = self._derive_new_name(
             existing_span.name, name_transformations
         )
@@ -420,18 +460,25 @@ class TraceloopSpanProcessor(SpanProcessor):
             or "unknown"
         )
         # Infer model from original span name pattern like "chat gpt-4" if still unknown
-        if (not request_model or request_model == "unknown") and existing_span.name:
+        if (
+            not request_model or request_model == "unknown"
+        ) and existing_span.name:
             # Simple heuristic: take token(s) after first space
             parts = existing_span.name.strip().split()
             if len(parts) >= 2:
                 candidate = parts[-1]  # Prefer last token (e.g., "gpt-4")
                 # Basic sanity: exclude generic words that appear in indicators list
-                if candidate.lower() not in {"chat", "completion", "llm", "ai"}:
+                if candidate.lower() not in {
+                    "chat",
+                    "completion",
+                    "llm",
+                    "ai",
+                }:
                     request_model = candidate
         invocation = LLMInvocation(
             request_model=str(request_model),
             attributes=base_attrs,
-            #messages=[],
+            # messages=[],
         )
         # Mark operation heuristically from original span name
         lowered = existing_span.name.lower()

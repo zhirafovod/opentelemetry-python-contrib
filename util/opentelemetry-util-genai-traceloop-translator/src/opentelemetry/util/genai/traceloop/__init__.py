@@ -32,13 +32,11 @@ _LOGGER = logging.getLogger(__name__)
 _DEFAULT_ATTR_TRANSFORMATIONS = {
     "rename": {
         # Content mappings (special handling with normalization)
-        "traceloop.entity.input": "gen_ai.input.messages",      # OFFICIAL 
-        "traceloop.entity.output": "gen_ai.output.messages",    # OFFICIAL
-        
+        "traceloop.entity.input": "gen_ai.input.messages",  # OFFICIAL
+        "traceloop.entity.output": "gen_ai.output.messages",  # OFFICIAL
         # Agent and conversation
-        "traceloop.entity.name": "gen_ai.agent.name",           # OFFICIAL (agent spans)
-        "traceloop.correlation.id": "gen_ai.conversation.id",   # OFFICIAL (Conditionally Required)
-        
+        "traceloop.entity.name": "gen_ai.agent.name",  # OFFICIAL (agent spans)
+        "traceloop.correlation.id": "gen_ai.conversation.id",  # OFFICIAL (Conditionally Required)
         # ⚠️  CUSTOM: Workflow / entity hierarchy (Traceloop-specific extensions)
         "traceloop.workflow.name": "gen_ai.workflow.name",
         "traceloop.entity.path": "gen_ai.workflow.path",
@@ -59,10 +57,10 @@ def enable_traceloop_translator(
     mutate_original_span: bool = True,
 ) -> bool:
     """Enable the Traceloop span translator processor.
-    
+
     This function registers the TraceloopSpanProcessor with the global tracer provider.
     It's safe to call multiple times (idempotent).
-    
+
     Args:
         attribute_transformations: Custom attribute transformation rules.
             If None, uses default transformations (traceloop.* -> gen_ai.*).
@@ -70,19 +68,19 @@ def enable_traceloop_translator(
             If None, uses default transformations (chat * -> genai.chat).
         mutate_original_span: If True, mutate the original span's attributes.
             If False, only create new synthetic spans.
-    
+
     Returns:
         True if the processor was registered, False if already registered or disabled.
-    
+
     Example:
         >>> from opentelemetry.util.genai.traceloop import enable_traceloop_translator
         >>> enable_traceloop_translator()
     """
     # Import here to avoid circular imports
     from ..processor.traceloop_span_processor import TraceloopSpanProcessor
-    
+
     provider = trace.get_tracer_provider()
-    
+
     # Check if provider supports span processors
     if not hasattr(provider, "add_span_processor"):
         _LOGGER.warning(
@@ -91,7 +89,7 @@ def enable_traceloop_translator(
             "Make sure you're using the OpenTelemetry SDK TracerProvider."
         )
         return False
-    
+
     # Check for existing processor to avoid duplicates
     for attr_name in ("_active_span_processors", "_span_processors"):
         existing = getattr(provider, attr_name, [])
@@ -102,17 +100,20 @@ def enable_traceloop_translator(
                         "TraceloopSpanProcessor already registered; skipping duplicate"
                     )
                     return False
-    
+
     try:
         processor = TraceloopSpanProcessor(
-            attribute_transformations=attribute_transformations or _DEFAULT_ATTR_TRANSFORMATIONS,
-            name_transformations=name_transformations or _DEFAULT_NAME_TRANSFORMATIONS,
+            attribute_transformations=attribute_transformations
+            or _DEFAULT_ATTR_TRANSFORMATIONS,
+            name_transformations=name_transformations
+            or _DEFAULT_NAME_TRANSFORMATIONS,
             mutate_original_span=mutate_original_span,
         )
         provider.add_span_processor(processor)
         _LOGGER.info(
             "TraceloopSpanProcessor registered automatically "
-            "(disable with %s=true)", _ENV_DISABLE
+            "(disable with %s=true)",
+            _ENV_DISABLE,
         )
         return True
     except Exception as exc:
@@ -124,7 +125,7 @@ def enable_traceloop_translator(
 
 def _auto_enable() -> None:
     """Automatically enable the translator unless explicitly disabled.
-    
+
     This uses a deferred registration approach that works even if called before
     the TracerProvider is set up. It hooks into the OpenTelemetry trace module
     to register the processor as soon as a real TracerProvider is available.
@@ -135,7 +136,7 @@ def _auto_enable() -> None:
             _ENV_DISABLE,
         )
         return
-    
+
     # Try immediate registration first
     provider = trace.get_tracer_provider()
     if hasattr(provider, "add_span_processor"):
@@ -152,21 +153,24 @@ def _auto_enable() -> None:
 def _install_deferred_registration() -> None:
     """Install a hook to register the processor when TracerProvider becomes available."""
     from ..processor.traceloop_span_processor import TraceloopSpanProcessor
-    
+
     # Wrap the trace.set_tracer_provider function to intercept when it's called
     original_set_tracer_provider = trace.set_tracer_provider
-    
+
     def wrapped_set_tracer_provider(tracer_provider):
         """Wrapped version that auto-registers our processor."""
         # Call the original first
         result = original_set_tracer_provider(tracer_provider)
-        
+
         # Now try to register our processor
         try:
             if hasattr(tracer_provider, "add_span_processor"):
                 # Check if already registered to avoid duplicates
                 already_registered = False
-                for attr_name in ("_active_span_processors", "_span_processors"):
+                for attr_name in (
+                    "_active_span_processors",
+                    "_span_processors",
+                ):
                     existing = getattr(tracer_provider, attr_name, [])
                     if isinstance(existing, (list, tuple)):
                         for proc in existing:
@@ -175,7 +179,7 @@ def _install_deferred_registration() -> None:
                                 break
                     if already_registered:
                         break
-                
+
                 if not already_registered:
                     processor = TraceloopSpanProcessor(
                         attribute_transformations=_DEFAULT_ATTR_TRANSFORMATIONS,
@@ -190,9 +194,9 @@ def _install_deferred_registration() -> None:
             _LOGGER.debug(
                 "Failed to auto-register TraceloopSpanProcessor: %s", exc
             )
-        
+
         return result
-    
+
     # Install the wrapper
     trace.set_tracer_provider = wrapped_set_tracer_provider
 
