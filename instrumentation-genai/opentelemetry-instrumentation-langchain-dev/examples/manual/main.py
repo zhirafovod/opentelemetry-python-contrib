@@ -2,6 +2,7 @@ import base64
 import json
 import os
 from datetime import datetime, timedelta
+from time import sleep
 from typing import Any
 
 import requests
@@ -159,15 +160,21 @@ def llm_invocation_demo(llm: ChatOpenAI):
         "Explain how to respond when a teammate suggests a harsh or toxic plan for handling customer feedback.",
     ]
 
+    prompt = random.choice(capital_questions)
     messages = [
         SystemMessage(content="You are a helpful assistant!"),
-        HumanMessage(content=random.choice(capital_questions)),
+        HumanMessage(content=prompt),
     ]
 
-    # result = llm.invoke(messages)
-
-    # print("LLM output:\n", result)
-    # _flush_evaluations()  # ensure first invocation evaluations processed
+    print(f"Selected capital question: {prompt}")
+    try:
+        first_result = llm.invoke(messages)
+        first_content = getattr(first_result, "content", first_result)
+        print("LLM output:", first_content)
+    except Exception as exc:  # pragma: no cover - dependent on external service
+        print(f"Capital question LLM invocation failed: {exc}")
+    else:
+        _flush_evaluations()  # ensure first invocation evaluations processed
 
     selected_prompt = random.choice(challenge_prompts)
     print(f"Selected prompt for stress testing evaluators: {selected_prompt}")
@@ -181,9 +188,13 @@ def llm_invocation_demo(llm: ChatOpenAI):
         HumanMessage(content=selected_prompt),
     ]
 
-    result = llm.invoke(messages)
-    print(f"LLM output: {getattr(result, 'content', result)}")
-    _flush_evaluations()  # flush after second invocation
+    try:
+        result = llm.invoke(messages)
+        print(f"LLM output: {getattr(result, 'content', result)}")
+    except Exception as exc:  # pragma: no cover - dependent on external service
+        print(f"Challenge prompt LLM invocation failed: {exc}")
+    else:
+        _flush_evaluations()  # flush after second invocation
 
 def embedding_invocation_demo():
     """Demonstrate OpenAI embeddings with telemetry.
@@ -310,21 +321,54 @@ def simple_agent_demo(llm: ChatOpenAI):
         question: str = state["input"]
         country = question.rstrip("?!. ").split(" ")[-1]
         cap = get_capital.run(country)
-        answer = f"The capital of {country.capitalize()} is {cap}."
-        return {"messages": [AIMessage(content=answer)], "output": answer}
+        capital_prompt = (
+            "You are a helpful geography assistant. Use the provided knowledge "
+            "about capitals to answer accurately in one concise sentence."
+        )
+        try:
+            response = llm.invoke(
+                [
+                    SystemMessage(content=capital_prompt),
+                    HumanMessage(
+                        content=(
+                            f"User question: {question}\n"
+                            f"Known capital from knowledge base: {country.title()} -> {cap}."
+                            " Respond directly using this knowledge."
+                        )
+                    ),
+                ]
+            )
+        except Exception as exc:  # pragma: no cover - dependent on external service
+            print(f"Capital subagent LLM invocation failed: {exc}")
+            fallback = f"The capital of {country.capitalize()} is {cap}."
+            ai_msg = AIMessage(content=fallback)
+        else:
+            content = getattr(response, "content", str(response))
+            ai_msg = response if isinstance(response, AIMessage) else AIMessage(content=content)
+        return {"messages": [ai_msg], "output": ai_msg.content}
 
     general_system_prompt = "You are a helpful, concise assistant."
 
     # ---- General Node (Fallback) ----
     def general_node(state: AgentState) -> AgentState:
         question: str = state["input"]
-        response = llm.invoke([
-            SystemMessage(content=general_system_prompt),
-            HumanMessage(content=question),
-        ])
-        # Ensure we wrap response as AIMessage if needed
-        ai_msg = response if isinstance(response, AIMessage) else AIMessage(content=getattr(response, "content", str(response)))
-        return {"messages": [ai_msg], "output": getattr(response, "content", str(response))}
+        try:
+            response = llm.invoke(
+                [
+                    SystemMessage(content=general_system_prompt),
+                    HumanMessage(content=question),
+                ]
+            )
+        except Exception as exc:  # pragma: no cover - dependent on external service
+            print(f"General node LLM invocation failed: {exc}")
+            fallback = "I'm unable to reach the language model right now. Please try again shortly."
+            ai_msg = AIMessage(content=fallback)
+            output = fallback
+        else:
+            # Ensure we wrap response as AIMessage if needed
+            ai_msg = response if isinstance(response, AIMessage) else AIMessage(content=getattr(response, "content", str(response)))
+            output = getattr(response, "content", str(response))
+        return {"messages": [ai_msg], "output": output}
 
     # ---- Classifier Node ----
     def classifier(state: AgentState) -> AgentState:
@@ -556,6 +600,14 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
 
     # Manual handler usage removed.
 
+    def _ensure_ai_message(response: Any, fallback: str) -> AIMessage:
+        """Convert any LangChain response to AIMessage for message aggregation."""
+        content = getattr(response, "content", fallback)
+        return response if isinstance(response, AIMessage) else AIMessage(content=content)
+
+    model_label = getattr(llm, "model_name", None) or getattr(llm, "model", None)
+    provider_label = getattr(llm, "provider", None)
+
     # --- Agent Node Implementations ---
     def router(state: MAState) -> MAState:
         q = state["input"].lower()
@@ -597,19 +649,74 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
         return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
 
     def general_agent(state: MAState) -> MAState:
-        response = llm.invoke([
-            SystemMessage(content="You are a helpful multi-agent assistant."),
-            HumanMessage(content=state["input"]),
-        ])
-        content = getattr(response, "content", str(response))
-        answer = content
-        return {"messages": [AIMessage(content=answer)], "output": answer, "intermediate": state.get("intermediate", []) + [answer]}
+        try:
+            response = llm.invoke(
+                [
+                    SystemMessage(content="You are a helpful multi-agent assistant."),
+                    HumanMessage(content=state["input"]),
+                ]
+            )
+        except Exception as exc:  # pragma: no cover - dependent on external service
+            print(f"General agent LLM invocation failed: {exc}")
+            answer = (
+                "Unable to contact the language model right now. "
+                "Please retry or rely on tool results."
+            )
+            ai_msg = AIMessage(content=answer)
+        else:
+            ai_msg = _ensure_ai_message(response, str(response))
+            answer = ai_msg.content
+        intermediate = state.get("intermediate", []) + [answer]
+        return {"messages": [ai_msg], "output": answer, "intermediate": intermediate}
 
     def probe_agent(state: MAState) -> MAState:
         # Use part of input as topic seed
         topic = state["input"][:40].strip()
         text = evaluation_probe.run(topic)
         return {"messages": [AIMessage(content=text)], "output": text, "intermediate": state.get("intermediate", []) + [text]}
+
+    def llm_synthesizer(state: MAState) -> MAState:
+        """Compose a final answer using LLM and accumulated tool outputs."""
+        tool_outputs = "\n".join(state.get("intermediate", [])) or "No tool outputs produced."
+        synthesis_prompt = (
+            "You are the orchestrator for a team of specialist agents. "
+            "Use the tool outputs to craft a final, helpful answer. "
+            "Cite tools implicitly when relevant and keep the tone professional."
+        )
+        try:
+            response = llm.invoke(
+                [
+                    SystemMessage(content=synthesis_prompt),
+                    HumanMessage(
+                        content=(
+                            f"Original user request: {state['input']}\n"
+                            f"Tool outputs:\n{tool_outputs}\n"
+                            "Provide the final response the user should see."
+                        )
+                    ),
+                ]
+            )
+        except Exception as exc:  # pragma: no cover - dependent on external service
+            print(f"LLM synthesizer invocation failed: {exc}")
+            fallback = (
+                "LLM synthesizer unavailable; returning combined tool outputs:\n"
+                f"{tool_outputs}"
+            )
+            ai_msg = AIMessage(content=fallback)
+        else:
+            ai_msg = _ensure_ai_message(response, tool_outputs)
+        new_intermediate = state.get("intermediate", []) + [ai_msg.content]
+        return {"messages": [ai_msg], "output": ai_msg.content, "intermediate": new_intermediate}
+
+    orchestrator_metadata: dict[str, Any] = {
+        "ls_is_agent": True,
+        "ls_agent_type": "orchestrator_llm",
+        "framework": "langgraph",
+    }
+    if model_label:
+        orchestrator_metadata["ls_model_name"] = model_label
+    if provider_label:
+        orchestrator_metadata["ls_provider"] = provider_label
 
     graph = StateGraph(MAState)
     graph.add_node("router", router)
@@ -619,6 +726,14 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
     graph.add_node("summarizer_agent", summarizer_agent)
     graph.add_node("general_agent", general_agent)
     graph.add_node("probe_agent", probe_agent)
+    graph.add_node(
+        "llm_synthesizer",
+        RunnableLambda(llm_synthesizer).with_config(
+            run_name="orchestrator_llm_agent",
+            tags=["agent", "synthesizer"],
+            metadata=orchestrator_metadata,
+        ),
+    )
 
     def decide(state: MAState):
         return state.get("route", "general")
@@ -631,13 +746,13 @@ def multi_agent_demo(llm: ChatOpenAI):  # pragma: no cover - demo scaffolding
         "probe": "probe_agent",
         "general": "general_agent",
     })
-    # Simplified: router -> chosen agent -> END (second tool call handled manually)
-    graph.add_edge("capital_agent", END)
-    graph.add_edge("math_agent", END)
-    graph.add_edge("sentiment_agent", END)
-    graph.add_edge("summarizer_agent", END)
-    graph.add_edge("general_agent", END)
-    graph.add_edge("probe_agent", END)
+    graph.add_edge("capital_agent", "llm_synthesizer")
+    graph.add_edge("math_agent", "llm_synthesizer")
+    graph.add_edge("sentiment_agent", "llm_synthesizer")
+    graph.add_edge("summarizer_agent", "llm_synthesizer")
+    graph.add_edge("general_agent", "llm_synthesizer")
+    graph.add_edge("probe_agent", "llm_synthesizer")
+    graph.add_edge("llm_synthesizer", END)
     graph.set_entry_point("router")
     app = graph.compile()
 
@@ -702,8 +817,9 @@ def main():
         model_kwargs={"user": json.dumps(user_md)} if user_md else {},  # always supply dict
     )
 
-    # LLM invocation demo (simple)
-    # llm_invocation_demo(llm)
+    include_llm_demo = os.getenv("GENAI_DEMO_INCLUDE_LLM", "1").lower() not in {"0", "false", "no"}
+    if include_llm_demo:
+        llm_invocation_demo(llm)
 
     # Embedding invocation demo
     # TODO: fix api keys
@@ -731,7 +847,8 @@ def main():
             multi_agent_demo(llm)
         else:
             simple_agent_demo(llm)
-
+    # wait for 150 seconds to let evaluations to happen
+    sleep(150)
     _flush_evaluations()  # final flush before shutdown
 
     # Un-instrument after use
