@@ -5,15 +5,6 @@ This package automatically translates Traceloop-instrumented spans into OpenTele
 It intercepts spans with ``traceloop.*`` attributes and creates corresponding spans with ``gen_ai.*`` attributes,
 enabling seamless integration between Traceloop instrumentation and GenAI observability tools.
 
-Why
----
-If your application uses Traceloop instrumentation but you want your observability backend to consume
-OpenTelemetry GenAI semantic conventions, this translator bridges the gap. It enables:
-
-- **Gradual Migration**: Keep using Traceloop while adopting GenAI conventions
-- **Tool Compatibility**: Make Traceloop spans visible to GenAI-aware dashboards and analysis tools
-- **Zero Code Changes**: Automatic registration means no manual processor setup required
-
 Mapping Table
 -------------
 
@@ -26,7 +17,7 @@ Traceloop Key                  Added Key
 ``traceloop.correlation.id``   ``gen_ai.conversation.id``
 ``traceloop.entity.input``     ``gen_ai.input.messages``
 ``traceloop.entity.output``    ``gen_ai.output.messages``
-============================== ================================ ============================================
+============================== ================================
 
 
 Installation

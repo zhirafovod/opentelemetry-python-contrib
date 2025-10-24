@@ -1,15 +1,4 @@
-#!/usr/bin/env python3
-"""Example demonstrating automatic Traceloop span translation.
-
-The TraceloopSpanProcessor is automatically enabled when you install the package!
-A .pth file ensures the translator is loaded on Python startup, and a deferred
-registration hook attaches it when the TracerProvider is set up.
-
-No import needed - just install the package and it works!
-
-You can still customize the transformation rules by setting environment variables
-or by manually calling enable_traceloop_translator() with custom parameters.
-"""
+#!/usr/bin/env python3                                
 
 from __future__ import annotations
 
