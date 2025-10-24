@@ -6,10 +6,23 @@ suite into the OpenTelemetry GenAI evaluation pipeline. When it is installed a
 ``Deepeval`` evaluator is registered automatically and, unless explicitly disabled,
 is executed for every LLM/agent invocation alongside the builtin metrics.
 
+Installation
+------------
+
+Install the evaluator (and its runtime dependencies) from PyPI:
+
+.. code-block:: bash
+
+    pip install opentelemetry-util-genai-evals-deepeval
+
+The command pulls in ``opentelemetry-util-genai``, ``deepeval`` and ``openai``
+automatically so the evaluator is ready to use right after installation.
+
 Requirements
 ------------
 
-* ``deepeval`` and its transitive dependencies (installed automatically).
+* ``opentelemetry-util-genai`` together with ``deepeval`` and ``openai`` –
+  these are installed automatically when you install this package.
 * An LLM provider supported by Deepeval. By default the evaluator uses OpenAI's
   ``gpt-4o-mini`` model because it offers the best balance of latency and cost
   for judge workloads right now, so make sure ``OPENAI_API_KEY`` is available.

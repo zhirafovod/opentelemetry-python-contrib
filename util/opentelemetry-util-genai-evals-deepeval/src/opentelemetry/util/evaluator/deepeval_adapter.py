@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from deepeval.test_case import LLMTestCase
+
 from opentelemetry.util.genai.evaluators.normalize import normalize_invocation
 from opentelemetry.util.genai.types import (
     AgentInvocation,
@@ -14,8 +16,6 @@ from opentelemetry.util.genai.types import (
 
 
 def build_llm_test_case(invocation: GenAI) -> Any | None:
-    from deepeval.test_case import LLMTestCase
-
     if not isinstance(invocation, (LLMInvocation, AgentInvocation)):
         return None
     canonical = normalize_invocation(invocation)

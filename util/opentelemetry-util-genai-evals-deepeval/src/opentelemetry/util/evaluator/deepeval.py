@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re as _re
 from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
+
+import openai
 
 from opentelemetry.util.genai.evaluators.base import Evaluator
 from opentelemetry.util.genai.evaluators.registry import (
@@ -408,8 +411,6 @@ class DeepevalEvaluator(Evaluator):
             if api_key:
                 # Attempt to configure Deepeval/OpenAI client.
                 try:  # pragma: no cover - external dependency
-                    import openai  # noqa: F401
-
                     # Support legacy openai<1 and new openai>=1 semantics.
                     if not getattr(openai, "api_key", None):  # type: ignore[attr-defined]
                         try:
@@ -454,9 +455,23 @@ class DeepevalEvaluator(Evaluator):
             )
         try:
             evaluation = _run_deepeval(test_case, metrics, genai_debug_log)
+            genai_debug_log(
+                "evaluator.deepeval.complete",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
         except (
             Exception
         ) as exc:  # pragma: no cover - dependency/runtime failure
+            genai_debug_log(
+                "evaluator.deepeval.error.execution",
+                invocation
+                if isinstance(invocation, (LLMInvocation, AgentInvocation))
+                else None,
+                invocation_type=invocation_type,
+            )
             return [
                 *skipped_results,
                 *self._error_results(str(exc), type(exc)),
@@ -469,7 +484,6 @@ class DeepevalEvaluator(Evaluator):
     def _build_metric_specs(self) -> Sequence[_MetricSpec]:
         specs: list[_MetricSpec] = []
         registry = _METRIC_REGISTRY
-        import re as _re
 
         for name in self.metrics:
             raw = (name or "").strip().lower()
@@ -596,8 +610,6 @@ class DeepevalEvaluator(Evaluator):
 
     @staticmethod
     def _default_model() -> str | None:
-        import os
-
         model = (
             os.getenv("DEEPEVAL_EVALUATION_MODEL")
             or os.getenv("DEEPEVAL_MODEL")

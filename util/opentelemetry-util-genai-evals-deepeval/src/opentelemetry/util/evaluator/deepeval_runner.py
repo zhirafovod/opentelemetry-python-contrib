@@ -7,19 +7,15 @@ import io
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Any, Callable, Sequence
 
+from deepeval import evaluate as deepeval_evaluate
+from deepeval.evaluate.configs import AsyncConfig, CacheConfig, DisplayConfig
+
 
 def run_evaluation(
     test_case: Any,
     metrics: Sequence[Any],
     debug_log: Callable[..., None] | None = None,
 ) -> Any:
-    from deepeval import evaluate as deepeval_evaluate
-    from deepeval.evaluate.configs import (
-        AsyncConfig,
-        CacheConfig,
-        DisplayConfig,
-    )
-
     display_config = DisplayConfig(show_indicator=False, print_results=False)
     async_config = AsyncConfig(run_async=False)
     cache_config = CacheConfig(write_cache=False, use_cache=False)
