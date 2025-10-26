@@ -140,7 +140,8 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         self.duration_histogram = duration_histogram
         self.token_histogram = token_histogram
         self.run_inline = True
-        self._callback_manager: CallbackManager | AsyncCallbackManager = None
+        # Callback manager can be sync or async; use classic Union for Python <3.10 compatibility.
+        self._callback_manager: Optional[Union[CallbackManager, AsyncCallbackManager]] = None
         handler_kwargs = telemetry_handler_kwargs or {}
         if telemetry_handler is not None:
             handler = telemetry_handler
@@ -167,6 +168,8 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         # Implicit parent entity stack (workflow/agent) for contexts where
         # LangGraph or manual calls do not emit chain callbacks providing parent_run_id.
         self._context_stack_key = "genai_active_entity_stack"
+        # Track active child counts for agent/workflow to defer span ending until all children complete.
+        self._child_counts: dict[UUID, int] = {}
 
     @staticmethod
     def _get_name_from_callback(
@@ -192,12 +195,17 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             self._entities[entity.run_id] = entity
             if isinstance(entity, UtilLLMInvocation):
                 self._llms[entity.run_id] = entity
+            # Initialize child count for agent/workflow roots
+            if isinstance(entity, (UtilWorkflow,) + AGENT_ENTITY_TYPES):
+                self._child_counts.setdefault(entity.run_id, 0)
 
     def _unregister_entity(self, run_id: UUID) -> Optional[GenAI]:
         with self._lock:
             entity = self._entities.pop(run_id, None)
             if isinstance(entity, UtilLLMInvocation):
                 self._llms.pop(run_id, None)
+            # Cleanup child count map if present (should already be zero)
+            self._child_counts.pop(run_id, None)
             return entity
 
     def _get_entity(self, run_id: Optional[UUID]) -> Optional[GenAI]:
@@ -363,12 +371,27 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 entity.context_token = context_api.attach(
                     context_api.set_value(self._context_stack_key, new_stack)
                 )
+            # Increment child count for explicit parent if starting a non-root entity
+            parent_id = getattr(entity, "parent_run_id", None)
+            if parent_id is not None:
+                with self._lock:
+                    if parent_id in self._child_counts:
+                        self._child_counts[parent_id] = self._child_counts.get(parent_id, 0) + 1
         except Exception:  # pragma: no cover - defensive
             return
         self._register_entity(entity)
 
     def _stop_entity(self, entity: GenAI) -> None:
         try:
+            # Deferred stop logic: if agent/workflow has outstanding children, mark pending and skip actual stop.
+            if isinstance(entity, (UtilWorkflow,) + AGENT_ENTITY_TYPES):
+                with self._lock:
+                    outstanding = self._child_counts.get(entity.run_id, 0)
+                pending_flag = entity.attributes.get("pending_stop")
+                if outstanding > 0 and not pending_flag:
+                    entity.attributes["pending_stop"] = True
+                    return  # keep span open until children finish
+            # Normal stop operations
             if isinstance(entity, UtilWorkflow):
                 self._telemetry_handler.stop_workflow(entity)
             elif isinstance(entity, AGENT_ENTITY_TYPES):
@@ -386,6 +409,7 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         except Exception:  # pragma: no cover - defensive
             pass
         finally:
+            # Pop context stack for roots only when truly ending
             if isinstance(entity, (UtilWorkflow,) + AGENT_ENTITY_TYPES):
                 try:
                     stack = context_api.get_value(self._context_stack_key) or []
@@ -401,6 +425,19 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 except Exception:  # pragma: no cover - defensive
                     pass
             self._unregister_entity(entity.run_id)
+
+    def _finalize_parent_if_ready(self, parent_id: UUID) -> None:
+        parent = self._get_entity(parent_id)
+        if parent is None:
+            return
+        if not isinstance(parent, (UtilWorkflow,) + AGENT_ENTITY_TYPES):
+            return
+        with self._lock:
+            outstanding = self._child_counts.get(parent_id, 0)
+        if outstanding == 0 and parent.attributes.get("pending_stop"):
+            # Clear flag and perform actual stop
+            parent.attributes.pop("pending_stop", None)
+            self._stop_entity(parent)
 
     def _fail_entity(self, entity: GenAI, error: BaseException) -> None:
         util_error = UtilError(message=str(error), type=type(error))
@@ -425,7 +462,15 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         except Exception:  # pragma: no cover - defensive
             pass
         finally:
+            # Decrement child count for parent on failure
+            parent_id = getattr(entity, "parent_run_id", None)
+            if parent_id is not None:
+                with self._lock:
+                    if parent_id in self._child_counts and self._child_counts[parent_id] > 0:
+                        self._child_counts[parent_id] -= 1
             self._unregister_entity(entity.run_id)
+            if parent_id is not None:
+                self._finalize_parent_if_ready(parent_id)
 
     def _resolve_parent(self, explicit_parent_run_id: Optional[UUID]) -> Optional[GenAI]:
         """Resolve parent entity using explicit id or implicit context stack fallback."""
@@ -794,12 +839,16 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
 
         if isinstance(entity, AGENT_ENTITY_TYPES):
             self._store_serialized_payload(entity, "output_result", outputs)
+            # Defer stopping; mark pending and attempt finalize if no children
+            entity.attributes["pending_stop"] = True
+            self._finalize_parent_if_ready(entity.run_id)
         elif isinstance(entity, UtilWorkflow):
             self._store_serialized_payload(entity, "final_output", outputs)
+            entity.attributes["pending_stop"] = True
+            self._finalize_parent_if_ready(entity.run_id)
         elif isinstance(entity, UtilTask):
             self._store_serialized_payload(entity, "output_data", outputs)
-
-        self._stop_entity(entity)
+            self._stop_entity(entity)
 
         if parent_run_id is None:
             try:
@@ -1207,7 +1256,14 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 },
             )
 
+        # Stop LLM invocation and update parent child count
         self._stop_entity(invocation)
+        parent_id = getattr(invocation, "parent_run_id", None)
+        if parent_id is not None:
+            with self._lock:
+                if parent_id in self._child_counts and self._child_counts[parent_id] > 0:
+                    self._child_counts[parent_id] -= 1
+            self._finalize_parent_if_ready(parent_id)
 
     @dont_throw
     def on_tool_start(
@@ -1286,7 +1342,13 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             )
 
         self._store_serialized_payload(entity, "output_data", output)
+        parent_id = getattr(entity, "parent_run_id", None)
         self._stop_entity(entity)
+        if parent_id is not None:
+            with self._lock:
+                if parent_id in self._child_counts and self._child_counts[parent_id] > 0:
+                    self._child_counts[parent_id] -= 1
+            self._finalize_parent_if_ready(parent_id)
 
     def _handle_error(
         self,
