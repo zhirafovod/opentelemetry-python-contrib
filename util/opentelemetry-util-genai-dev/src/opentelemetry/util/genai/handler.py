@@ -190,6 +190,10 @@ class TelemetryHandler:
         # (e.g., final LLM call after agent/workflow termination). A lightweight size cap can be
         # added later if memory pressure surfaces.
         self._span_registry: dict[str, _trace_mod.Span] = {}
+        # Generic entity registry (run_id -> entity object) allowing instrumentation
+        # layers to avoid storing lifecycle objects. This supports simplified
+        # instrumentations that only pass run_id on end/error callbacks.
+        self._entity_registry: dict[str, GenAI] = {}
         self._initialize_default_callbacks()
 
     def _refresh_capture_content(
@@ -265,6 +269,8 @@ class TelemetryHandler:
         span = getattr(invocation, "span", None)
         if span is not None:
             self._span_registry[str(invocation.run_id)] = span
+        # Register entity for later stop/fail by run_id
+        self._entity_registry[str(invocation.run_id)] = invocation
         try:
             span_context = invocation.span_context
             if span_context is None and invocation.span is not None:
@@ -289,6 +295,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_end(invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         try:
             span_context = invocation.span_context
             if span_context is None and invocation.span is not None:
@@ -326,6 +333,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_error(error, invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         try:
             span_context = invocation.span_context
             if span_context is None and invocation.span is not None:
@@ -370,6 +378,7 @@ class TelemetryHandler:
         span = getattr(invocation, "span", None)
         if span is not None:
             self._span_registry[str(invocation.run_id)] = span
+        self._entity_registry[str(invocation.run_id)] = invocation
         return invocation
 
     def stop_embedding(
@@ -379,6 +388,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_end(invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         # Force flush metrics if a custom provider with force_flush is present
         if (
             hasattr(self, "_meter_provider")
@@ -397,6 +407,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_error(error, invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -422,6 +433,7 @@ class TelemetryHandler:
         span = getattr(invocation, "span", None)
         if span is not None:
             self._span_registry[str(invocation.run_id)] = span
+        self._entity_registry[str(invocation.run_id)] = invocation
         return invocation
 
     def stop_tool_call(self, invocation: ToolCall) -> ToolCall:
@@ -429,6 +441,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_end(invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         return invocation
 
     def fail_tool_call(self, invocation: ToolCall, error: Error) -> ToolCall:
@@ -436,6 +449,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_error(error, invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         return invocation
 
     # Workflow lifecycle --------------------------------------------------
@@ -446,6 +460,7 @@ class TelemetryHandler:
         span = getattr(workflow, "span", None)
         if span is not None:
             self._span_registry[str(workflow.run_id)] = span
+        self._entity_registry[str(workflow.run_id)] = workflow
         return workflow
 
     def _handle_evaluation_results(
@@ -531,6 +546,7 @@ class TelemetryHandler:
         workflow.end_time = time.time()
         self._emitter.on_end(workflow)
         self._notify_completion(workflow)
+        self._entity_registry.pop(str(workflow.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -546,6 +562,7 @@ class TelemetryHandler:
         workflow.end_time = time.time()
         self._emitter.on_error(error, workflow)
         self._notify_completion(workflow)
+        self._entity_registry.pop(str(workflow.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -566,6 +583,7 @@ class TelemetryHandler:
         span = getattr(agent, "span", None)
         if span is not None:
             self._span_registry[str(agent.run_id)] = span
+        self._entity_registry[str(agent.run_id)] = agent
         # Push agent identity context (use run_id as canonical id)
         if isinstance(agent, AgentInvocation):
             try:
@@ -584,6 +602,7 @@ class TelemetryHandler:
         agent.end_time = time.time()
         self._emitter.on_end(agent)
         self._notify_completion(agent)
+        self._entity_registry.pop(str(agent.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -610,6 +629,7 @@ class TelemetryHandler:
         agent.end_time = time.time()
         self._emitter.on_error(error, agent)
         self._notify_completion(agent)
+        self._entity_registry.pop(str(agent.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -637,6 +657,7 @@ class TelemetryHandler:
         span = getattr(task, "span", None)
         if span is not None:
             self._span_registry[str(task.run_id)] = span
+        self._entity_registry[str(task.run_id)] = task
         return task
 
     def stop_task(self, task: Task) -> Task:
@@ -644,6 +665,7 @@ class TelemetryHandler:
         task.end_time = time.time()
         self._emitter.on_end(task)
         self._notify_completion(task)
+        self._entity_registry.pop(str(task.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -659,6 +681,7 @@ class TelemetryHandler:
         task.end_time = time.time()
         self._emitter.on_error(error, task)
         self._notify_completion(task)
+        self._entity_registry.pop(str(task.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -756,6 +779,47 @@ class TelemetryHandler:
             return str(run_id) in self._span_registry
         except Exception:
             return False
+
+    # ---- entity registry helpers ---------------------------------------
+    def get_entity(self, run_id: Any) -> Optional[GenAI]:
+        try:
+            return self._entity_registry.get(str(run_id))
+        except Exception:
+            return None
+
+    def finish_by_run_id(self, run_id: Any) -> None:
+        entity = self.get_entity(run_id)
+        if entity is None:
+            return
+        if isinstance(entity, Workflow):
+            self.stop_workflow(entity)
+        elif isinstance(entity, (AgentCreation, AgentInvocation)):
+            self.stop_agent(entity)
+        elif isinstance(entity, Task):
+            self.stop_task(entity)
+        elif isinstance(entity, LLMInvocation):
+            self.stop_llm(entity)
+        elif isinstance(entity, EmbeddingInvocation):
+            self.stop_embedding(entity)
+        elif isinstance(entity, ToolCall):
+            self.stop_tool_call(entity)
+
+    def fail_by_run_id(self, run_id: Any, error: Error) -> None:
+        entity = self.get_entity(run_id)
+        if entity is None:
+            return
+        if isinstance(entity, Workflow):
+            self.fail_workflow(entity, error)
+        elif isinstance(entity, (AgentCreation, AgentInvocation)):
+            self.fail_agent(entity, error)
+        elif isinstance(entity, Task):
+            self.fail_task(entity, error)
+        elif isinstance(entity, LLMInvocation):
+            self.fail_llm(entity, error)
+        elif isinstance(entity, EmbeddingInvocation):
+            self.fail_embedding(entity, error)
+        elif isinstance(entity, ToolCall):
+            self.fail_tool_call(entity, error)
 
     def finish(self, obj: Any) -> Any:
         """Generic finish method for any invocation type."""

@@ -10,7 +10,7 @@ from langchain_core.messages import HumanMessage
 from opentelemetry.sdk.trace import TracerProvider
 
 from opentelemetry.instrumentation.langchain.callback_handler import (
-    TraceloopCallbackHandler,
+    LangchainCallbackHandler,
 )
 
 
@@ -47,11 +47,11 @@ class _StubTelemetryHandler:
 
 
 @pytest.fixture()
-def handler_with_stub() -> Tuple[TraceloopCallbackHandler, _StubTelemetryHandler]:
+def handler_with_stub() -> Tuple[LangchainCallbackHandler, _StubTelemetryHandler]:
     tracer = TracerProvider().get_tracer(__name__)
     histogram = MagicMock()
     histogram.record = MagicMock()
-    handler = TraceloopCallbackHandler(tracer, histogram, histogram)
+    handler = LangchainCallbackHandler(tracer, histogram, histogram)
     stub = _StubTelemetryHandler()
     handler._telemetry_handler = stub  # type: ignore[attr-defined]
     return handler, stub
@@ -121,11 +121,11 @@ def test_agent_failure_forwards_to_util(handler_with_stub):
 
 
 def test_llm_attributes_independent_of_emitters(monkeypatch):
-    def _build_handler() -> Tuple[TraceloopCallbackHandler, _StubTelemetryHandler]:
+    def _build_handler() -> Tuple[LangchainCallbackHandler, _StubTelemetryHandler]:
         tracer = TracerProvider().get_tracer(__name__)
         histogram = MagicMock()
         histogram.record = MagicMock()
-        handler = TraceloopCallbackHandler(tracer, histogram, histogram)
+        handler = LangchainCallbackHandler(tracer, histogram, histogram)
         stub_handler = _StubTelemetryHandler()
         handler._telemetry_handler = stub_handler  # type: ignore[attr-defined]
         return handler, stub_handler

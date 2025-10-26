@@ -35,7 +35,7 @@ Goal: Ensure all spans for a single agent workflow execution share one trace_id 
 
 Status Update (Phase 0 Implemented):
 
-- Added deferred stop logic with `pending_stop` flag and `_child_counts` in `TraceloopCallbackHandler` so agent/workflow spans remain open until children finish. This should unify trace IDs for sequential agent→LLM→tool chains where previously parent spans ended prematurely.
+- Added deferred stop logic with `pending_stop` flag and `_child_counts` in `LangchainCallbackHandler` so agent/workflow spans remain open until children finish. This should unify trace IDs for sequential agent→LLM→tool chains where previously parent spans ended prematurely.
 - Remaining tasks below adjust to reflect what is DONE vs PENDING.
 
 | Step | Description | Files | Category | Status |

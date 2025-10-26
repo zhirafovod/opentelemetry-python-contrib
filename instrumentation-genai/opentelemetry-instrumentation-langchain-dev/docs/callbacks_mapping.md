@@ -20,16 +20,16 @@ All spans representing one logical agent execution (agent orchestration + intern
 
 ```text
 AgentInvocation (root span)  <-- trace root (no parent span id)
-  ├─ Task(model w/ tools request) parent = AgentInvocation
-  │    ├─ LLMInvocation parent = Task
-  │    └─ Task(model_to_tools) parent = Task
-  ├─ Task(tool_use) (model w/ tools request) parent = AgentInvocation
-  │    ├─ Tool(tool_use) parent = Task
-  │    └─ Task(tools_to_model) parent = Task
-  └─ Task(model w/ tools request) parent = AgentInvocation
-       ├─ LLMInvocation parent = Task
-       └─ Task(model_to_tools) parent = Task
+    ├─ Task(model request) parent = AgentInvocation
+    │    └─ LLMInvocation parent = Task
+    ├─ Task(tool_use orchestration) parent = AgentInvocation
+    │    ├─ Tool(tool_use) parent = Task
+    │    └─ Task(tools_to_model follow-up) parent = Task
+    └─ Task(model request) parent = AgentInvocation
+             └─ LLMInvocation parent = Task
 ```
+
+Note: Earlier interim attempt introduced a synthetic Workflow root span. This has been removed; the canonical root for a LangChain agent run is the first `AgentInvocation` span. Synthetic workflow creation risked early termination and missing root representation in exported traces.
 
 Observed Current (Multi-Trace) Example:
 
@@ -67,21 +67,22 @@ Key Points (Desired):
 
 ### Gaps Causing Multiple Trace IDs
 
-| Gap | Effect | Required Change |
-|-----|--------|-----------------|
-| SpanEmitter ignores `parent_run_id` | Child spans start with no active parent; new trace root | Before `start_as_current_span`, resolve parent span from a registry using `parent_run_id` and enter its context OR pass explicit parent context via `trace.set_span_in_context(parent_span)` |
-| Parent span often ended before children start (e.g. agent span may end too early) | Subsequent spans have no active parent | Defer `stop_agent` until all descendant runs complete (reference counting or stack depth) |
-| No global mapping run_id → span accessible to emitter | Cannot resolve parent by run_id | Maintain mapping in `TelemetryHandler` (e.g. `_active_spans: dict[UUID, Span]`) updated on start/end |
-| Callback handler sets `parent_run_id` but telemetry handler/emitter never uses it | Lost hierarchical intent | Pass `parent_run_id` through invocation object; SpanEmitter honors it when creating span |
-| Implicit context stack only for identity (agent/workflow), not span context | Identity propagates but not trace continuity | Extend stack entries to include span references or rely solely on run_id map |
+| Gap | Effect | Implemented / Remaining |
+|-----|--------|------------------------|
+| SpanEmitter ignored `parent_run_id` | Orphan spans with new trace IDs | Parent span passed via `parent_span` attribute; emitter uses explicit context (DONE) |
+| Parent agent span ended before children | Fragmented traces | Deferred stop via `pending_stop` + child counts (DONE; further tuning may be needed) |
+| No run_id → span registry | Parenting impossible after context switch | Registry added in `TelemetryHandler` (DONE) |
+| `parent_run_id` unused | Hierarchy lost | Callback handler now resolves and sets `parent_span` (DONE) |
+| Synthetic workflow root | Missing or inconsistent root span | Removed; using `AgentInvocation` as root (DONE) |
+| Orphan diagnostics absent | Hard to detect missed parenting | Attribute `orphan_parent_run_id` set when parent span missing (DONE) |
 
-### Proposed Parenting Rules
+### Current Parenting Rules
 
-1. `AgentInvocation` with no explicit parent → start root span (new trace).
-2. First `LLMInvocation` during agent run uses agent span as parent.
-3. Tool task created due to model tool request: parent = originating LLMInvocation span.
-4. Follow‑up LLM call prompted by tool result: parent = tool task span (keeps chain). If design wants flatter hierarchy, parent = AgentInvocation (configurable flag `flatten_tool_children`).
-5. All other tasks (chain steps) parent = nearest active AgentInvocation/Workflow.
+1. First `AgentInvocation` without `parent_run_id` becomes trace root.
+2. `Task` spans parent to nearest active `AgentInvocation` (or upstream workflow if present externally).
+3. `LLMInvocation` parents to the task that initiated the model request.
+4. Tool execution spans parent to their initiating task.
+5. Follow‑up model/tool steps create new tasks under the same agent, preserving a single trace.
 
 ### Data Flow Adjustments
 
@@ -139,7 +140,7 @@ Add explicit guarantee that for any entity with a populated `parent_run_id`, the
 
 ### Implemented Interim Fix
 
-As of branch `genai-utils-e2e-dev-langchain-demos`, agent/workflow spans now defer stopping using a `pending_stop` flag plus `_child_counts` map inside `TraceloopCallbackHandler`. This keeps the root agent span open until all child LLM/tool/task spans complete, enabling a unified trace ID for sequential operations in a single run. Further improvements (explicit parent context, span registry in TelemetryHandler, flattening options) remain planned.
+As of branch `genai-utils-e2e-dev-langchain-demos`, agent/workflow spans now defer stopping using a `pending_stop` flag plus `_child_counts` map inside `LangchainCallbackHandler`. This keeps the root agent span open until all child LLM/tool/task spans complete, enabling a unified trace ID for sequential operations in a single run. Further improvements (explicit parent context, span registry in TelemetryHandler, flattening options) remain planned.
 
 ---
  
