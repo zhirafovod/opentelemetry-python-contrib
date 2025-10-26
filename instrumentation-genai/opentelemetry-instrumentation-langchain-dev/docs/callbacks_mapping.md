@@ -8,137 +8,199 @@ Document how LangChain callbacks translate runtime events into GenAI telemetry e
 
 ---
 
-## Core GenAI Types Referenced
+## Desired Unified Trace Model (Refinement)
+
+Problem Observed:
+
+Current runs (e.g. `examples/manual/t.py`) produce multiple distinct `trace_id` values – one per GenAI entity span (Agent, LLM, Tool, etc.). This breaks end‑to‑end correlation for a single agent workflow execution.
+
+Desired Behavior:
+
+All spans representing one logical agent execution (agent orchestration + internal model/tool calls) MUST share the same `trace_id` while preserving proper parent/child relationships:
 
 ```text
-Workflow          # top-level orchestration (multi-step / multi-agent)
-AgentInvocation   # agent creation or invocation lifecycle
-Task              # chain step or tool use (task_type = chain | tool_use)
-LLMInvocation     # model call (chat/generate) with request/response semantics
+AgentInvocation (root span)  <-- trace root (no parent span id)
+  ├─ Task(model w/ tools request) parent = AgentInvocation
+  │    ├─ LLMInvocation parent = Task
+  │    └─ Task(model_to_tools) parent = Task
+  ├─ Task(tool_use) (model w/ tools request) parent = AgentInvocation
+  │    ├─ Tool(tool_use) parent = Task
+  │    └─ Task(tools_to_model) parent = Task
+  └─ Task(model w/ tools request) parent = AgentInvocation
+       ├─ LLMInvocation parent = Task
+       └─ Task(model_to_tools) parent = Task
 ```
-Auxiliary fields emitted only if present: tool/functions (request_functions), message content (input_messages/output_messages), token usage (input_tokens/output_tokens), stop sequences, temperature/top_p/top_k penalties, choice count, service tier, finish reasons.
 
----
-
-## Callback Classification Logic (Start Phase)
+Observed Current (Multi-Trace) Example:
 
 ```text
-on_chain_start(serialized, inputs, run_id, parent_run_id, metadata, tags):
-    name = heuristic(serialized, kwargs)
-    if is_agent_run(serialized, metadata, tags): → AgentInvocation
-    else if parent_entity == None:            → Workflow
-    else:                                     → Task(task_type = "chain", parent = parent_entity)
+Trace ID: 2cb4ae9529785433d3c8c06569d7c7fc
+└── Span ID: 006e80bf6418cd80 (Parent: none) - invoke_agent weather-agent
 
-on_tool_start(serialized, input_str|inputs, run_id, parent_run_id,...):
-    → Task(task_type = "tool_use") parent = entity(parent_run_id)
+Trace ID: 47b70102abf2ab885bb9e02daea90b50
+└── Span ID: e77c3ab7c30b1089 (Parent: none) - invoke_agent model_to_tools
 
-on_chat_model_start(serialized, messages, run_id, parent_run_id,...):
-    → LLMInvocation(operation = "chat") with structured request_* attrs
+Trace ID: 8fa43ffc52b5778c3a7690c006e97cc8
+└── Span ID: 531f7e98193c6cf2 (Parent: none) - chat gpt-5-mini
 
-on_llm_start(serialized, prompts, run_id,...):
-    internally builds messages from prompts → LLMInvocation then sets operation = "generate_text"
+Trace ID: b8a23fba43bec2cfa69c0a87d745f292
+└── Span ID: e47574f829107acc (Parent: none) - invoke_agent model
+    ├── Span ID: 950170aa32eb2783 (Parent: e47574f829107acc) - gen_ai.task get_weather
+    ├── Span ID: 813e766d6d7a13d1 (Parent: e47574f829107acc) - invoke_agent tools_to_model
+    └── Span ID: 609fdc23fe29a097 (Parent: e47574f829107acc) - invoke_agent tools
+        ├── Span ID: 6656fa97870a7518 (Parent: 609fdc23fe29a097) - chat gpt-5-mini
+        ├── Span ID: 037e0c9c75582042 (Parent: 609fdc23fe29a097) - invoke_agent model_to_tools
+        └── Span ID: af700c43cde11470 (Parent: 609fdc23fe29a097) - invoke_agent model
 ```
 
-### Agent Detection Heuristics (is_agent_run)
-Checks (case-insensitive):
-- metadata keys: `ls_span_kind|ls_run_kind|ls_entity_kind|run_type|ls_type` containing "agent"
-- flags: `ls_is_agent|is_agent` boolean true or string in {"true","1","agent"}
-- tags list items containing substring "agent"
-- serialized name or id (string/list) containing "agent"
-Result: first positive → classify as AgentInvocation.
+Problem: A single logical run is fragmented across 4 different trace IDs. Only one sub-tree (rooted at `invoke_agent model`) retains its descendants; earlier agent/model invocations ended before child spans started, severing trace continuity.
 
-### Parent Resolution & Implicit Stack
-- Explicit `parent_run_id` looked up in `_entities`.
-- If absent (None) and starting Agent/Workflow, entity run_id is pushed on context stack `genai_active_entity_stack`.
-- LLMInvocation without explicit parent attempts implicit stack parent propagation (agent/workflow ids for cross-linking).
+Key Points (Desired):
 
----
+1. Single trace per agent run (root = first AgentInvocation span).
+2. `parent_run_id` MUST be converted into actual span parenting (not only an attribute on the dataclass).
+3. Tool and task spans retain same trace; parent chosen based on semantics:
+   - If a tool call arises from a model tool request, parent should be that LLMInvocation span (keeps causal ordering).
+   - If a tool call is orchestrated directly by agent code (outside model response), parent can be AgentInvocation.
+4. Model responses that trigger subsequent model calls (e.g. tool_to_model follow‑up) form nested LLMInvocation spans parented to the task or original model span, depending on invocation context.
+5. All other tasks (chain steps) parent = nearest active AgentInvocation or Workflow.
 
-## Callback → GenAI Type & Telemetry Table
+### Gaps Causing Multiple Trace IDs
 
-| Callback | GenAI Type Created | Operation / task_type (set or mutated) | Start Phase Telemetry Actions | End Phase Telemetry / Evaluation |
-|----------|--------------------|----------------------------------------|-------------------------------|----------------------------------|
-| `on_chain_start` | `Workflow` (no parent & not agent) / `AgentCreation` or `AgentInvocation` (agent heuristics) / `Task` (otherwise) | Workflow: — / Agent: `operation=create_agent` or `invoke_agent` / Task: `task_type=chain` | Instantiate entity; propagate parent ids; start span; preallocate metrics; serialize `inputs` (workflow.initial_input / task.input_data / agent.input_context); push to context stack (workflow/agent) | Workflow: `final_output` stored then span stop; Agent: `output_result`; Task: `output_data`; duration metrics recorded |
-| `on_chain_end` | (same as started) | — | (No new start actions) | Store outputs in corresponding output field; stop span; record duration; no evaluation |
-| `on_tool_start` | `Task` | `task_type=tool_use` | Start span; preallocate metrics; serialize tool input(s) into `input_data`; parent resolution | On `on_tool_end` stores `output_data`, stops span |
-| `on_tool_end` | `Task` | — | — | Serialize `output` -> `output_data`; stop span; record duration |
-| `on_chat_model_start` | `LLMInvocation` | `operation=chat` | Build input messages; collect request_* attributes (temperature, top_p, etc.); start span; metrics prealloc; events or prompt capture | Completed on `on_llm_end` |
-| `on_llm_start` | `LLMInvocation` (same instance) | Mutates `operation=generate_text` | Reuses chat model start logic; no additional telemetry beyond operation override | Completed on `on_llm_end` |
-| `on_llm_end` | `LLMInvocation` | — | — | Build `output_messages`; set `response_model_name`, `response_id`, token usage; finish reasons; emit events or prompt capture; stop span; record duration & token metrics; trigger evaluation (`evaluate_llm`) |
-| `on_*_error` (llm/chain/tool/agent/retriever) | Active entity | — | — | Populate `error_message` & `error_type`; invoke fail_*; clear LLM `output_messages`; mark span error; unregister entity |
+| Gap | Effect | Required Change |
+|-----|--------|-----------------|
+| SpanEmitter ignores `parent_run_id` | Child spans start with no active parent; new trace root | Before `start_as_current_span`, resolve parent span from a registry using `parent_run_id` and enter its context OR pass explicit parent context via `trace.set_span_in_context(parent_span)` |
+| Parent span often ended before children start (e.g. agent span may end too early) | Subsequent spans have no active parent | Defer `stop_agent` until all descendant runs complete (reference counting or stack depth) |
+| No global mapping run_id → span accessible to emitter | Cannot resolve parent by run_id | Maintain mapping in `TelemetryHandler` (e.g. `_active_spans: dict[UUID, Span]`) updated on start/end |
+| Callback handler sets `parent_run_id` but telemetry handler/emitter never uses it | Lost hierarchical intent | Pass `parent_run_id` through invocation object; SpanEmitter honors it when creating span |
+| Implicit context stack only for identity (agent/workflow), not span context | Identity propagates but not trace continuity | Extend stack entries to include span references or rely solely on run_id map |
 
-Notes:
+### Proposed Parenting Rules
 
-- "metrics prealloc" indicates duration/token instruments prepared; actual values observed at stop.
-- Evaluation only occurs for `LLMInvocation` after successful or failed completion (`on_llm_end` / error handlers).
-- Parent propagation: workflow/agent ids cascaded to children (LLMInvocation/task) in `_start_entity`.
+1. `AgentInvocation` with no explicit parent → start root span (new trace).
+2. First `LLMInvocation` during agent run uses agent span as parent.
+3. Tool task created due to model tool request: parent = originating LLMInvocation span.
+4. Follow‑up LLM call prompted by tool result: parent = tool task span (keeps chain). If design wants flatter hierarchy, parent = AgentInvocation (configurable flag `flatten_tool_children`).
+5. All other tasks (chain steps) parent = nearest active AgentInvocation/Workflow.
 
-Metrics:
+### Data Flow Adjustments
 
-- Duration histogram: recorded on end (latency per entity).
-- Token histogram: recorded when `input_tokens` / `output_tokens` available (LLMInvocation).
-
-Content Events vs Prompt Capture:
-
-- If `should_emit_events()` true: emits `MessageEvent` / `ChoiceEvent` (LLM start/end) via `content_events` emitter.
-- Else if `should_send_prompts()` true: captures serialized payload into `entity.attributes['prompt_capture']` (`inputs` / `outputs` / `error`).
-
-Evaluation:
-
-- Triggered only for `LLMInvocation` after `on_llm_end` (`evaluate_llm(invocation)`). Evaluation results then flow through GenAI handler to evaluation emitters.
-
----
-
-## Attribute Harvesting Sources (Functions & Outputs)
-
-| Source / Data | Callback Handler Function(s) | Extraction Logic Summary | Resulting Fields / Placement |
-|---------------|------------------------------|--------------------------|------------------------------|
-| Raw callback `metadata` | `_sanitize_metadata_dict`, `_collect_attributes` | Removes nulls; coerces complex types to strings; splits out `ls_` prefixed legacy keys into `langchain_legacy`; filters reserved hyperparameter keys after normalization | `entity.attributes` (with nested `langchain_legacy`) |
-| Invocation params (`invocation_params`) for LLM | `on_chat_model_start` local helpers `_pop_float/_pop_int/_pop_stop_sequences`, `_extract_request_functions` | Pop known hyperparameters; convert numeric types; stop sequences normalized to list[str]; remove duplicates to avoid double counting | LLMInvocation fields: `request_temperature`, `request_top_p`, `request_top_k`, `request_frequency_penalty`, `request_presence_penalty`, `request_seed`, `request_max_tokens`, `request_choice_count`, `request_stop_sequences`, `request_functions` |
-| Model & provider names | `on_chat_model_start` (raw `serialized` + metadata) | Fallback order: invocation_params.model_name → metadata.ls_model_name/model_name → serialized.name → "unknown-model"; provider resolved from ls_provider/provider keys | `LLMInvocation.request_model`, `LLMInvocation.provider` |
-| Agent classification | `_is_agent_run` (used by `on_chain_start`) | Heuristic over metadata keys, flags, tags, serialized name/id content | Determines creation of `AgentInvocation` vs `Workflow`/`Task`; sets `operation` create vs invoke |
-| Input messages (chat / prompts) | `_build_input_messages` (chat), `on_llm_start` (prompt wrapping) | Each incoming prompt or `BaseMessage` converted to `InputMessage(role, parts=[Text])` | `LLMInvocation.input_messages` |
-| Output messages | `on_llm_end` | First generation's message content + finish_reason captured; tool/function calls not yet expanded into `ToolCall` dataclass here | `LLMInvocation.output_messages`, `response_finish_reasons` (implicit list) |
-| Finish reason | `on_llm_end` | Extracted from `generation.generation_info.finish_reason` fallback "stop" | `OutputMessage.finish_reason`; aggregated list to `LLMInvocation.response_finish_reasons` |
-| Token usage | `on_llm_end` | Reads `llm_output.usage.prompt_tokens` / `completion_tokens` or `token_usage` fallback | `LLMInvocation.input_tokens`, `LLMInvocation.output_tokens`; feeds token metrics |
-| Tool definitions for function calling | `_extract_request_functions` (invocation params) | Filters each tool.function dict for allowed keys (name, description, parameters) | `LLMInvocation.request_functions` (semantic emission) |
-| Truncation & original lengths | `_maybe_truncate`, `_store_serialized_payload`, `_record_payload_length` | Serializes JSON; if > 8KB replaces with `<truncated:N bytes>` and records original length mapping | Stored fields: `workflow.initial_input`, `workflow.final_output`, `agent.input_context`, `agent.output_result`, `task.input_data`, `task.output_data`, plus `entity.attributes.orig_length[field]` |
-| Prompt capture (non-event mode) | `_capture_prompt_data` invoked in start/end callbacks conditional on `should_send_prompts()` | Stores serialized inputs/outputs/error under `entity.attributes['prompt_capture']` keyed by phase | `entity.attributes.prompt_capture.inputs|outputs|error` |
-| Parent identity propagation | `_start_entity`, `_resolve_parent`, `_find_agent` | Reads explicit `parent_run_id` else context stack; copies agent/workflow ids into LLMInvocation | `LLMInvocation.agent_name`, `LLMInvocation.agent_id`, `LLMInvocation.workflow_id` |
-| Error details | `_handle_error` → `_fail_entity` | Captures exception type/message; clears LLM outputs; sets type-specific output fields to error string | `entity.attributes.error_message`, `entity.attributes.error_type` + output field mutation |
-
-Semantic Convention Emission:
-
-Dataclass fields decorated with `metadata['semconv']` (e.g. `request_model`, `response_model_name`, `agent_name`, `agent_id`, `operation`, hyperparameters, token usage) are collected via emitter logic (span emitter) using `entity.semantic_convention_attributes()`; non-semconv harvested data remains in `entity.attributes` for vendor or legacy enrichment.
-
----
-
-## Telemetry Produced Per GenAI Type
-
-```text
-Workflow:
-  Span: workflow identity (name, workflow_type, description, framework)
-  Metrics: duration
-  Events/Content: prompt_capture initial_input/final_output (if enabled)
-AgentInvocation:
-  Span: agent name/id, operation(create|invoke), description, model, tools[]
-  Metrics: duration
-  Events/Content: input_context/output_result capture
-Task (chain/tool_use):
-  Span: task name, task_type, source(workflow|agent), assigned_agent, objective
-  Metrics: duration
-  Events/Content: input_data/output_data capture
-LLMInvocation:
-  Span: request_model, provider, operation(chat|generate_text), hyperparameters, response_model/id, token usage, stop sequences, finish reasons, functions
-  Metrics: duration, token histograms
-  Events: MessageEvent(s) & ChoiceEvent(s) OR prompt_capture of inputs/outputs
-  Evaluation: post-stop evaluation results emitted (metrics/spans/logs depending on emitters)
+```python
+# callback_handler._start_entity(entity):
+parent_span = telemetry_handler.lookup_span(entity.parent_run_id or implicit)
+parent_ctx = trace.set_span_in_context(parent_span) if parent_span else None
+with tracer.start_as_current_span(name, context=parent_ctx, kind=SpanKind.CLIENT, end_on_exit=False) as span:
+    entity.span = span
+    telemetry_handler.register_span(entity.run_id, span)
 ```
 
+TelemetryHandler additions:
+
+```python
+self._active_spans: dict[UUID, Span] = {}
+def register_span(run_id: UUID, span: Span): self._active_spans[run_id] = span
+def get_span(run_id: UUID) -> Span | None: return self._active_spans.get(run_id)
+def unregister_span(run_id: UUID): self._active_spans.pop(run_id, None)
+```
+
+SpanEmitter `on_start`: resolve parent before creating new span:
+
+```python
+parent_ctx = None
+if getattr(invocation, "parent_run_id", None):
+    parent_span = handler.get_span(invocation.parent_run_id)
+    if parent_span:
+        parent_ctx = trace.set_span_in_context(parent_span)
+cm = tracer.start_as_current_span(span_name, context=parent_ctx, kind=SpanKind.CLIENT, end_on_exit=False)
+```
+
+### Required Instrumentation Contract Updates
+
+Add explicit guarantee that for any entity with a populated `parent_run_id`, the instrumentation will attempt to establish a parent span relationship. If parent span is ended prematurely, fallback is still a new trace root – but this should be treated as a correctness bug during development.
+
+### Edge Cases & Policies
+
+- Orphan child (parent span missing): mark attribute `gen_ai.parent.missing=true` for diagnostics.
+- Concurrent tool/model calls: maintain thread‑safe span map (Lock already exists in callback handler; replicate in handler or reuse).
+- Reentrancy (nested agent invokes another agent): treat inner agent as child span (set `parent_run_id` accordingly) → allowed for multi‑agent graphs.
+
+### Metrics & Evaluation Impact
+
+- Shared trace_id enables holistic latency breakdown and token attribution across the agent execution.
+- Evaluation spans (LLMInvocation) inherit agent context for unified trace analytics.
+
+### Action Summary (see `callback_handler.refactoring.md` for detailed tasks)
+
+1. Create span registry and parent resolution in TelemetryHandler.
+2. Modify SpanEmitter to honor explicit parent context.
+3. Delay agent/workflow span termination until all descendants complete (reference count).
+4. Update callback handler to increment/decrement descendant counters.
+5. Add diagnostic attributes for orphaning and flattening choices.
+
+### Implemented Interim Fix
+
+As of branch `genai-utils-e2e-dev-langchain-demos`, agent/workflow spans now defer stopping using a `pending_stop` flag plus `_child_counts` map inside `TraceloopCallbackHandler`. This keeps the root agent span open until all child LLM/tool/task spans complete, enabling a unified trace ID for sequential operations in a single run. Further improvements (explicit parent context, span registry in TelemetryHandler, flattening options) remain planned.
+
 ---
+ 
+## Minimal Diff Guidance (for future code PR)
 
-## Error Handling Flow
+1. Add `TelemetryHandler.get_span(run_id)` / `register_span` / `unregister_span`.
+2. Pass handler reference into SpanEmitter or provide global accessor.
+3. Extend entity lifecycle start functions to call `register_span` after span creation.
+4. On end/fail, call `unregister_span` after `span.end()` but only if no active children (agent/workflow). Maintain `child_count` attribute on entities.
+5. Unit tests: assert single trace_id across sequence of spans in sample workflow, nested tool calls, errors.
 
+---
+ 
+## Updated Callback Intent Table (Hierarchy‑Aware)
+
+| Callback | Span Parent (new rule) |
+|----------|------------------------|
+| on_chain_start (AgentInvocation root) | None (root) |
+| on_chain_start (Workflow root)       | None (root) unless inside outer workflow |
+| on_chat_model_start / on_llm_start   | AgentInvocation or Workflow span |
+| on_tool_start (model requested)      | Preceding LLMInvocation span |
+| on_tool_start (agent orchestrated)   | AgentInvocation span |
+| on_llm_start after tool              | Tool Task span |
+| on_chain_start (nested task)         | Nearest active AgentInvocation/Workflow span |
+
+---
+ 
+## Testing Strategy (Outline)
+
+1. Execute `examples/manual/t.py` → assert all collected spans share identical trace_id.
+2. Simulate tool function call chain with follow‑up model call → assert parent chain depth increments.
+3. Error path: raise tool exception → ensure child has same trace_id; parent flagged error; subsequent siblings still share trace.
+4. Concurrency: parallel tool tasks under agent → each child trace_id equals agent trace_id.
+
+---
+ 
+## Observability Diagnostics
+
+Add optional debug logs:
+
+```python
+genai_debug_log("parent_resolution", child_run=child.run_id, parent_run=parent_run_id, found=bool(parent_span))
+```
+
+Add attribute on child span if parent missing:
+`gen_ai.parent.missing = true`
+
+---
+ 
+## Non-Goals
+
+- Cross-trace linking outside single agent execution.
+- Retroactive re-parenting after span end (would require span processor mutation).
+- Full graph visualization (can be built later using run_id relationships).
+
+---
+ 
+## Summary
+
+Implement parent span resolution + lifecycle coordination so all GenAI spans for one agent execution form a single trace tree. This enables holistic analysis (latency, token usage, evaluations) and aligns with desired semantic model where `AgentInvocation` is the orchestrator root.
+ 
 ```text
 on_*_error(error):
   entity.attributes.error_message = str(error)
@@ -150,7 +212,9 @@ on_*_error(error):
 
 ---
 
+ 
 ## Edge Cases & Notes
+
 - Missing `parent_run_id` in `on_chain_start`: first non-agent run becomes Workflow.
 - Implicit parent stack ensures nested LLM calls inherit agent/workflow identity even if explicit parent omitted.
 - `on_llm_start` routes to `on_chat_model_start` for unified handling, then overrides `operation` to `generate_text`.
@@ -181,4 +245,4 @@ else if callback ends *_start entity:
 ```
 
 ---
-End of concise callback → GenAI type mapping.
+
