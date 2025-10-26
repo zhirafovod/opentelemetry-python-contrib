@@ -102,7 +102,7 @@ _LOGGER = logging.getLogger(__name__)
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
-def _is_truthy_env(value: str | None) -> bool:
+def _is_truthy_env(value: Optional[str]) -> bool:
     if value is None:
         return False
     return value.strip().lower() in _TRUTHY_VALUES
@@ -118,10 +118,9 @@ class TelemetryHandler:
     def __init__(self, **kwargs: Any):
         tracer_provider = kwargs.get("tracer_provider")
         # Store provider reference for later identity comparison (test isolation)
-        from opentelemetry import trace as _trace_mod_local
-
+        # Use already imported _trace_mod for provider reference; avoid re-import for lint.
         self._tracer_provider_ref = (
-            tracer_provider or _trace_mod_local.get_tracer_provider()
+            tracer_provider or _trace_mod.get_tracer_provider()
         )
         self._tracer = get_tracer(
             __name__,
@@ -186,6 +185,11 @@ class TelemetryHandler:
         self._evaluation_manager = None
         # Active agent identity stack (name, id) for implicit propagation to nested operations
         self._agent_context_stack: list[tuple[str, str]] = []
+        # Span registry (run_id -> Span) to allow parenting even after original invocation ended.
+        # We intentionally retain ended parent spans to preserve trace linkage for late children
+        # (e.g., final LLM call after agent/workflow termination). A lightweight size cap can be
+        # added later if memory pressure surfaces.
+        self._span_registry: dict[str, _trace_mod.Span] = {}
         self._initialize_default_callbacks()
 
     def _refresh_capture_content(
@@ -257,6 +261,10 @@ class TelemetryHandler:
                 invocation.agent_id = top_id
         # Start invocation span; tracer context propagation handles parent/child links
         self._emitter.on_start(invocation)
+        # Register span if created
+        span = getattr(invocation, "span", None)
+        if span is not None:
+            self._span_registry[str(invocation.run_id)] = span
         try:
             span_context = invocation.span_context
             if span_context is None and invocation.span is not None:
@@ -359,6 +367,9 @@ class TelemetryHandler:
                 invocation.agent_id = top_id
         invocation.start_time = time.time()
         self._emitter.on_start(invocation)
+        span = getattr(invocation, "span", None)
+        if span is not None:
+            self._span_registry[str(invocation.run_id)] = span
         return invocation
 
     def stop_embedding(
@@ -408,6 +419,9 @@ class TelemetryHandler:
             if not invocation.agent_id:
                 invocation.agent_id = top_id
         self._emitter.on_start(invocation)
+        span = getattr(invocation, "span", None)
+        if span is not None:
+            self._span_registry[str(invocation.run_id)] = span
         return invocation
 
     def stop_tool_call(self, invocation: ToolCall) -> ToolCall:
@@ -429,6 +443,9 @@ class TelemetryHandler:
         """Start a workflow and create a pending span entry."""
         self._refresh_capture_content()
         self._emitter.on_start(workflow)
+        span = getattr(workflow, "span", None)
+        if span is not None:
+            self._span_registry[str(workflow.run_id)] = span
         return workflow
 
     def _handle_evaluation_results(
@@ -546,6 +563,9 @@ class TelemetryHandler:
         """Start an agent operation (create or invoke) and create a pending span entry."""
         self._refresh_capture_content()
         self._emitter.on_start(agent)
+        span = getattr(agent, "span", None)
+        if span is not None:
+            self._span_registry[str(agent.run_id)] = span
         # Push agent identity context (use run_id as canonical id)
         if isinstance(agent, AgentInvocation):
             try:
@@ -614,6 +634,9 @@ class TelemetryHandler:
         """Start a task and create a pending span entry."""
         self._refresh_capture_content()
         self._emitter.on_start(task)
+        span = getattr(task, "span", None)
+        if span is not None:
+            self._span_registry[str(task.run_id)] = span
         return task
 
     def stop_task(self, task: Task) -> Task:
@@ -717,6 +740,22 @@ class TelemetryHandler:
         if isinstance(obj, ToolCall):
             return self.start_tool_call(obj)
         return obj
+
+    # ---- registry helpers -----------------------------------------------
+    def get_span_by_run_id(
+        self, run_id: Any
+    ) -> Optional[_trace_mod.Span]:  # run_id may be UUID or str
+        try:
+            key = str(run_id)
+        except Exception:
+            return None
+        return self._span_registry.get(key)
+
+    def has_span(self, run_id: Any) -> bool:
+        try:
+            return str(run_id) in self._span_registry
+        except Exception:
+            return False
 
     def finish(self, obj: Any) -> Any:
         """Generic finish method for any invocation type."""

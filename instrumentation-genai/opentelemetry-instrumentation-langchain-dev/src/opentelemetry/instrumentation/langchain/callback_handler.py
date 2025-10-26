@@ -170,6 +170,8 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
         self._context_stack_key = "genai_active_entity_stack"
         # Track active child counts for agent/workflow to defer span ending until all children complete.
         self._child_counts: dict[UUID, int] = {}
+        # Track root workflow span to unify trace under single parent
+        self._root_workflow_run_id: Optional[UUID] = None
 
     @staticmethod
     def _get_name_from_callback(
@@ -750,6 +752,22 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             parent_run_id=parent.run_id if parent is not None else parent_run_id,
         )
         self._store_serialized_payload(task, "input_data", inputs)
+        # Attach parent span context for proper trace linkage
+        parent_span = None
+        effective_parent_id = task.parent_run_id
+        if effective_parent_id is not None:
+            parent_entity = self._get_entity(effective_parent_id)
+            if parent_entity is not None:
+                parent_span = getattr(parent_entity, "span", None)
+            if parent_span is None and hasattr(self._telemetry_handler, "get_span_by_run_id"):
+                try:
+                    parent_span = self._telemetry_handler.get_span_by_run_id(effective_parent_id)  # type: ignore[attr-defined]
+                except Exception:  # pragma: no cover - defensive
+                    parent_span = None
+        if parent_span is not None:
+            setattr(task, "parent_span", parent_span)
+        elif effective_parent_id is not None:
+            task.attributes.setdefault("orphan_parent_run_id", str(effective_parent_id))
         return task
 
     @dont_throw
@@ -780,6 +798,20 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             extra_attrs["callback.id"] = callback_id
 
         if is_agent_run:
+            # Ensure a root workflow span exists to serve as unified parent
+            if self._root_workflow_run_id is None:
+                from uuid import uuid4 as _uuid4
+                wf_run_id = _uuid4()
+                wf = self._build_workflow(
+                    name="agent-run",
+                    run_id=wf_run_id,
+                    metadata_attrs={},
+                    extra_attrs={"callback.name": "agent-run"},
+                )
+                wf.parent_run_id = parent_run_id  # preserve any upstream chain if provided
+                self._start_entity(wf)
+                self._root_workflow_run_id = wf_run_id
+                parent_run_id = wf_run_id  # reparent agent to workflow root
             agent = self._build_agent_invocation(
                 name=name,
                 run_id=run_id,
@@ -789,6 +821,13 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 tags=tags,
                 extra_attrs=extra_attrs,
             )
+            # Attach workflow span as explicit parent
+            if parent_run_id is not None:
+                parent_entity = self._get_entity(parent_run_id)
+                if parent_entity is not None:
+                    pspan = getattr(parent_entity, "span", None)
+                    if pspan is not None:
+                        setattr(agent, "parent_span", pspan)
             self._start_entity(agent)
             return
 
@@ -839,15 +878,14 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
 
         if isinstance(entity, AGENT_ENTITY_TYPES):
             self._store_serialized_payload(entity, "output_result", outputs)
-            # Defer stopping; mark pending and attempt finalize if no children
+            # Mark pending stop; do NOT finalize immediately (LLM/tool may start after chain end)
             entity.attributes["pending_stop"] = True
-            self._finalize_parent_if_ready(entity.run_id)
         elif isinstance(entity, UtilWorkflow):
             self._store_serialized_payload(entity, "final_output", outputs)
             entity.attributes["pending_stop"] = True
-            self._finalize_parent_if_ready(entity.run_id)
         elif isinstance(entity, UtilTask):
             self._store_serialized_payload(entity, "output_data", outputs)
+            # For agent_phase tasks we do not immediately finalize the root agent; just stop task
             self._stop_entity(entity)
 
         if parent_run_id is None:
@@ -1151,6 +1189,30 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
             implicit_parent = self._resolve_parent(parent_run_id)
             if implicit_parent is not None:
                 inv.parent_run_id = implicit_parent.run_id
+
+        # Promote parent_run_id to nearest agent ancestor to ensure consistent parenting
+        ancestor_agent = self._find_agent(getattr(inv, "parent_run_id", None))
+        if ancestor_agent is not None and ancestor_agent.run_id != getattr(inv, "parent_run_id", None):
+            inv.parent_run_id = ancestor_agent.run_id
+        # If root workflow exists but parent_run_id missing, inherit workflow as parent
+        if getattr(inv, "parent_run_id", None) is None and self._root_workflow_run_id is not None:
+            inv.parent_run_id = self._root_workflow_run_id
+
+        # Attach explicit parent span context (even if parent span already ended) for trace continuity
+        parent_span = None
+        if getattr(inv, "parent_run_id", None) is not None:
+            parent_ent = self._get_entity(inv.parent_run_id)
+            if parent_ent is not None:
+                parent_span = getattr(parent_ent, "span", None)
+            if parent_span is None and hasattr(self._telemetry_handler, "get_span_by_run_id"):
+                try:
+                    parent_span = self._telemetry_handler.get_span_by_run_id(inv.parent_run_id)  # type: ignore[attr-defined]
+                except Exception:
+                    parent_span = None
+        if parent_span is not None:
+            setattr(inv, "parent_span", parent_span)
+        elif getattr(inv, "parent_run_id", None) is not None:
+            inv.attributes.setdefault("orphan_parent_run_id", str(inv.parent_run_id))
 
         parent_agent = self._find_agent(parent_run_id)
         if parent_agent is not None:

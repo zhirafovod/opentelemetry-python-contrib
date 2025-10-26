@@ -279,8 +279,17 @@ class SpanEmitter(EmitterMeta):
         # Handle existing types
         elif isinstance(invocation, ToolCall):
             span_name = f"tool {invocation.name}"
+            parent_span = getattr(invocation, "parent_span", None)
+            parent_ctx = (
+                trace.set_span_in_context(parent_span)
+                if parent_span is not None
+                else None
+            )
             cm = self._tracer.start_as_current_span(
-                span_name, kind=SpanKind.CLIENT, end_on_exit=False
+                span_name,
+                kind=SpanKind.CLIENT,
+                end_on_exit=False,
+                context=parent_ctx,
             )
             span = cm.__enter__()
             self._attach_span(invocation, span, cm)
@@ -292,8 +301,17 @@ class SpanEmitter(EmitterMeta):
             operation = getattr(invocation, "operation", "chat")
             model_name = invocation.request_model
             span_name = f"{operation} {model_name}"
+            parent_span = getattr(invocation, "parent_span", None)
+            parent_ctx = (
+                trace.set_span_in_context(parent_span)
+                if parent_span is not None
+                else None
+            )
             cm = self._tracer.start_as_current_span(
-                span_name, kind=SpanKind.CLIENT, end_on_exit=False
+                span_name,
+                kind=SpanKind.CLIENT,
+                end_on_exit=False,
+                context=parent_ctx,
             )
             span = cm.__enter__()
             self._attach_span(invocation, span, cm)
@@ -354,8 +372,17 @@ class SpanEmitter(EmitterMeta):
     def _start_workflow(self, workflow: Workflow) -> None:
         """Start a workflow span."""
         span_name = f"gen_ai.workflow {workflow.name}"
+        parent_span = getattr(workflow, "parent_span", None)
+        parent_ctx = (
+            trace.set_span_in_context(parent_span)
+            if parent_span is not None
+            else None
+        )
         cm = self._tracer.start_as_current_span(
-            span_name, kind=SpanKind.CLIENT, end_on_exit=False
+            span_name,
+            kind=SpanKind.CLIENT,
+            end_on_exit=False,
+            context=parent_ctx,
         )
         span = cm.__enter__()
         self._attach_span(workflow, span, cm)
@@ -443,8 +470,17 @@ class SpanEmitter(EmitterMeta):
         else:
             span_name = f"invoke_agent {agent.name}"
 
+        parent_span = getattr(agent, "parent_span", None)
+        parent_ctx = (
+            trace.set_span_in_context(parent_span)
+            if parent_span is not None
+            else None
+        )
         cm = self._tracer.start_as_current_span(
-            span_name, kind=SpanKind.CLIENT, end_on_exit=False
+            span_name,
+            kind=SpanKind.CLIENT,
+            end_on_exit=False,
+            context=parent_ctx,
         )
         span = cm.__enter__()
         self._attach_span(agent, span, cm)
@@ -549,8 +585,17 @@ class SpanEmitter(EmitterMeta):
     def _start_task(self, task: Task) -> None:
         """Start a task span."""
         span_name = f"gen_ai.task {task.name}"
+        parent_span = getattr(task, "parent_span", None)
+        parent_ctx = (
+            trace.set_span_in_context(parent_span)
+            if parent_span is not None
+            else None
+        )
         cm = self._tracer.start_as_current_span(
-            span_name, kind=SpanKind.CLIENT, end_on_exit=False
+            span_name,
+            kind=SpanKind.CLIENT,
+            end_on_exit=False,
+            context=parent_ctx,
         )
         span = cm.__enter__()
         self._attach_span(task, span, cm)
@@ -639,8 +684,17 @@ class SpanEmitter(EmitterMeta):
     def _start_embedding(self, embedding: EmbeddingInvocation) -> None:
         """Start an embedding span."""
         span_name = f"{embedding.operation_name} {embedding.request_model}"
+        parent_span = getattr(embedding, "parent_span", None)
+        parent_ctx = (
+            trace.set_span_in_context(parent_span)
+            if parent_span is not None
+            else None
+        )
         cm = self._tracer.start_as_current_span(
-            span_name, kind=SpanKind.CLIENT, end_on_exit=False
+            span_name,
+            kind=SpanKind.CLIENT,
+            end_on_exit=False,
+            context=parent_ctx,
         )
         span = cm.__enter__()
         self._attach_span(embedding, span, cm)
