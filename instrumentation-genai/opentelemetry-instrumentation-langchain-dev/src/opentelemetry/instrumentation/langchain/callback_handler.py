@@ -19,6 +19,7 @@ from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
     Workflow,
     Task,
+    AgentInvocation,
     LLMInvocation,
     InputMessage,
     OutputMessage,
@@ -44,6 +45,19 @@ def _serialize(obj: Any) -> Optional[str]:
             return str(obj)
         except (TypeError, ValueError):
             return None
+
+
+def _is_agent_root(tags: Optional[list[str]], metadata: Optional[dict[str, Any]]) -> bool:
+    if tags:
+        for tag in tags:
+            try:
+                if "agent" in str(tag).lower():
+                    return True
+            except (TypeError, ValueError):
+                continue
+    if metadata and metadata.get("agent_name"):
+        return True
+    return False
 
 
 class LangchainCallbackHandler(BaseCallbackHandler):
@@ -82,9 +96,28 @@ class LangchainCallbackHandler(BaseCallbackHandler):
         if tags:
             attrs["tags"] = [str(t) for t in tags]
         if parent_run_id is None:
-            wf = Workflow(name=name, run_id=run_id, attributes=attrs)
-            wf.initial_input = _serialize(inputs)
-            self._handler.start_workflow(wf)
+            if _is_agent_root(tags, metadata):
+                agent = AgentInvocation(
+                    name=name,
+                    run_id=run_id,
+                    attributes=attrs,
+                )
+                agent.input_context = _serialize(inputs)
+                agent.agent_name = _safe_str(metadata.get("agent_name")) if metadata and metadata.get("agent_name") else name
+                agent.parent_run_id = None
+                agent.framework = "langchain"
+                if metadata:
+                    if metadata.get("agent_type"):
+                        agent.agent_type = _safe_str(metadata.get("agent_type"))
+                    if metadata.get("model_name"):
+                        agent.model = _safe_str(metadata.get("model_name"))
+                    if metadata.get("system"):
+                        agent.system = _safe_str(metadata.get("system"))
+                self._handler.start_agent(agent)
+            else:
+                wf = Workflow(name=name, run_id=run_id, attributes=attrs)
+                wf.initial_input = _serialize(inputs)
+                self._handler.start_workflow(wf)
         else:
             task = Task(
                 name=name,
@@ -93,6 +126,10 @@ class LangchainCallbackHandler(BaseCallbackHandler):
                 task_type="chain",
                 attributes=attrs,
             )
+            parent_entity = self._handler.get_entity(parent_run_id)
+            if isinstance(parent_entity, AgentInvocation):
+                task.agent_name = parent_entity.name
+                task.agent_id = str(parent_entity.run_id)
             task.input_data = _serialize(inputs)
             self._handler.start_task(task)
 
@@ -110,6 +147,9 @@ class LangchainCallbackHandler(BaseCallbackHandler):
         if isinstance(entity, Workflow):
             entity.final_output = _serialize(outputs)
             self._handler.stop_workflow(entity)
+        elif isinstance(entity, AgentInvocation):
+            entity.output_result = _serialize(outputs)
+            self._handler.stop_agent(entity)
         elif isinstance(entity, Task):
             entity.output_data = _serialize(outputs)
             self._handler.stop_task(entity)
@@ -150,6 +190,11 @@ class LangchainCallbackHandler(BaseCallbackHandler):
             run_id=run_id,
             parent_run_id=parent_run_id,
         )
+        if parent_run_id is not None:
+            parent_entity = self._handler.get_entity(parent_run_id)
+            if isinstance(parent_entity, AgentInvocation):
+                inv.agent_name = parent_entity.name
+                inv.agent_id = str(parent_entity.run_id)
         self._handler.start_llm(inv)
 
     def on_llm_start(
