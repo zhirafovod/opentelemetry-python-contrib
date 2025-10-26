@@ -506,6 +506,8 @@ class TraceloopCallbackHandler(BaseCallbackHandler):
                 "ls_entity_kind",
                 "run_type",
                 "ls_type",
+                "agent_name",
+                "agent_type",
             ):
                 value = metadata.get(key)
                 if isinstance(value, str) and "agent" in value.lower():

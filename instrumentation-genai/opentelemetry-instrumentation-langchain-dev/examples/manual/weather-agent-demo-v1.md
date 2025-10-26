@@ -4,14 +4,14 @@ This document describes the implementation in `weather-agent-demo-v1.py` for a L
 
 ## Demo App scope
 
-* Real external API calls (Open-Meteo geocoding, forecast, air quality).
 * Deterministic supervisor orchestration (no autonomous agent loop yet).
 * Pydantic models: `WeatherQuery`, `RawWeatherData`, `ActivityAdvisory`, `ComparativeSummary`, `WeatherReport`.
 * Structured query parsing with provider structured output attempt + heuristic fallback.
 * Tool definitions using `@tool` decorator, invoked safely via `_call` wrapper for `StructuredTool`.
 * LangGraph workflow (conditional execution + parallel fetch) guarded by import availability.
-* Concurrency fix for parallel node updates using `Annotated` merge aggregator on `data_map`.
+* Concurrency for parallel node updates using `Annotated` merge aggregator on `data_map`.
 * OpenTelemetry spans around parsing, tools, supervisor run, and graph nodes.
+* External API calls (Open-Meteo geocoding, forecast, air quality).
 * CLI flag `--graph-only` to exercise graph path without supervisor.
 
 ### Out of scope
