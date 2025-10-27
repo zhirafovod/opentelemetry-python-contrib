@@ -33,30 +33,72 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
 
-# from opentelemetry import trace
-# from opentelemetry.sdk.trace import TracerProvider
-# from opentelemetry.sdk.trace.export import (
-#     BatchSpanProcessor,
-# )
-# from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+)
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
 
-# otlp_exporter = OTLPSpanExporter(
-#     endpoint="http://localhost:4318/v1/traces",
-# )
+otlp_exporter = OTLPSpanExporter(
+    endpoint="http://localhost:4318/v1/traces",
+)
 
-# provider = TracerProvider()
-# processor = BatchSpanProcessor(otlp_exporter)
-# provider.add_span_processor(processor)
-# trace.set_tracer_provider(provider)
+provider = TracerProvider()
+processor = BatchSpanProcessor(otlp_exporter)
+provider.add_span_processor(processor)
+trace.set_tracer_provider(provider)
 
 # Set environment variables for LangChain
-# os.environ["LANGSMITH_OTEL_ENABLED"] = "true"
-# os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_OTEL_ENABLED"] = "true"
+os.environ["LANGSMITH_TRACING"] = "true"
 # os.environ["LANGSMITH_API_KEY"] = "<export-yours>" 
 # os.environ["LANGSMITH_OTEL_EXPORTER"] = "otlp"
 # os.environ["LANGSMITH_OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318/v1/traces"
 # os.environ["LANGSMITH_API_KEY"] = ""
+
+# ---------------------------------------------------------------------------
+# GenAI Utils
+# ---------------------------------------------------------------------------
+# from opentelemetry import _events, _logs, metrics, trace
+# from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+# from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+#     OTLPMetricExporter,
+# )
+# from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+#     OTLPSpanExporter,
+# )
+# from opentelemetry.instrumentation.langchain import LangchainInstrumentor
+# from opentelemetry.sdk._events import EventLoggerProvider
+# from opentelemetry.sdk._logs import LoggerProvider
+# from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+# from opentelemetry.sdk.metrics import MeterProvider
+# from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+# from opentelemetry.sdk.trace import TracerProvider
+# from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+# # Configure tracing/metrics/logging once per process so exported data goes to OTLP.
+# trace.set_tracer_provider(TracerProvider())
+# trace.get_tracer_provider().add_span_processor(
+#     BatchSpanProcessor(OTLPSpanExporter())
+# )
+
+# demo_tracer = trace.get_tracer("instrumentation.langchain.demo")
+
+# metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter())
+# metrics.set_meter_provider(MeterProvider(metric_readers=[metric_reader]))
+
+# _logs.set_logger_provider(LoggerProvider())
+# _logs.get_logger_provider().add_log_record_processor(
+#     BatchLogRecordProcessor(OTLPLogExporter())
+# )
+# _events.set_event_logger_provider(EventLoggerProvider())
+
+# from opentelemetry.instrumentation.langchain import LangchainInstrumentor
+# instrumentor = LangchainInstrumentor()
+# instrumentor.instrument()
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models for structured output
@@ -357,10 +399,15 @@ SUPERVISOR_TOOLS = [
 ]
 
 SUPERVISOR_AGENT = create_agent(  # type: ignore
+    name="weather_supervisor_agent",
     model=MODEL,
     tools=SUPERVISOR_TOOLS,
     system_prompt="You are a weather supervisor agent. Use tools to gather data and produce concise results.",
-)
+).with_config({
+    "run_name": "weather-agent",
+    "tags": ["agent:supervisor", "agent"],
+    "metadata": {"agent_name": "supervisor", "agent_role": "orchestrator"}
+})
 
 # ---------------------------------------------------------------------------
 # LangGraph workflow implementation
@@ -444,7 +491,7 @@ GRAPH_APP = workflow.compile()
 def run_supervisor(user_query: str, run_config: Dict[str, Any]) -> WeatherReport:
     """Run supervisor path using SUPERVISOR_AGENT for orchestration and instrument tool calls under same run_id."""
     # Agent invocation (produces top-level run in trace)
-    SUPERVISOR_AGENT.invoke({"messages": [HumanMessage(user_query)]}, config=run_config, {"tags"=["agent"]})  # type: ignore
+    SUPERVISOR_AGENT.invoke({"messages": [HumanMessage(user_query)]}, config=run_config)  # type: ignore
     parsed = parse_weather_query(user_query, run_config=run_config)
     data_items: List[RawWeatherData] = []
     for loc in parsed.locations:

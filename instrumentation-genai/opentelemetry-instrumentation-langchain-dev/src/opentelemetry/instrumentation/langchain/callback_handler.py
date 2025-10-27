@@ -24,6 +24,7 @@ from opentelemetry.util.genai.types import (
     InputMessage,
     OutputMessage,
     Text,
+    ToolCall,
     Error as GenAIError,
 )
 
@@ -58,6 +59,78 @@ def _is_agent_root(tags: Optional[list[str]], metadata: Optional[dict[str, Any]]
     if metadata and metadata.get("agent_name"):
         return True
     return False
+
+
+def _extract_tool_details(
+    metadata: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    if not metadata:
+        return None
+
+    tool_data: dict[str, Any] = {}
+    nested = metadata.get("gen_ai.tool")
+    if isinstance(nested, dict):
+        tool_data.update(nested)
+
+    detection_flag = bool(tool_data)
+    for key, value in list(metadata.items()):
+        if not isinstance(key, str):
+            continue
+        lower_key = key.lower()
+        if lower_key.startswith("gen_ai.tool."):
+            suffix = key.split(".", 2)[-1]
+            tool_data[suffix] = value
+            detection_flag = True
+            continue
+        if lower_key in {
+            "tool_name",
+            "tool_id",
+            "tool_call_id",
+            "tool_args",
+            "tool_arguments",
+            "tool_input",
+            "tool_parameters",
+        }:
+            name_parts = lower_key.split("_", 1)
+            suffix = name_parts[-1] if len(name_parts) > 1 else lower_key
+            tool_data[suffix] = value
+            detection_flag = True
+
+    for hint_key in (
+        "gen_ai.task.type",
+        "task_type",
+        "type",
+        "run_type",
+        "langchain_run_type",
+    ):
+        hint_val = metadata.get(hint_key)
+        if isinstance(hint_val, str) and "tool" in hint_val.lower():
+            detection_flag = True
+            break
+
+    if not detection_flag:
+        return None
+
+    name_value = tool_data.get("name") or metadata.get("gen_ai.task.name")
+    if not name_value:
+        return None
+
+    arguments = tool_data.get("arguments")
+    if arguments is None:
+        for candidate in ("input", "args", "parameters"):
+            if candidate in tool_data:
+                arguments = tool_data[candidate]
+                break
+
+    tool_id = tool_data.get("id") or tool_data.get("call_id")
+    if tool_id is not None:
+        tool_id = _safe_str(tool_id)
+
+    return {
+        "name": _safe_str(name_value),
+        "arguments": arguments,
+        "id": tool_id,
+    }
 
 
 class LangchainCallbackHandler(BaseCallbackHandler):
@@ -119,19 +192,49 @@ class LangchainCallbackHandler(BaseCallbackHandler):
                 wf.initial_input = _serialize(inputs)
                 self._handler.start_workflow(wf)
         else:
-            task = Task(
-                name=name,
-                run_id=run_id,
-                parent_run_id=parent_run_id,
-                task_type="chain",
-                attributes=attrs,
-            )
-            parent_entity = self._handler.get_entity(parent_run_id)
-            if isinstance(parent_entity, AgentInvocation):
-                task.agent_name = parent_entity.name
-                task.agent_id = str(parent_entity.run_id)
-            task.input_data = _serialize(inputs)
-            self._handler.start_task(task)
+            tool_info = _extract_tool_details(metadata)
+            if tool_info is not None:
+                existing = self._handler.get_entity(run_id)
+                if isinstance(existing, ToolCall):
+                    tool = existing
+                else:
+                    arguments = tool_info.get("arguments")
+                    if arguments is None:
+                        arguments = inputs
+                    tool = ToolCall(
+                        name=tool_info.get("name", name),
+                        id=tool_info.get("id"),
+                        arguments=arguments,
+                        run_id=run_id,
+                        parent_run_id=parent_run_id,
+                        attributes=attrs,
+                    )
+                    tool.framework = "langchain"
+                    parent_entity = self._handler.get_entity(parent_run_id)
+                    if isinstance(parent_entity, AgentInvocation):
+                        tool.agent_name = parent_entity.name
+                        tool.agent_id = str(parent_entity.run_id)
+                    self._handler.start_tool_call(tool)
+                if inputs is not None and getattr(tool, "arguments", None) is None:
+                    tool.arguments = inputs
+                if getattr(tool, "arguments", None) is not None:
+                    serialized_args = _serialize(tool.arguments)
+                    if serialized_args is not None:
+                        tool.attributes.setdefault("tool.arguments", serialized_args)
+            else:
+                task = Task(
+                    name=name,
+                    run_id=run_id,
+                    parent_run_id=parent_run_id,
+                    task_type="chain",
+                    attributes=attrs,
+                )
+                parent_entity = self._handler.get_entity(parent_run_id)
+                if isinstance(parent_entity, AgentInvocation):
+                    task.agent_name = parent_entity.name
+                    task.agent_id = str(parent_entity.run_id)
+                task.input_data = _serialize(inputs)
+                self._handler.start_task(task)
 
     def on_chain_end(
         self,
@@ -153,6 +256,11 @@ class LangchainCallbackHandler(BaseCallbackHandler):
         elif isinstance(entity, Task):
             entity.output_data = _serialize(outputs)
             self._handler.stop_task(entity)
+        elif isinstance(entity, ToolCall):
+            serialized = _serialize(outputs)
+            if serialized is not None:
+                entity.attributes.setdefault("tool.response", serialized)
+            self._handler.stop_tool_call(entity)
 
     def on_chat_model_start(
         self,
@@ -262,15 +370,48 @@ class LangchainCallbackHandler(BaseCallbackHandler):
         payload = serialized or {}
         name_source = payload.get("name") or payload.get("id") or extra.get("name")
         name = _safe_str(name_source or "tool")
-        task = Task(
+        attrs: dict[str, Any] = {}
+        if metadata:
+            attrs.update(metadata)
+        if tags:
+            attrs["tags"] = [str(t) for t in tags]
+        id_source = payload.get("id") or extra.get("id")
+        if isinstance(id_source, (list, tuple)):
+            id_value = ".".join(_safe_str(part) for part in id_source)
+        elif id_source is not None:
+            id_value = _safe_str(id_source)
+        else:
+            id_value = None
+        arguments: Any = inputs if inputs is not None else input_str
+        existing = self._handler.get_entity(run_id)
+        if isinstance(existing, ToolCall):
+            if arguments is not None:
+                existing.arguments = arguments
+            if attrs:
+                existing.attributes.update(attrs)
+            if existing.framework is None:
+                existing.framework = "langchain"
+            return
+        tool = ToolCall(
             name=name,
+            id=id_value,
+            arguments=arguments,
             run_id=run_id,
             parent_run_id=parent_run_id,
-            task_type="tool_use",
-            attributes=metadata or {},
+            attributes=attrs,
         )
-        task.input_data = _serialize(inputs) or _safe_str(input_str)
-        self._handler.start_task(task)
+        tool.framework = "langchain"
+        parent_entity = self._handler.get_entity(parent_run_id)
+        if isinstance(parent_entity, AgentInvocation):
+            tool.agent_name = parent_entity.name
+            tool.agent_id = str(parent_entity.run_id)
+        if arguments is not None:
+            serialized_args = _serialize(arguments)
+            if serialized_args is not None:
+                tool.attributes.setdefault("tool.arguments", serialized_args)
+        if inputs is None and input_str:
+            tool.attributes.setdefault("tool.input_str", _safe_str(input_str))
+        self._handler.start_tool_call(tool)
 
     def on_tool_end(
         self,
@@ -280,11 +421,13 @@ class LangchainCallbackHandler(BaseCallbackHandler):
         parent_run_id: Optional[UUID] = None,
         **_kwargs: Any,
     ) -> None:
-        task = self._handler.get_entity(run_id)
-        if not isinstance(task, Task):
+        tool = self._handler.get_entity(run_id)
+        if not isinstance(tool, ToolCall):
             return
-        task.output_data = _serialize(output)
-        self._handler.stop_task(task)
+        serialized = _serialize(output)
+        if serialized is not None:
+            tool.attributes.setdefault("tool.response", serialized)
+        self._handler.stop_tool_call(tool)
 
     def _fail(self, run_id: UUID, error: BaseException) -> None:
         self._handler.fail_by_run_id(run_id, GenAIError(message=str(error), type=type(error)))
