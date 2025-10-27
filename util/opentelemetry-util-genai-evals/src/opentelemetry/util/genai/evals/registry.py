@@ -22,7 +22,8 @@ from typing import Callable, Dict, Mapping, Sequence
 from opentelemetry.util._importlib_metadata import (
     entry_points,
 )
-from opentelemetry.util.genai.evaluators.base import Evaluator
+
+from .base import Evaluator
 
 _LOGGER = logging.getLogger(__name__)
 _ENTRY_POINT_GROUP = "opentelemetry_util_genai_evaluators"

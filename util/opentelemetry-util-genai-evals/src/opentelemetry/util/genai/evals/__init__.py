@@ -12,16 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Evaluator scaffolding (Phase 1).
+"""Evaluation manager and registry for :mod:`opentelemetry.util.genai`.
 
-Provides a minimal pluggable registry for GenAI evaluators. Future phases will
-add concrete implementations (e.g., deepeval) and telemetry emission.
+This package is installed alongside the core GenAI utilities when evaluation
+features are desired. It provides the completion callback factory consumed by
+``TelemetryHandler`` as well as the evaluator registry and environment helpers.
 """
 
 from . import (
     builtins as _builtins,  # noqa: E402,F401  (auto-registration side effects)
 )
 from .base import Evaluator
+from .bootstrap import (
+    EvaluatorCompletionCallback,
+    create_completion_callback,
+    create_evaluation_manager,
+)
 from .manager import Manager, Sampler
 from .registry import get_evaluator, list_evaluators, register_evaluator
 
@@ -32,4 +38,7 @@ __all__ = [
     "list_evaluators",
     "Manager",
     "Sampler",
+    "EvaluatorCompletionCallback",
+    "create_completion_callback",
+    "create_evaluation_manager",
 ]

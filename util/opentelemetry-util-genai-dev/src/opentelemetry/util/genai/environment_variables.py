@@ -111,6 +111,28 @@ OTEL_INSTRUMENTATION_GENAI_EVALS_INTERVAL = (
 Polling interval (seconds) for the evaluation worker loop. Defaults to ``5.0`` seconds.
 """
 
+OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS = (
+    "OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS"
+)
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS
+
+Comma-separated list of completion callback entry point names to enable. When unset,
+every available callback exposed via the ``opentelemetry_util_genai_completion_callbacks`` group
+is loaded. Names are compared case-insensitively.
+"""
+
+OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS = (
+    "OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS"
+)
+"""
+.. envvar:: OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS
+
+Disable automatic loading of default completion callbacks (evaluators, persistence hooks, etc.).
+Truthiness is evaluated using the standard ``1/true/yes/on`` parsing. When set, no completion callbacks
+are registered automatically.
+"""
+
 OTEL_INSTRUMENTATION_GENAI_EMITTERS = "OTEL_INSTRUMENTATION_GENAI_EMITTERS"
 """
 .. envvar:: OTEL_INSTRUMENTATION_GENAI_EMITTERS
@@ -173,4 +195,6 @@ __all__ = [
     "OTEL_INSTRUMENTATION_GENAI_EMITTERS_EVALUATION",
     "OTEL_INSTRUMENTATION_GENAI_EVALUATION_SAMPLE_RATE",
     "OTEL_GENAI_EVALUATION_EVENT_LEGACY",
+    "OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS",
+    "OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS",
 ]

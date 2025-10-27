@@ -8,17 +8,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Mapping, Protocol, Sequence
 
 from ..callbacks import CompletionCallback
-from ..environment_variables import (
-    OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
-    OTEL_INSTRUMENTATION_GENAI_EVALS_INTERVAL,
-    OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION,
-    OTEL_INSTRUMENTATION_GENAI_EVALUATION_SAMPLE_RATE,
-)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..handler import TelemetryHandler
 from opentelemetry.sdk.trace.sampling import Decision, TraceIdRatioBased
 
+from ..environment_variables import (
+    OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
+)
 from ..span_context import extract_span_context, store_span_context
 from ..types import (
     AgentCreation,
@@ -32,6 +29,12 @@ from ..types import (
     Workflow,
 )
 from .base import Evaluator
+from .env import (
+    read_aggregation_flag,
+    read_interval,
+    read_raw_evaluators,
+    read_sample_rate,
+)
 from .normalize import is_tool_only_llm
 from .registry import get_default_metrics, get_evaluator, list_evaluators
 
@@ -83,13 +86,13 @@ class Manager(CompletionCallback):
         aggregate_results: bool | None = None,
     ) -> None:
         self._handler = handler
-        evaluation_sample_rate = _read_evaluation_sample_rate()
+        evaluation_sample_rate = read_sample_rate()
         self._sampler = TraceIdRatioBased(evaluation_sample_rate)
-        self._interval = interval if interval is not None else _read_interval()
+        self._interval = interval if interval is not None else read_interval()
         self._aggregate_results = (
             aggregate_results
             if aggregate_results is not None
-            else _read_aggregation_flag()
+            else read_aggregation_flag()
         )
         self._plans = self._load_plans()
         self._evaluators = self._instantiate_evaluators(self._plans)
@@ -241,7 +244,10 @@ class Manager(CompletionCallback):
         # a single list and emit exactly once. This shifts any downstream
         # aggregation burden (e.g., Splunk single-event formatting) out of the
         # emitters and into this manager loop.
-        aggregate = self._aggregate_results or _read_aggregation_flag()
+        aggregate = self._aggregate_results
+        if aggregate is None:
+            env_flag = read_aggregation_flag()
+            aggregate = bool(env_flag)
         flattened: list[EvaluationResult] = []
         for bucket in buckets:
             flattened.extend(bucket)
@@ -291,7 +297,7 @@ class Manager(CompletionCallback):
 
     # Configuration ------------------------------------------------------
     def _load_plans(self) -> Sequence[EvaluatorPlan]:
-        raw_value = _read_raw_evaluator_config()
+        raw_value = read_raw_evaluators()
         raw = (raw_value or "").strip()
         normalized = raw.lower()
         if normalized in {"none", "off", "false"}:
@@ -432,55 +438,6 @@ class Manager(CompletionCallback):
                 OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
             )
         return plans
-
-
-# ---------------------------------------------------------------------------
-# Environment parsing helpers
-
-
-def _read_raw_evaluator_config() -> str | None:
-    return _get_env(OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS)
-
-
-def _read_interval() -> float:
-    raw = _get_env(OTEL_INSTRUMENTATION_GENAI_EVALS_INTERVAL)
-    if not raw:
-        return 5.0
-    try:
-        return float(raw)
-    except ValueError:  # pragma: no cover - defensive
-        _LOGGER.warning(
-            "Invalid value for %s: %s",
-            OTEL_INSTRUMENTATION_GENAI_EVALS_INTERVAL,
-            raw,
-        )
-        return 5.0
-
-
-def _read_aggregation_flag() -> bool:
-    raw = _get_env(OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION)
-    if not raw:
-        return False
-    return raw.strip().lower() in {"1", "true", "yes"}
-
-
-def _read_evaluation_sample_rate() -> float:
-    raw = _get_env(OTEL_INSTRUMENTATION_GENAI_EVALUATION_SAMPLE_RATE)
-    if raw is None or raw == "":
-        return 1.0
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return 1.0
-    if value < 0.0 or value > 1.0:
-        return 1.0
-    return value
-
-
-def _get_env(name: str) -> str | None:
-    import os
-
-    return os.environ.get(name)
 
 
 # ---------------------------------------------------------------------------

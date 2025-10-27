@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from opentelemetry.util.genai.evaluators.manager import Manager
+from opentelemetry.util.genai.evals.manager import Manager
 from opentelemetry.util.genai.types import EvaluationResult, LLMInvocation
 
 
@@ -34,7 +34,7 @@ def test_dynamic_aggregation_env_toggle(monkeypatch):  # type: ignore[no-untyped
     ]
     # Disable internal aggregate flag
     manager._aggregate_results = False
-    manager._emit_results(invocation, buckets)
+    manager._publish_results(invocation, buckets)
     assert len(handler.calls) == 2  # two separate batches
 
     # Now enable aggregation via env and emit again -> should aggregate
@@ -42,6 +42,6 @@ def test_dynamic_aggregation_env_toggle(monkeypatch):  # type: ignore[no-untyped
         "OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION", "true"
     )
     handler.calls.clear()
-    manager._emit_results(invocation, buckets)
+    manager._publish_results(invocation, buckets)
     assert len(handler.calls) == 1
     assert [r.metric_name for r in handler.calls[0]] == ["bias", "toxicity"]

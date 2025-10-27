@@ -33,6 +33,9 @@ dependencies = [
 [project.entry-points.opentelemetry_genai_upload_hook]
 fsspec = "opentelemetry.util.genai._fsspec_upload:fsspec_upload_hook"
 
+[project.entry-points.opentelemetry_util_genai_completion_callbacks]
+noop = "opentelemetry.util.genai.callbacks:NoOpCompletionCallback"
+
 [project.optional-dependencies]
 test = ["pytest>=7.0.0"]
 fsspec = ["fsspec>=2025.9.0"]

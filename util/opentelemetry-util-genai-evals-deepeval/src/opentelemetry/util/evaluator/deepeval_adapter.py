@@ -7,7 +7,7 @@ from typing import Any
 
 from deepeval.test_case import LLMTestCase
 
-from opentelemetry.util.genai.evaluators.normalize import normalize_invocation
+from opentelemetry.util.genai.evals.normalize import normalize_invocation
 from opentelemetry.util.genai.types import (
     AgentInvocation,
     GenAI,

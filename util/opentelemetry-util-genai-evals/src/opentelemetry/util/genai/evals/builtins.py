@@ -23,13 +23,14 @@ from __future__ import annotations
 
 from typing import List, Sequence
 
-from opentelemetry.util.genai.evaluators.base import Evaluator
-from opentelemetry.util.genai.evaluators.registry import register_evaluator
 from opentelemetry.util.genai.types import (
     EvaluationResult,
     LLMInvocation,
     Text,
 )
+
+from .base import Evaluator
+from .registry import register_evaluator
 
 
 def _extract_text(invocation: LLMInvocation) -> str:

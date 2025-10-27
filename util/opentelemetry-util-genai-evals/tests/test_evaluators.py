@@ -7,9 +7,12 @@ from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
     OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION,
 )
-from opentelemetry.util.genai.evaluators.base import Evaluator
-from opentelemetry.util.genai.evaluators.manager import Manager
-from opentelemetry.util.genai.evaluators.registry import (
+from opentelemetry.util.genai.evals.base import Evaluator
+from opentelemetry.util.genai.evals.bootstrap import (
+    EvaluatorCompletionCallback,
+)
+from opentelemetry.util.genai.evals.manager import Manager
+from opentelemetry.util.genai.evals.registry import (
     clear_registry,
     register_evaluator,
 )
@@ -24,9 +27,14 @@ from opentelemetry.util.genai.types import (
 
 
 def _reload_builtin_evaluators() -> None:
-    from opentelemetry.util.genai.evaluators import builtins as builtin_module
+    from opentelemetry.util.genai.evals import builtins as builtin_module
 
     importlib.reload(builtin_module)
+
+
+def _mock_load_callbacks(_selected):
+    callback = EvaluatorCompletionCallback()
+    return [("evaluations", callback)], {"evaluations"}
 
 
 class _RecordingHandler:
@@ -157,11 +165,11 @@ class TestManagerConfiguration(unittest.TestCase):
     def test_manager_auto_discovers_defaults(self) -> None:
         with (
             patch(
-                "opentelemetry.util.genai.evaluators.manager.list_evaluators",
+                "opentelemetry.util.genai.evals.manager.list_evaluators",
                 return_value=["Static"],
             ),
             patch(
-                "opentelemetry.util.genai.evaluators.manager.get_default_metrics",
+                "opentelemetry.util.genai.evals.manager.get_default_metrics",
                 return_value={"LLMInvocation": ("static_metric",)},
             ),
         ):
@@ -228,18 +236,22 @@ class TestHandlerIntegration(unittest.TestCase):
         clear=True,
     )
     def test_handler_registers_manager(self) -> None:
-        handler = get_telemetry_handler()
-        invocation = self._build_invocation()
-        handler.start_llm(invocation)
-        invocation.output_messages = invocation.output_messages
-        handler.stop_llm(invocation)
-        handler.wait_for_evaluations(2.0)
-        manager = getattr(handler, "_evaluation_manager", None)
-        self.assertIsNotNone(manager)
-        self.assertTrue(
-            invocation.attributes.get("gen_ai.evaluation.executed")
-        )
-        manager.shutdown()
+        with patch(
+            "opentelemetry.util.genai.handler._load_completion_callbacks",
+            side_effect=_mock_load_callbacks,
+        ):
+            handler = get_telemetry_handler()
+            invocation = self._build_invocation()
+            handler.start_llm(invocation)
+            invocation.output_messages = invocation.output_messages
+            handler.stop_llm(invocation)
+            handler.wait_for_evaluations(2.0)
+            manager = getattr(handler, "_evaluation_manager", None)
+            self.assertIsNotNone(manager)
+            self.assertTrue(
+                invocation.attributes.get("gen_ai.evaluation.executed")
+            )
+            manager.shutdown()
 
     @patch.dict(
         os.environ,
@@ -250,25 +262,33 @@ class TestHandlerIntegration(unittest.TestCase):
         clear=True,
     )
     def test_handler_evaluate_llm_returns_results(self) -> None:
-        handler = get_telemetry_handler()
-        invocation = self._build_invocation()
-        results = handler.evaluate_llm(invocation)
-        manager = getattr(handler, "_evaluation_manager", None)
-        if manager is not None:
-            manager.shutdown()
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].metric_name, "static_metric")
+        with patch(
+            "opentelemetry.util.genai.handler._load_completion_callbacks",
+            side_effect=_mock_load_callbacks,
+        ):
+            handler = get_telemetry_handler()
+            invocation = self._build_invocation()
+            results = handler.evaluate_llm(invocation)
+            manager = getattr(handler, "_evaluation_manager", None)
+            if manager is not None:
+                manager.shutdown()
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].metric_name, "static_metric")
 
     @patch.dict(os.environ, {}, clear=True)
     def test_handler_auto_enables_when_env_missing(self) -> None:
         with (
             patch(
-                "opentelemetry.util.genai.evaluators.manager.list_evaluators",
+                "opentelemetry.util.genai.evals.manager.list_evaluators",
                 return_value=["Static"],
             ),
             patch(
-                "opentelemetry.util.genai.evaluators.manager.get_default_metrics",
+                "opentelemetry.util.genai.evals.manager.get_default_metrics",
                 return_value={"LLMInvocation": ("static_metric",)},
+            ),
+            patch(
+                "opentelemetry.util.genai.handler._load_completion_callbacks",
+                side_effect=_mock_load_callbacks,
             ),
         ):
             handler = get_telemetry_handler()
@@ -284,11 +304,15 @@ class TestHandlerIntegration(unittest.TestCase):
         clear=True,
     )
     def test_handler_disables_when_none(self) -> None:
-        handler = get_telemetry_handler()
-        manager = getattr(handler, "_evaluation_manager", None)
-        if manager is not None:
-            manager.shutdown()
-        self.assertIsNone(manager)
+        with patch(
+            "opentelemetry.util.genai.handler._load_completion_callbacks",
+            side_effect=_mock_load_callbacks,
+        ):
+            handler = get_telemetry_handler()
+            manager = getattr(handler, "_evaluation_manager", None)
+            if manager is not None:
+                manager.shutdown()
+            self.assertIsNone(manager)
 
 
 if __name__ == "__main__":  # pragma: no cover

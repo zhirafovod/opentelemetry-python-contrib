@@ -155,15 +155,21 @@ Emitted attributes (core):
 ### 7.3 Invocation Type Filtering
 `EmitterSpec.invocation_types` drives dynamic `handles` wrapper (fast pre-dispatch predicate). Evaluation emitters see results independently of invocation type filtering.
 
-## 8. Evaluators Integration
-Entry point group: `opentelemetry_util_genai_evaluators`.
+## 8. Evaluations Integration
+Entry point groups:
+- `opentelemetry_util_genai_completion_callbacks` (completion callback plug-ins; evaluation manager registers here).
+- `opentelemetry_util_genai_evaluators` (per-evaluator factories/registrations discovered by the evaluation manager).
 
-Evaluation Manager:
-- Auto-registers if evaluators available.
-- Trace-id ratio sampling via `OTEL_INSTRUMENTATION_GENAI_EVALUATION_SAMPLE_RATE` (falls back if no span context).
-- Parses evaluator grammar into per-type plans (metric + options).
-- Aggregation flag merges buckets into a single list when true.
-- Emits lists of `EvaluationResult` (no wrapper class yet).
+Default loading honours two environment variables:
+- `OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS` – optional comma-separated filter applied before instantiation.
+- `OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS` – when truthy, skips loading built-in callbacks (e.g., evaluation manager).
+
+Evaluation Manager behaviour (now shipped from `opentelemetry-util-genai-evals`):
+- Instantiated lazily when the evaluation completion callback binds to `TelemetryHandler`.
+- Trace-id ratio sampling via `OTEL_INSTRUMENTATION_GENAI_EVALUATION_SAMPLE_RATE` (falls back to enqueue if span context missing).
+- Parses evaluator grammar into per-type plans (metric + options) sourced from registered evaluators.
+- Aggregation flag merges buckets into a single list when true (`OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION`).
+- Emits lists of `EvaluationResult` to `handler.evaluation_results`.
 - Marks invocation `attributes["gen_ai.evaluation.executed"] = True` post emission.
 
 ## 9. Lifecycle Overview

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from opentelemetry.util.genai.evaluators.manager import Manager
+from opentelemetry.util.genai.evals.manager import Manager
 from opentelemetry.util.genai.types import EvaluationResult, LLMInvocation
 
 
@@ -42,7 +42,7 @@ def test_manager_emits_single_batch_when_aggregation_enabled(monkeypatch):
         [EvaluationResult(metric_name="toxicity", score=0.2)],
     ]
 
-    flattened = manager._emit_results(invocation, buckets)
+    flattened = manager._publish_results(invocation, buckets)
 
     assert len(handler.calls) == 1
     emitted = handler.calls[0][1]
@@ -58,7 +58,7 @@ def test_manager_emits_per_bucket_when_aggregation_disabled(monkeypatch):
         [EvaluationResult(metric_name="toxicity", score=0.2)],
     ]
 
-    flattened = manager._emit_results(invocation, buckets)
+    flattened = manager._publish_results(invocation, buckets)
 
     calls = handler.calls
     assert len(calls) == 2

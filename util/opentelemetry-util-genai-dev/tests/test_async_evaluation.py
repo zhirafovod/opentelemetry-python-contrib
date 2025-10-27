@@ -6,6 +6,9 @@ from unittest.mock import patch
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
 )
+from opentelemetry.util.genai.evals.bootstrap import (
+    EvaluatorCompletionCallback,
+)
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
     InputMessage,
@@ -40,7 +43,16 @@ class TestAsyncEvaluation(unittest.TestCase):
         clear=True,
     )
     def test_async_evaluation_emits_results(self) -> None:
-        handler = get_telemetry_handler()
+        def _mock_load_callbacks(_selected):
+            return [("evaluations", EvaluatorCompletionCallback())], {
+                "evaluations"
+            }
+
+        with patch(
+            "opentelemetry.util.genai.handler._load_completion_callbacks",
+            side_effect=_mock_load_callbacks,
+        ):
+            handler = get_telemetry_handler()
         captured: list[str] = []
 
         def _capture(self, invocation, results):

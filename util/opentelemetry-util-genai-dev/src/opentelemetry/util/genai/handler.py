@@ -53,6 +53,10 @@ import os
 import time
 from typing import Any, Optional
 
+from opentelemetry.util._importlib_metadata import (
+    entry_points,  # pyright: ignore[reportUnknownVariableType]
+)
+
 try:
     from opentelemetry.util.genai.debug import genai_debug_log
 except Exception:  # pragma: no cover - fallback if debug module missing
@@ -95,6 +99,8 @@ from .callbacks import CompletionCallback
 from .config import parse_env
 from .environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS,
+    OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,10 +108,96 @@ _LOGGER = logging.getLogger(__name__)
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
+def _coerce_completion_callback(
+    provider: object, name: str
+) -> CompletionCallback | None:
+    if provider is None:
+        return None
+    if hasattr(provider, "on_completion"):
+        if isinstance(provider, type):
+            try:
+                instance = provider()
+            except Exception as exc:  # pragma: no cover - defensive
+                _LOGGER.warning(
+                    "Completion callback class '%s' failed to instantiate: %s",
+                    name,
+                    exc,
+                )
+                return None
+            return instance  # type: ignore[return-value]
+        return provider  # type: ignore[return-value]
+    if callable(provider):
+        try:
+            instance = provider()
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOGGER.warning(
+                "Completion callback factory '%s' raised an exception: %s",
+                name,
+                exc,
+            )
+            return None
+        if hasattr(instance, "on_completion"):
+            return instance  # type: ignore[return-value]
+        _LOGGER.warning(
+            "Completion callback factory '%s' returned an object without on_completion",
+            name,
+        )
+        return None
+    _LOGGER.warning(
+        "Completion callback entry point '%s' is not callable or instance",
+        name,
+    )
+    return None
+
+
+def _load_completion_callbacks(
+    selected: set[str] | None,
+) -> tuple[list[tuple[str, CompletionCallback]], set[str]]:
+    callbacks: list[tuple[str, CompletionCallback]] = []
+    seen: set[str] = set()
+    try:
+        entries = entry_points(
+            group="opentelemetry_util_genai_completion_callbacks"
+        )
+    except Exception:  # pragma: no cover - defensive
+        _LOGGER.debug("Completion callback entry point group not available")
+        return callbacks, seen
+    for ep in entries:  # type: ignore[assignment]
+        name = getattr(ep, "name", "")
+        lowered = name.lower()
+        seen.add(lowered)
+        if selected and lowered not in selected:
+            continue
+        try:
+            provider = ep.load()
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOGGER.debug(
+                "Failed to load completion callback '%s': %s",
+                name,
+                exc,
+                exc_info=True,
+            )
+            continue
+        instance = _coerce_completion_callback(provider, name)
+        if instance is None:
+            continue
+        callbacks.append((name, instance))
+    return callbacks, seen
+
+
 def _is_truthy_env(value: Optional[str]) -> bool:
     if value is None:
         return False
     return value.strip().lower() in _TRUTHY_VALUES
+
+
+def _parse_callback_filter(value: Optional[str]) -> set[str] | None:
+    if value is None:
+        return None
+    selected = {
+        item.strip().lower() for item in value.split(",") if item.strip()
+    }
+    return selected or None
 
 
 class TelemetryHandler:
@@ -522,24 +614,63 @@ class TelemetryHandler:
                 continue
 
     def _initialize_default_callbacks(self) -> None:
-        try:
-            from .evaluators.manager import Manager
-        except Exception:  # pragma: no cover - import errors
+        disable_defaults = _is_truthy_env(
+            os.getenv(
+                OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS
+            )
+        )
+        if disable_defaults:
             _LOGGER.debug(
-                "Evaluation manager not available; skipping default registration",
-                exc_info=True,
+                "Default completion callbacks disabled via %s",
+                OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS,
             )
             return
-        try:
-            manager = Manager(self)
-        except Exception as exc:  # pragma: no cover - defensive
-            _LOGGER.warning("Failed to initialise evaluation manager: %s", exc)
+
+        selected = _parse_callback_filter(
+            os.getenv(OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS)
+        )
+        callbacks, seen = _load_completion_callbacks(selected)
+        if selected:
+            missing = selected - seen
+            for name in missing:
+                _LOGGER.debug(
+                    "Completion callback '%s' not found in entry points",
+                    name,
+                )
+        if not callbacks:
             return
-        if not manager.has_evaluators:
-            manager.shutdown()
-            return
-        self._evaluation_manager = manager
-        self.register_completion_callback(manager)
+
+        for name, callback in callbacks:
+            bound_ok = True
+            binder = getattr(callback, "bind_handler", None)
+            if callable(binder):
+                try:
+                    bound_ok = bool(binder(self))
+                except Exception as exc:  # pragma: no cover - defensive
+                    _LOGGER.warning(
+                        "Completion callback '%s' failed to bind: %s",
+                        name,
+                        exc,
+                    )
+                    shutdown = getattr(callback, "shutdown", None)
+                    if callable(shutdown):
+                        try:
+                            shutdown()
+                        except Exception:  # pragma: no cover - defensive
+                            pass
+                    continue
+            if not bound_ok:
+                shutdown = getattr(callback, "shutdown", None)
+                if callable(shutdown):
+                    try:
+                        shutdown()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                continue
+            manager = getattr(callback, "manager", None)
+            if manager is not None:
+                self._evaluation_manager = manager
+            self.register_completion_callback(callback)
 
     def stop_workflow(self, workflow: Workflow) -> Workflow:
         """Finalize a workflow successfully and end its span."""

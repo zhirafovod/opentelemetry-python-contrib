@@ -60,3 +60,7 @@ agent.invoke(
     {"messages": [{"role": "user", "content": "What is the weather in San Francisco?"}]},
     {"session_id": "12345"},
 )
+
+# sleep for 150s to allow evals to finish 
+import time
+time.sleep(150)
