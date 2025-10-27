@@ -1,184 +1,68 @@
-# OpenTelemetry LangChain Instrumentation – Callback → GenAI Type Mapping (Concise)
+# OpenTelemetry LangChain Instrumentation – Callback → GenAI Type Mapping
 
-Scope:
-`instrumentation-genai/opentelemetry-instrumentation-langchain-dev` callback handler → GenAI utility types in `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/types.py`.
+This document summarizes how the LangChain callback handler in `instrumentation-genai/opentelemetry-instrumentation-langchain-dev` maps runtime events to the GenAI telemetry types defined in `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/types.py`. The content reflects the Phase 1 handler already present on this branch.
 
-Purpose:
-Document how LangChain callbacks translate runtime events into GenAI telemetry entities (Workflow, AgentInvocation, Task, LLMInvocation) and what telemetry (spans, metrics, content events, evaluation) each produces.
+## Callback → Entity Matrix
 
----
+| Callback | GenAI entity | Notes |
+|----------|--------------|-------|
+| `on_chain_start` (no parent) | `AgentInvocation` when `tags` contain `"agent"` or `metadata.agent_name`; otherwise `Workflow`. | Sets `framework="langchain"`, stores serialized inputs (`input_context` or `initial_input`), adopts `metadata.agent_type`, `metadata.model_name`, `metadata.system` when present. |
+| `on_chain_start` (has parent) | `ToolCall` when `metadata` exposes tool hints (`gen_ai.tool.*`, `tool_*`, or `gen_ai.task.type` containing "tool"); otherwise `Task` with `task_type="chain"`. | Tool calls reuse an existing `ToolCall` (if `on_tool_start` fired first), refresh `arguments` from `inputs`, and stash JSON in `attributes["tool.arguments"]`. Non-tool paths create a `Task` and serialize inputs into `task.input_data`. |
+| `on_chat_model_start` / `on_llm_start` | `LLMInvocation`. | Prompts/messages become `InputMessage` parts, model name resolved from serialized payload → metadata → kwargs; agent context propagated from parent entity; `on_llm_start` simply calls the chat handler and overwrites `operation="generate_text"`. |
+| `on_llm_end` | — | Fills `output_messages`, extracts token counts from `response.llm_output.usage`, then stops the invocation. |
+| `on_tool_start` | `ToolCall`. | Creates (or updates) a `ToolCall` with normalized name/id, serializes `inputs`/`input_str`, records agent context when parent is an `AgentInvocation`, sets `attributes["tool.arguments"]`. |
+| `on_tool_end` | — | Serializes tool output into `attributes["tool.response"]` and stops the call. |
+| `on_chain_end` | — | Resolves the registered entity for `run_id` (`Workflow`, `AgentInvocation`, `Task`, or `ToolCall`), copies serialized outputs to the matching field, then stops it. |
+| Any `*_error` | — | Invokes `fail_by_run_id(run_id, GenAIError(message=str(error), type=type(error)))`; the util layer handles span status and cleanup. |
 
-## Core GenAI Types Referenced
+Common behaviours:
 
-```text
-Workflow          # top-level orchestration (multi-step / multi-agent)
-AgentInvocation   # agent creation or invocation lifecycle
-Task              # chain step or tool use (task_type = chain | tool_use)
-LLMInvocation     # model call (chat/generate) with request/response semantics
-```
-Auxiliary fields emitted only if present: tool/functions (request_functions), message content (input_messages/output_messages), token usage (input_tokens/output_tokens), stop sequences, temperature/top_p/top_k penalties, choice count, service tier, finish reasons.
+- Tags are preserved on every entity via `attributes["tags"]`.
+- `_serialize` prefers JSON (UTF-8 preserved) with `str()` fallback; un-serializable payloads become `None`.
+- Agent-aware parenting ensures `ToolCall` and `LLMInvocation` instances inherit `agent_name` / `agent_id` when their parent entity is an `AgentInvocation`.
 
----
 
-## Callback Classification Logic (Start Phase)
-
-```text
-on_chain_start(serialized, inputs, run_id, parent_run_id, metadata, tags):
-    name = heuristic(serialized, kwargs)
-    if is_agent_run(serialized, metadata, tags): → AgentInvocation
-    else if parent_entity == None:            → Workflow
-    else:                                     → Task(task_type = "chain", parent = parent_entity)
-
-on_tool_start(serialized, input_str|inputs, run_id, parent_run_id,...):
-    → Task(task_type = "tool_use") parent = entity(parent_run_id)
-
-on_chat_model_start(serialized, messages, run_id, parent_run_id,...):
-    → LLMInvocation(operation = "chat") with structured request_* attrs
-
-on_llm_start(serialized, prompts, run_id,...):
-    internally builds messages from prompts → LLMInvocation then sets operation = "generate_text"
-```
-
-### Agent Detection Heuristics (is_agent_run)
-Checks (case-insensitive):
-- metadata keys: `ls_span_kind|ls_run_kind|ls_entity_kind|run_type|ls_type` containing "agent"
-- flags: `ls_is_agent|is_agent` boolean true or string in {"true","1","agent"}
-- tags list items containing substring "agent"
-- serialized name or id (string/list) containing "agent"
-Result: first positive → classify as AgentInvocation.
-
-### Parent Resolution & Implicit Stack
-- Explicit `parent_run_id` looked up in `_entities`.
-- If absent (None) and starting Agent/Workflow, entity run_id is pushed on context stack `genai_active_entity_stack`.
-- LLMInvocation without explicit parent attempts implicit stack parent propagation (agent/workflow ids for cross-linking).
-
----
-
-## Callback → GenAI Type & Telemetry Table
-
-| Callback | GenAI Type Created | Operation / task_type (set or mutated) | Start Phase Telemetry Actions | End Phase Telemetry / Evaluation |
-|----------|--------------------|----------------------------------------|-------------------------------|----------------------------------|
-| `on_chain_start` | `Workflow` (no parent & not agent) / `AgentCreation` or `AgentInvocation` (agent heuristics) / `Task` (otherwise) | Workflow: — / Agent: `operation=create_agent` or `invoke_agent` / Task: `task_type=chain` | Instantiate entity; propagate parent ids; start span; preallocate metrics; serialize `inputs` (workflow.initial_input / task.input_data / agent.input_context); push to context stack (workflow/agent) | Workflow: `final_output` stored then span stop; Agent: `output_result`; Task: `output_data`; duration metrics recorded |
-| `on_chain_end` | (same as started) | — | (No new start actions) | Store outputs in corresponding output field; stop span; record duration; no evaluation |
-| `on_tool_start` | `Task` | `task_type=tool_use` | Start span; preallocate metrics; serialize tool input(s) into `input_data`; parent resolution | On `on_tool_end` stores `output_data`, stops span |
-| `on_tool_end` | `Task` | — | — | Serialize `output` -> `output_data`; stop span; record duration |
-| `on_chat_model_start` | `LLMInvocation` | `operation=chat` | Build input messages; collect request_* attributes (temperature, top_p, etc.); start span; metrics prealloc; events or prompt capture | Completed on `on_llm_end` |
-| `on_llm_start` | `LLMInvocation` (same instance) | Mutates `operation=generate_text` | Reuses chat model start logic; no additional telemetry beyond operation override | Completed on `on_llm_end` |
-| `on_llm_end` | `LLMInvocation` | — | — | Build `output_messages`; set `response_model_name`, `response_id`, token usage; finish reasons; emit events or prompt capture; stop span; record duration & token metrics; trigger evaluation (`evaluate_llm`) |
-| `on_*_error` (llm/chain/tool/agent/retriever) | Active entity | — | — | Populate `error_message` & `error_type`; invoke fail_*; clear LLM `output_messages`; mark span error; unregister entity |
-
-Notes:
-
-- "metrics prealloc" indicates duration/token instruments prepared; actual values observed at stop.
-- Evaluation only occurs for `LLMInvocation` after successful or failed completion (`on_llm_end` / error handlers).
-- Parent propagation: workflow/agent ids cascaded to children (LLMInvocation/task) in `_start_entity`.
-
-Metrics:
-
-- Duration histogram: recorded on end (latency per entity).
-- Token histogram: recorded when `input_tokens` / `output_tokens` available (LLMInvocation).
-
-Content Events vs Prompt Capture:
-
-- If `should_emit_events()` true: emits `MessageEvent` / `ChoiceEvent` (LLM start/end) via `content_events` emitter.
-- Else if `should_send_prompts()` true: captures serialized payload into `entity.attributes['prompt_capture']` (`inputs` / `outputs` / `error`).
-
-Evaluation:
-
-- Triggered only for `LLMInvocation` after `on_llm_end` (`evaluate_llm(invocation)`). Evaluation results then flow through GenAI handler to evaluation emitters.
-
----
-
-## Attribute Harvesting Sources (Functions & Outputs)
-
-| Source / Data | Callback Handler Function(s) | Extraction Logic Summary | Resulting Fields / Placement |
-|---------------|------------------------------|--------------------------|------------------------------|
-| Raw callback `metadata` | `_sanitize_metadata_dict`, `_collect_attributes` | Removes nulls; coerces complex types to strings; splits out `ls_` prefixed legacy keys into `langchain_legacy`; filters reserved hyperparameter keys after normalization | `entity.attributes` (with nested `langchain_legacy`) |
-| Invocation params (`invocation_params`) for LLM | `on_chat_model_start` local helpers `_pop_float/_pop_int/_pop_stop_sequences`, `_extract_request_functions` | Pop known hyperparameters; convert numeric types; stop sequences normalized to list[str]; remove duplicates to avoid double counting | LLMInvocation fields: `request_temperature`, `request_top_p`, `request_top_k`, `request_frequency_penalty`, `request_presence_penalty`, `request_seed`, `request_max_tokens`, `request_choice_count`, `request_stop_sequences`, `request_functions` |
-| Model & provider names | `on_chat_model_start` (raw `serialized` + metadata) | Fallback order: invocation_params.model_name → metadata.ls_model_name/model_name → serialized.name → "unknown-model"; provider resolved from ls_provider/provider keys | `LLMInvocation.request_model`, `LLMInvocation.provider` |
-| Agent classification | `_is_agent_run` (used by `on_chain_start`) | Heuristic over metadata keys, flags, tags, serialized name/id content | Determines creation of `AgentInvocation` vs `Workflow`/`Task`; sets `operation` create vs invoke |
-| Input messages (chat / prompts) | `_build_input_messages` (chat), `on_llm_start` (prompt wrapping) | Each incoming prompt or `BaseMessage` converted to `InputMessage(role, parts=[Text])` | `LLMInvocation.input_messages` |
-| Output messages | `on_llm_end` | First generation's message content + finish_reason captured; tool/function calls not yet expanded into `ToolCall` dataclass here | `LLMInvocation.output_messages`, `response_finish_reasons` (implicit list) |
-| Finish reason | `on_llm_end` | Extracted from `generation.generation_info.finish_reason` fallback "stop" | `OutputMessage.finish_reason`; aggregated list to `LLMInvocation.response_finish_reasons` |
-| Token usage | `on_llm_end` | Reads `llm_output.usage.prompt_tokens` / `completion_tokens` or `token_usage` fallback | `LLMInvocation.input_tokens`, `LLMInvocation.output_tokens`; feeds token metrics |
-| Tool definitions for function calling | `_extract_request_functions` (invocation params) | Filters each tool.function dict for allowed keys (name, description, parameters) | `LLMInvocation.request_functions` (semantic emission) |
-| Truncation & original lengths | `_maybe_truncate`, `_store_serialized_payload`, `_record_payload_length` | Serializes JSON; if > 8KB replaces with `<truncated:N bytes>` and records original length mapping | Stored fields: `workflow.initial_input`, `workflow.final_output`, `agent.input_context`, `agent.output_result`, `task.input_data`, `task.output_data`, plus `entity.attributes.orig_length[field]` |
-| Prompt capture (non-event mode) | `_capture_prompt_data` invoked in start/end callbacks conditional on `should_send_prompts()` | Stores serialized inputs/outputs/error under `entity.attributes['prompt_capture']` keyed by phase | `entity.attributes.prompt_capture.inputs|outputs|error` |
-| Parent identity propagation | `_start_entity`, `_resolve_parent`, `_find_agent` | Reads explicit `parent_run_id` else context stack; copies agent/workflow ids into LLMInvocation | `LLMInvocation.agent_name`, `LLMInvocation.agent_id`, `LLMInvocation.workflow_id` |
-| Error details | `_handle_error` → `_fail_entity` | Captures exception type/message; clears LLM outputs; sets type-specific output fields to error string | `entity.attributes.error_message`, `entity.attributes.error_type` + output field mutation |
-
-Semantic Convention Emission:
-
-Dataclass fields decorated with `metadata['semconv']` (e.g. `request_model`, `response_model_name`, `agent_name`, `agent_id`, `operation`, hyperparameters, token usage) are collected via emitter logic (span emitter) using `entity.semantic_convention_attributes()`; non-semconv harvested data remains in `entity.attributes` for vendor or legacy enrichment.
-
----
-
-## Telemetry Produced Per GenAI Type
+## Sample Trace (`examples/manual/t.py`)
 
 ```text
-Workflow:
-  Span: workflow identity (name, workflow_type, description, framework)
-  Metrics: duration
-  Events/Content: prompt_capture initial_input/final_output (if enabled)
-AgentInvocation:
-  Span: agent name/id, operation(create|invoke), description, model, tools[]
-  Metrics: duration
-  Events/Content: input_context/output_result capture
-Task (chain/tool_use):
-  Span: task name, task_type, source(workflow|agent), assigned_agent, objective
-  Metrics: duration
-  Events/Content: input_data/output_data capture
-LLMInvocation:
-  Span: request_model, provider, operation(chat|generate_text), hyperparameters, response_model/id, token usage, stop sequences, finish reasons, functions
-  Metrics: duration, token histograms
-  Events: MessageEvent(s) & ChoiceEvent(s) OR prompt_capture of inputs/outputs
-  Evaluation: post-stop evaluation results emitted (metrics/spans/logs depending on emitters)
+Trace ID: 879de17ad8b2ce0565d081fcceea5238
+└── Span ID: eed435b2128ed02a  - invoke_agent weather-agent [op:invoke_agent]
+    ├── Span ID: ba3fca28e7b484da  - gen_ai.task model
+    │   ├── Span ID: 9567d0b878dce12b  - chat ChatOpenAI [op:chat]
+    │   └── Span ID: 9ef4fd28e1fac76f  - gen_ai.task model_to_tools
+    ├── Span ID: 1c4c2c3561a6bdaa  - gen_ai.task tools
+    │   ├── Span ID: d9715ba2dc8026fe  - tool get_weather [op:execute_tool]
+    │   └── Span ID: da16fac4673f3da1  - gen_ai.task tools_to_model
+    └── Span ID: f5330649bb2b3ba0  - gen_ai.task model
+        ├── Span ID: a85348539e216d94  - chat ChatOpenAI [op:chat]
+        └── Span ID: c0ecb30e07fe5291  - gen_ai.task model_to_tools
 ```
 
----
+Highlights:
 
-## Error Handling Flow
+- A single agent span roots the trace; chain tasks and tool calls remain within the same trace.
+- Tool execution is captured twice: once as the orchestration `Task` (`gen_ai.task tools`) and once as the `ToolCall` span (`tool get_weather`).
+- Follow-up model/tool orchestration stays under the agent root through `parent_run_id` propagation.
+
+
+## Lifecycle Cheat Sheet
 
 ```text
-on_*_error(error):
-  entity.attributes.error_message = str(error)
-  fail_* method called (type-specific)
-  For LLMInvocation: output_messages cleared
-  Span status marked error (in handler emitters)
-  Prompt capture of error (if enabled)
+on_chain_start (root)
+    ├─ agent metadata → start_agent(AgentInvocation)
+    └─ otherwise     → start_workflow(Workflow)
+        │
+        └─ on_chain_start (child)
+             ├─ tool metadata → start_tool_call(ToolCall)
+             │       └─ on_tool_end → stop_tool_call
+             └─ default       → start_task(Task)
+                     ├─ on_chat_model_start / on_llm_start → start_llm
+                     ├─ on_llm_end                          → stop_llm
+                     └─ on_chain_end                        → stop_task
+        └─ on_chain_end → stop_agent / stop_workflow
+
+Errors (any callback) → fail_by_run_id → TelemetryHandler.fail_* → span status = ERROR
 ```
 
----
+Keep this document aligned with the handler whenever new callbacks or entity types gain support.
 
-## Edge Cases & Notes
-- Missing `parent_run_id` in `on_chain_start`: first non-agent run becomes Workflow.
-- Implicit parent stack ensures nested LLM calls inherit agent/workflow identity even if explicit parent omitted.
-- `on_llm_start` routes to `on_chat_model_start` for unified handling, then overrides `operation` to `generate_text`.
-- Truncation threshold: 8192 bytes UTF-8; original length recorded for forensic analysis.
-- `request_functions` omission: empty list if no structured tool definitions.
-- Token usage absent: histograms not updated for that invocation.
-
----
-
-## Minimal Pseudocode Summary
-
-```python
-if callback == chain_start:
-    entity = classify_chain(serialized, metadata, tags, parent_run_id)
-elif callback == tool_start:
-    entity = build_task(tool_use)
-elif callback in {chat_model_start, llm_start}:
-    entity = build_llm_invocation(messages/prompts)
-start_entity(entity)
-...
-if callback == llm_end:
-    enrich_llm(invocation, generations, llm_output)
-    stop_entity(invocation)
-    evaluate(invocation)
-else if callback ends *_start entity:
-    attach_outputs(entity)
-    stop_entity(entity)
-```
-
----
-End of concise callback → GenAI type mapping.

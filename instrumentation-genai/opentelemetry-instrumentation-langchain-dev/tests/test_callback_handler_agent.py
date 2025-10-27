@@ -1,7 +1,7 @@
 # Copyright The OpenTelemetry Authors
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -10,8 +10,9 @@ from langchain_core.messages import HumanMessage
 from opentelemetry.sdk.trace import TracerProvider
 
 from opentelemetry.instrumentation.langchain.callback_handler import (
-    TraceloopCallbackHandler,
+    LangchainCallbackHandler,
 )
+from opentelemetry.util.genai.types import ToolCall
 
 
 class _StubTelemetryHandler:
@@ -21,39 +22,66 @@ class _StubTelemetryHandler:
         self.failed_agents = []
         self.started_llms = []
         self.stopped_llms = []
+        self.started_tools = []
+        self.stopped_tools = []
+        self.failed_tools = []
+        self.entities: dict[str, Any] = {}
 
     def start_agent(self, agent):
         self.started_agents.append(agent)
+        self.entities[str(agent.run_id)] = agent
         return agent
 
     def stop_agent(self, agent):
         self.stopped_agents.append(agent)
+        self.entities.pop(str(agent.run_id), None)
         return agent
 
     def fail_agent(self, agent, error):
         self.failed_agents.append((agent, error))
+        self.entities.pop(str(agent.run_id), None)
         return agent
 
     def start_llm(self, invocation):
         self.started_llms.append(invocation)
+        self.entities[str(invocation.run_id)] = invocation
         return invocation
 
     def stop_llm(self, invocation):
         self.stopped_llms.append(invocation)
+        self.entities.pop(str(invocation.run_id), None)
         return invocation
 
     def evaluate_llm(self, invocation):  # pragma: no cover - simple stub
         return []
 
+    def start_tool_call(self, call):
+        self.started_tools.append(call)
+        self.entities[str(call.run_id)] = call
+        return call
 
-@pytest.fixture()
-def handler_with_stub() -> Tuple[TraceloopCallbackHandler, _StubTelemetryHandler]:
+    def stop_tool_call(self, call):
+        self.stopped_tools.append(call)
+        self.entities.pop(str(call.run_id), None)
+        return call
+
+    def fail_tool_call(self, call, error):
+        self.failed_tools.append((call, error))
+        self.entities.pop(str(call.run_id), None)
+        return call
+
+    def get_entity(self, run_id):
+        return self.entities.get(str(run_id))
+
+
+@pytest.fixture(name="handler_with_stub")
+def _handler_with_stub_fixture() -> Tuple[LangchainCallbackHandler, _StubTelemetryHandler]:
     tracer = TracerProvider().get_tracer(__name__)
     histogram = MagicMock()
     histogram.record = MagicMock()
-    handler = TraceloopCallbackHandler(tracer, histogram, histogram)
+    handler = LangchainCallbackHandler(tracer, histogram, histogram)
     stub = _StubTelemetryHandler()
-    handler._telemetry_handler = stub  # type: ignore[attr-defined]
+    handler._handler = stub  # type: ignore[attr-defined]
     return handler, stub
 
 
@@ -96,7 +124,7 @@ def test_agent_invocation_links_util_handler(handler_with_stub):
     assert stub.stopped_agents, "Agent stop was not forwarded to util handler"
     stopped_agent = stub.stopped_agents[-1]
     assert stopped_agent.output_result and "done" in stopped_agent.output_result
-    assert agent_run_id not in handler._entities  # type: ignore[attr-defined]
+    assert str(agent_run_id) not in stub.entities
 
 
 def test_agent_failure_forwards_to_util(handler_with_stub):
@@ -117,15 +145,93 @@ def test_agent_failure_forwards_to_util(handler_with_stub):
     assert failed_agent.run_id == failing_run_id
     assert recorded_error.message == str(error)
     assert recorded_error.type is RuntimeError
-    assert failing_run_id not in handler._entities  # type: ignore[attr-defined]
+    assert str(failing_run_id) not in stub.entities
+
+
+def test_chain_metadata_maps_to_tool_call(handler_with_stub):
+    handler, stub = handler_with_stub
+
+    agent_run_id = uuid4()
+    handler.on_chain_start(
+        serialized={"name": "AgentExecutor"},
+        inputs={"input": "find weather"},
+        run_id=agent_run_id,
+        tags=["agent"],
+        metadata={"agent_name": "weather_agent"},
+    )
+
+    tool_run_id = uuid4()
+    tool_metadata = {
+        "gen_ai.tool.name": "get_weather",
+        "gen_ai.tool.arguments": {"city": "Berlin"},
+        "gen_ai.task.type": "tool_invocation",
+    }
+    handler.on_chain_start(
+        serialized={"name": "RunnableTool"},
+        inputs={"city": "Berlin"},
+        run_id=tool_run_id,
+        parent_run_id=agent_run_id,
+        metadata=tool_metadata,
+    )
+
+    assert stub.started_tools, "Tool metadata did not trigger ToolCall entity"
+    tool = stub.started_tools[-1]
+    assert isinstance(tool, ToolCall)
+    assert tool.name == "get_weather"
+    assert tool.arguments == {"city": "Berlin"}
+    assert tool.agent_id == str(agent_run_id)
+    assert tool.attributes.get("gen_ai.tool.arguments") is None
+
+    handler.on_chain_end(outputs={"temperature": 20}, run_id=tool_run_id, parent_run_id=agent_run_id)
+
+    assert stub.stopped_tools and stub.stopped_tools[-1] is tool
+    assert tool.attributes.get("tool.response") == '{"temperature": 20}'
+    assert str(tool_run_id) not in stub.entities
+
+
+def test_tool_callbacks_use_tool_call(handler_with_stub):
+    handler, stub = handler_with_stub
+
+    agent_run_id = uuid4()
+    handler.on_chain_start(
+        serialized={"name": "AgentExecutor"},
+        inputs={},
+        run_id=agent_run_id,
+        tags=["agent"],
+        metadata={"agent_name": "weather_agent"},
+    )
+
+    tool_run_id = uuid4()
+    handler.on_tool_start(
+        serialized={"name": "weather_tool", "id": "tool-1"},
+        input_str="ignored",
+        run_id=tool_run_id,
+        parent_run_id=agent_run_id,
+        metadata={"model_name": "fake"},
+        inputs={"city": "Madrid"},
+    )
+
+    assert stub.started_tools, "Tool callback did not create ToolCall"
+    tool = stub.started_tools[-1]
+    assert isinstance(tool, ToolCall)
+    assert tool.name == "weather_tool"
+    assert tool.id == "tool-1"
+    assert tool.arguments == {"city": "Madrid"}
+    assert tool.attributes.get("tool.arguments") == '{"city": "Madrid"}'
+
+    handler.on_tool_end(output={"result": "sunny"}, run_id=tool_run_id, parent_run_id=agent_run_id)
+
+    assert stub.stopped_tools and stub.stopped_tools[-1] is tool
+    assert tool.attributes.get("tool.response") == '{"result": "sunny"}'
+    assert str(tool_run_id) not in stub.entities
 
 
 def test_llm_attributes_independent_of_emitters(monkeypatch):
-    def _build_handler() -> Tuple[TraceloopCallbackHandler, _StubTelemetryHandler]:
+    def _build_handler() -> Tuple[LangchainCallbackHandler, _StubTelemetryHandler]:
         tracer = TracerProvider().get_tracer(__name__)
         histogram = MagicMock()
         histogram.record = MagicMock()
-        handler = TraceloopCallbackHandler(tracer, histogram, histogram)
+        handler = LangchainCallbackHandler(tracer, histogram, histogram)
         stub_handler = _StubTelemetryHandler()
         handler._telemetry_handler = stub_handler  # type: ignore[attr-defined]
         return handler, stub_handler
