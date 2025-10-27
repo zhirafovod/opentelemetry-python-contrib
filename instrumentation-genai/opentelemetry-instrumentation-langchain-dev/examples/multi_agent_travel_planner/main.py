@@ -274,7 +274,18 @@ def flight_specialist_node(state: PlannerState) -> PlannerState:
     llm = _create_llm(
         "flight_specialist", temperature=0.4, session_id=state["session_id"]
     )
-    agent = _create_react_agent(llm, tools=[mock_search_flights])
+    agent = (
+        _create_react_agent(llm, tools=[mock_search_flights]).with_config(
+            {
+                "run_name": "flight_specialist",
+                "tags": ["agent", "agent:flight_specialist"],
+                "metadata": {
+                    "agent_name": "flight_specialist",
+                    "session_id": state["session_id"],
+                },
+            }
+        )
+    )
     task = (
         f"Find an appealing flight from {state['origin']} to {state['destination']} "
         f"departing {state['departure']} for {state['travellers']} travellers."
@@ -299,7 +310,18 @@ def hotel_specialist_node(state: PlannerState) -> PlannerState:
     llm = _create_llm(
         "hotel_specialist", temperature=0.5, session_id=state["session_id"]
     )
-    agent = _create_react_agent(llm, tools=[mock_search_hotels])
+    agent = (
+        _create_react_agent(llm, tools=[mock_search_hotels]).with_config(
+            {
+                "run_name": "hotel_specialist",
+                "tags": ["agent", "agent:hotel_specialist"],
+                "metadata": {
+                    "agent_name": "hotel_specialist",
+                    "session_id": state["session_id"],
+                },
+            }
+        )
+    )
     task = (
         f"Recommend a boutique hotel in {state['destination']} between {state['departure']} "
         f"and {state['return_date']} for {state['travellers']} travellers."
@@ -324,7 +346,18 @@ def activity_specialist_node(state: PlannerState) -> PlannerState:
     llm = _create_llm(
         "activity_specialist", temperature=0.6, session_id=state["session_id"]
     )
-    agent = _create_react_agent(llm, tools=[mock_search_activities])
+    agent = (
+        _create_react_agent(llm, tools=[mock_search_activities]).with_config(
+            {
+                "run_name": "activity_specialist",
+                "tags": ["agent", "agent:activity_specialist"],
+                "metadata": {
+                    "agent_name": "activity_specialist",
+                    "session_id": state["session_id"],
+                },
+            }
+        )
+    )
     task = f"Curate signature activities for travellers spending a week in {state['destination']}."
     result = agent.invoke({"messages": [HumanMessage(content=task)]})
     final_message = result["messages"][-1]
