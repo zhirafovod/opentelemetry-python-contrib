@@ -6,8 +6,8 @@ This document summarizes how the LangChain callback handler in `instrumentation-
 
 | Callback | GenAI entity | Notes |
 |----------|--------------|-------|
-| `on_chain_start` (no parent) | `AgentInvocation` when `tags` contain `"agent"` or `metadata.agent_name`; otherwise `Workflow`. | Sets `framework="langchain"`, stores serialized inputs (`input_context` or `initial_input`), adopts `metadata.agent_type`, `metadata.model_name`, `metadata.system` when present. |
-| `on_chain_start` (has parent) | `ToolCall` when `metadata` exposes tool hints (`gen_ai.tool.*`, `tool_*`, or `gen_ai.task.type` containing "tool"); otherwise `Task` with `task_type="chain"`. | Tool calls reuse an existing `ToolCall` (if `on_tool_start` fired first), refresh `arguments` from `inputs`, and stash JSON in `attributes["tool.arguments"]`. Non-tool paths create a `Task` and serialize inputs into `task.input_data`. |
+| `on_chain_start` (no parent) | `AgentInvocation` when `tags`/`metadata` resolve an `agent_name` (e.g. tag `agent:foo`, `metadata.agent_name`); otherwise `Workflow`. | Sets `framework="langchain"`, stores serialized inputs (`input_context` or `initial_input`), adopts `metadata.agent_type`, `metadata.model_name`, `metadata.system` when present. |
+| `on_chain_start` (has parent) | `AgentInvocation` when `tags`/`metadata` introduce a *new* `agent_name` (different to the nearest ancestor agent); else `ToolCall` when tool hints are present; otherwise `Task` with `task_type="chain"`. | Agent promotion keeps orchestration spans aligned with agent boundaries. Tool paths reuse an existing `ToolCall` (if `on_tool_start` fired first), refresh `arguments`, and stash JSON in `attributes["tool.arguments"]`. Non-tool paths create a `Task` and serialize inputs into `task.input_data`. |
 | `on_chat_model_start` / `on_llm_start` | `LLMInvocation`. | Prompts/messages become `InputMessage` parts, model name resolved from serialized payload → metadata → kwargs; agent context propagated from parent entity; `on_llm_start` simply calls the chat handler and overwrites `operation="generate_text"`. |
 | `on_llm_end` | — | Fills `output_messages`, extracts token counts from `response.llm_output.usage`, then stops the invocation. |
 | `on_tool_start` | `ToolCall`. | Creates (or updates) a `ToolCall` with normalized name/id, serializes `inputs`/`input_str`, records agent context when parent is an `AgentInvocation`, sets `attributes["tool.arguments"]`. |
@@ -19,7 +19,7 @@ Common behaviours:
 
 - Tags are preserved on every entity via `attributes["tags"]`.
 - `_serialize` prefers JSON (UTF-8 preserved) with `str()` fallback; un-serializable payloads become `None`.
-- Agent-aware parenting ensures `ToolCall` and `LLMInvocation` instances inherit `agent_name` / `agent_id` when their parent entity is an `AgentInvocation`.
+- Agent-aware parenting walks up to the nearest `AgentInvocation`, ensuring `Task`, `ToolCall`, and `LLMInvocation` entities inherit `agent_name` / `agent_id`. If callbacks supply a different `agent_name`, the handler promotes that chain to a new `AgentInvocation` span before continuing.
 
 
 ## Sample Trace (`examples/manual/t.py`)

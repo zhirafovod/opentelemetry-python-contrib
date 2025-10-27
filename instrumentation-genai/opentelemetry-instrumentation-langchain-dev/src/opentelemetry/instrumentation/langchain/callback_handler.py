@@ -48,7 +48,32 @@ def _serialize(obj: Any) -> Optional[str]:
             return None
 
 
+def _resolve_agent_name(
+    tags: Optional[list[str]], metadata: Optional[dict[str, Any]]
+) -> Optional[str]:
+    if metadata:
+        for key in ("agent_name", "gen_ai.agent.name", "agent"):
+            value = metadata.get(key)
+            if value:
+                return _safe_str(value)
+    if tags:
+        for tag in tags:
+            if not isinstance(tag, str):
+                continue
+            tag_value = tag.strip()
+            lower_value = tag_value.lower()
+            if lower_value.startswith("agent:") and len(tag_value) > 6:
+                return _safe_str(tag_value.split(":", 1)[1])
+            if lower_value.startswith("agent_") and len(tag_value) > 6:
+                return _safe_str(tag_value.split("_", 1)[1])
+            if lower_value == "agent":
+                return _safe_str(tag_value)
+    return None
+
+
 def _is_agent_root(tags: Optional[list[str]], metadata: Optional[dict[str, Any]]) -> bool:
+    if _resolve_agent_name(tags, metadata):
+        return True
     if tags:
         for tag in tags:
             try:
@@ -149,6 +174,51 @@ class LangchainCallbackHandler(BaseCallbackHandler):
             **(telemetry_handler_kwargs or {})
         )
 
+    def _find_nearest_agent(
+        self, run_id: Optional[UUID]
+    ) -> Optional[AgentInvocation]:
+        current = run_id
+        visited = set()
+        while current is not None and current not in visited:
+            visited.add(current)
+            entity = self._handler.get_entity(current)
+            if isinstance(entity, AgentInvocation):
+                return entity
+            if entity is None:
+                break
+            current = getattr(entity, "parent_run_id", None)
+        return None
+
+    def _start_agent_invocation(
+        self,
+        *,
+        name: str,
+        run_id: UUID,
+        parent_run_id: Optional[UUID],
+        attrs: dict[str, Any],
+        inputs: dict[str, Any],
+        metadata: Optional[dict[str, Any]],
+        agent_name: Optional[str],
+    ) -> AgentInvocation:
+        agent = AgentInvocation(
+            name=name,
+            run_id=run_id,
+            attributes=attrs,
+        )
+        agent.input_context = _serialize(inputs)
+        agent.agent_name = _safe_str(agent_name) if agent_name else name
+        agent.parent_run_id = parent_run_id
+        agent.framework = "langchain"
+        if metadata:
+            if metadata.get("agent_type"):
+                agent.agent_type = _safe_str(metadata["agent_type"])
+            if metadata.get("model_name"):
+                agent.model = _safe_str(metadata["model_name"])
+            if metadata.get("system"):
+                agent.system = _safe_str(metadata["system"])
+        self._handler.start_agent(agent)
+        return agent
+
     def on_chain_start(
         self,
     serialized: Optional[dict[str, Any]],
@@ -168,35 +238,55 @@ class LangchainCallbackHandler(BaseCallbackHandler):
             attrs.update(metadata)
         if tags:
             attrs["tags"] = [str(t) for t in tags]
+        agent_name_hint = _resolve_agent_name(tags, metadata)
         if parent_run_id is None:
             if _is_agent_root(tags, metadata):
-                agent = AgentInvocation(
+                self._start_agent_invocation(
                     name=name,
                     run_id=run_id,
-                    attributes=attrs,
+                    parent_run_id=None,
+                    attrs=attrs,
+                    inputs=inputs,
+                    metadata=metadata,
+                    agent_name=agent_name_hint,
                 )
-                agent.input_context = _serialize(inputs)
-                agent.agent_name = _safe_str(metadata.get("agent_name")) if metadata and metadata.get("agent_name") else name
-                agent.parent_run_id = None
-                agent.framework = "langchain"
-                if metadata:
-                    if metadata.get("agent_type"):
-                        agent.agent_type = _safe_str(metadata.get("agent_type"))
-                    if metadata.get("model_name"):
-                        agent.model = _safe_str(metadata.get("model_name"))
-                    if metadata.get("system"):
-                        agent.system = _safe_str(metadata.get("system"))
-                self._handler.start_agent(agent)
             else:
                 wf = Workflow(name=name, run_id=run_id, attributes=attrs)
                 wf.initial_input = _serialize(inputs)
                 self._handler.start_workflow(wf)
+            return
         else:
+            context_agent = self._find_nearest_agent(parent_run_id)
+            context_agent_name = (
+                _safe_str(context_agent.agent_name or context_agent.name)
+                if context_agent
+                else None
+            )
+            if agent_name_hint:
+                hint_normalized = agent_name_hint.lower()
+                context_normalized = context_agent_name.lower() if context_agent_name else None
+                if context_normalized != hint_normalized:
+                    self._start_agent_invocation(
+                        name=name,
+                        run_id=run_id,
+                        parent_run_id=parent_run_id,
+                        attrs=attrs,
+                        inputs=inputs,
+                        metadata=metadata,
+                        agent_name=agent_name_hint,
+                    )
+                    return
             tool_info = _extract_tool_details(metadata)
             if tool_info is not None:
                 existing = self._handler.get_entity(run_id)
                 if isinstance(existing, ToolCall):
                     tool = existing
+                    if context_agent is not None:
+                        agent_name_value = context_agent.agent_name or context_agent.name
+                        if not getattr(tool, "agent_name", None):
+                            tool.agent_name = _safe_str(agent_name_value)
+                        if not getattr(tool, "agent_id", None):
+                            tool.agent_id = str(context_agent.run_id)
                 else:
                     arguments = tool_info.get("arguments")
                     if arguments is None:
@@ -210,10 +300,9 @@ class LangchainCallbackHandler(BaseCallbackHandler):
                         attributes=attrs,
                     )
                     tool.framework = "langchain"
-                    parent_entity = self._handler.get_entity(parent_run_id)
-                    if isinstance(parent_entity, AgentInvocation):
-                        tool.agent_name = parent_entity.name
-                        tool.agent_id = str(parent_entity.run_id)
+                    if context_agent is not None and context_agent_name is not None:
+                        tool.agent_name = context_agent_name
+                        tool.agent_id = str(context_agent.run_id)
                     self._handler.start_tool_call(tool)
                 if inputs is not None and getattr(tool, "arguments", None) is None:
                     tool.arguments = inputs
@@ -229,10 +318,10 @@ class LangchainCallbackHandler(BaseCallbackHandler):
                     task_type="chain",
                     attributes=attrs,
                 )
-                parent_entity = self._handler.get_entity(parent_run_id)
-                if isinstance(parent_entity, AgentInvocation):
-                    task.agent_name = parent_entity.name
-                    task.agent_id = str(parent_entity.run_id)
+                if context_agent is not None:
+                    if context_agent_name is not None:
+                        task.agent_name = context_agent_name
+                    task.agent_id = str(context_agent.run_id)
                 task.input_data = _serialize(inputs)
                 self._handler.start_task(task)
 
@@ -299,10 +388,11 @@ class LangchainCallbackHandler(BaseCallbackHandler):
             parent_run_id=parent_run_id,
         )
         if parent_run_id is not None:
-            parent_entity = self._handler.get_entity(parent_run_id)
-            if isinstance(parent_entity, AgentInvocation):
-                inv.agent_name = parent_entity.name
-                inv.agent_id = str(parent_entity.run_id)
+            context_agent = self._find_nearest_agent(parent_run_id)
+            if context_agent is not None:
+                agent_name_value = context_agent.agent_name or context_agent.name
+                inv.agent_name = _safe_str(agent_name_value)
+                inv.agent_id = str(context_agent.run_id)
         self._handler.start_llm(inv)
 
     def on_llm_start(
@@ -375,6 +465,16 @@ class LangchainCallbackHandler(BaseCallbackHandler):
             attrs.update(metadata)
         if tags:
             attrs["tags"] = [str(t) for t in tags]
+        context_agent = (
+            self._find_nearest_agent(parent_run_id)
+            if parent_run_id is not None
+            else None
+        )
+        context_agent_name = (
+            _safe_str(context_agent.agent_name or context_agent.name)
+            if context_agent
+            else None
+        )
         id_source = payload.get("id") or extra.get("id")
         if isinstance(id_source, (list, tuple)):
             id_value = ".".join(_safe_str(part) for part in id_source)
@@ -389,6 +489,11 @@ class LangchainCallbackHandler(BaseCallbackHandler):
                 existing.arguments = arguments
             if attrs:
                 existing.attributes.update(attrs)
+            if context_agent is not None:
+                if not getattr(existing, "agent_name", None) and context_agent_name is not None:
+                    existing.agent_name = context_agent_name
+                if not getattr(existing, "agent_id", None):
+                    existing.agent_id = str(context_agent.run_id)
             if existing.framework is None:
                 existing.framework = "langchain"
             return
@@ -401,10 +506,9 @@ class LangchainCallbackHandler(BaseCallbackHandler):
             attributes=attrs,
         )
         tool.framework = "langchain"
-        parent_entity = self._handler.get_entity(parent_run_id)
-        if isinstance(parent_entity, AgentInvocation):
-            tool.agent_name = parent_entity.name
-            tool.agent_id = str(parent_entity.run_id)
+        if context_agent is not None and context_agent_name is not None:
+            tool.agent_name = context_agent_name
+            tool.agent_id = str(context_agent.run_id)
         if arguments is not None:
             serialized_args = _serialize(arguments)
             if serialized_args is not None:
