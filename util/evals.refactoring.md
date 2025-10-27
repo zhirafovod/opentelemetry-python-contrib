@@ -76,6 +76,114 @@ Entry point groups (in `pyproject.toml`):
 - `opentelemetry_util_genai_evaluators` -> factories provided by evals base (builtins).
 - Additional evaluator integrations (deepeval, nltk) continue to publish their factories to same group.
 
+## Completion Callback Plugin Architecture (NEW)
+
+Introduce a distinct, pluggable entry point group for generic completion callbacks so third-party packages can hook into any GenAI entity completion without depending on evaluator internals. This is separate from evaluator factories, allowing non-evaluation post-processing (e.g., persistence, custom analytics, enrichment) to participate uniformly.
+
+### Entry Point Group
+
+`opentelemetry_util_genai_completion_callbacks` (new)
+
+Each entry point should resolve to either:
+
+1. A class implementing the `CompletionCallback` protocol (with `on_completion(self, invocation: GenAI) -> None`).
+2. A zero-argument factory callable returning an instance implementing the protocol.
+
+### Environment Variables (Proposed)
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS` | Comma-separated list of callback entry point names to enable (subset filter). If unset, all loadable callbacks are attempted. | unset (load all) |
+| `OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS` | If truthy (`1,true,yes,on`), skip loading built-in callbacks (including evaluator manager auto-registration). | unset (load defaults) |
+
+### Loading Logic (Handler Integration)
+
+Pseudo-code to be added to `handler.py` (during `TelemetryHandler.__init__` after initializing `_completion_callbacks`):
+
+```python
+def _load_completion_callbacks_filtered() -> list[CompletionCallback]:
+  try:
+    from opentelemetry.util._importlib_metadata import entry_points
+  except Exception:
+    return []
+  requested = os.getenv("OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS")
+  requested_set: set[str] | None = None
+  if requested:
+    requested_set = {n.strip() for n in requested.split(",") if n.strip()}
+  callbacks: list[CompletionCallback] = []
+  for ep in entry_points(group="opentelemetry_util_genai_completion_callbacks"):
+    name = getattr(ep, "name", None)
+    if requested_set and name not in requested_set:
+      continue
+    try:
+      obj = ep.load()
+      # If obj is class with on_completion, instantiate; if callable returning instance, invoke
+      if hasattr(obj, "on_completion"):
+        instance = obj  # may be instance or class
+        if isinstance(obj, type):  # class -> instantiate
+          instance = obj()
+      elif callable(obj):
+        instance = obj()
+      else:
+        continue
+      if not hasattr(instance, "on_completion"):
+        continue
+      callbacks.append(instance)  # type: ignore[arg-type]
+    except Exception:
+      _LOGGER.debug("Failed to load completion callback %s", name, exc_info=True)
+      continue
+  return callbacks
+
+# In TelemetryHandler.__init__ after self._completion_callbacks initialized:
+if not _is_truthy_env(os.getenv("OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS")):
+  for cb in _load_completion_callbacks_filtered():
+    self.register_completion_callback(cb)
+```
+
+### Evaluator Manager Interaction
+
+Evaluator manager remains a special completion callback (registered only if evaluators are present). Its registration should respect `OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS` (i.e., skip if disabled). The environment variable `OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS` does NOT need to list the manager; it is implicit when evaluators exist unless defaults are disabled.
+
+### Mechanical Tasks (Augment Existing Migration List)
+
+Add after existing step 6 (handler modifications):
+
+6a. Define new entry point group in core util `pyproject.toml` (or optionally in evals package if base callbacks shipped there) under `[project.entry-points.opentelemetry_util_genai_completion_callbacks]` with at least one example (e.g., noop or simple logging callback).
+
+6b. Implement `_load_completion_callbacks_filtered` in `handler.py` and invoke inside `TelemetryHandler.__init__` honoring env variables.
+
+6c. Update evaluator manager bootstrap to check `OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS` before registering.
+
+6d. Write tests:
+
+- Loading all callbacks when no env filter set.
+- Filtering by name (set env with single callback).
+- Disabling defaults prevents evaluator manager registration.
+- Faulty callback entry point does not break initialization (silently skipped).
+
+6e. Documentation: extend architecture doc with a section "Completion Callback Plugins" including env vars, expected protocol surface, and example `pyproject.toml` snippet.
+
+6f. CHANGELOG entry referencing new entry point group and environment variables.
+
+6g. Grep validation: ensure no stale references to old internal evaluator callback registration remain after refactor.
+
+### Risks / Mitigations (Additional)
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Callback raises exception on load | Initialization failure / crash | Wrap load in try/except, log debug, continue |
+| User sets filter but names mismatch | No callbacks loaded unintentionally | Emit debug log listing requested names & loaded subset; consider warning if result empty |
+| Ordering of callbacks matters (e.g., evaluator should run before persistence) | Unexpected side effects order | For now rely on entry point iteration order; later allow `OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACK_ORDER` if needed |
+| Disable defaults hides evaluator manager silently | Confusion for users expecting evaluations | Document clearly; add debug log when defaults disabled |
+
+### Future Enhancements (Not In Scope Now)
+
+- Callback dependency ordering or priority field.
+- Support async callbacks (awaitable `on_completion`).
+- Rich health reporting for failed callbacks.
+- Separate entry point group for pre-start hooks (different lifecycle phase).
+
+
 Core util modifications:
 
 - Remove evaluator module directory.
