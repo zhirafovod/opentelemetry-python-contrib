@@ -1,6 +1,6 @@
 # LangChain Callback Handler Refactoring Plan
 
-Goal: Ensure all spans for a single agent workflow execution share one trace_id with correct parent/child relationships (AgentInvocation root → LLMInvocation → Task(tool_use) → follow‑up LLMInvocation, etc.).
+Goal: Ensure all spans for a single agent workflow execution share one trace_id with correct parent/child relationships (AgentInvocation root → LLMInvocation → Step(tool_use) → follow‑up LLMInvocation, etc.).
 
 ## 1. Current Issues Summary
 
@@ -10,7 +10,7 @@ Goal: Ensure all spans for a single agent workflow execution share one trace_id 
 | No span registry (run_id → Span) | Cannot look up parent span by run_id | Callback handler tracks entities, not spans; TelemetryHandler doesn’t expose active span map. |
 | Agent / workflow spans may end before children start | Children lose ancestry → new trace | Need lifecycle coordination (defer end until descendants finished). |
 | Identity stack tracks run_ids only (no span objects) | Identity attributes propagate but not trace context | Must augment with span references or centralized registry. |
-| SpanEmitter oblivious to hierarchy semantics (tool vs model vs task) | Flat sequence of unrelated traces | Parenting logic needs semantic rules. |
+| SpanEmitter oblivious to hierarchy semantics (tool vs model vs step) | Flat sequence of unrelated traces | Parenting logic needs semantic rules. |
 | Duplicate doc sections & unclear desired model (fixed) | Confusion for implementers | Mapping file updated with desired unified model. |
 
 ## 2. Target Architecture Changes
@@ -27,16 +27,16 @@ Goal: Ensure all spans for a single agent workflow execution share one trace_id 
    - If tool call originates from a model tool request (detect via presence of active LLMInvocation run_id on stack or by passing model run_id explicitly), parent = that LLM span.
    - Else parent = AgentInvocation span (or Workflow if multi-agent orchestration outside agent context).
 5. Follow-up LLM Calls After Tool:
-   - Parent = tool task span for granular chaining (config flag `GENAI_LANGCHAIN_FLATTEN_TOOL_CHILDREN=true` to flatten to agent parent if desired).
+   - Parent = tool step span for granular chaining (config flag `GENAI_LANGCHAIN_FLATTEN_TOOL_CHILDREN=true` to flatten to agent parent if desired).
 6. Orphan Handling:
    - If parent_run_id provided but parent span not found, still create span (root) and set attribute `gen_ai.parent.missing=true` + `gen_ai.parent.run_id=<uuid>` for diagnostics.
 
-## 3. Step-by-Step Refactoring Tasks
+## 3. Step-by-Step Refactoring Steps
 
 Status Update (Phase 0 Implemented):
 
 - Added deferred stop logic with `pending_stop` flag and `_child_counts` in `LangchainCallbackHandler` so agent/workflow spans remain open until children finish. This should unify trace IDs for sequential agent→LLM→tool chains where previously parent spans ended prematurely.
-- Remaining tasks below adjust to reflect what is DONE vs PENDING.
+- Remaining steps below adjust to reflect what is DONE vs PENDING.
 
 | Step | Description | Files | Category | Status |
 |------|-------------|-------|----------|--------|
@@ -101,7 +101,7 @@ class TelemetryHandler:
 
 | Flag | Purpose | Default |
 |------|---------|---------|
-| `GENAI_LANGCHAIN_FLATTEN_TOOL_CHILDREN` | Make tool follow-up LLM calls parent to AgentInvocation instead of tool task span | `false` |
+| `GENAI_LANGCHAIN_FLATTEN_TOOL_CHILDREN` | Make tool follow-up LLM calls parent to AgentInvocation instead of tool step span | `false` |
 | `GENAI_LANGCHAIN_ORPHAN_DIAGNOSTICS` | Emit orphan diagnostics attributes/logs | `true` |
 
 ## 7. Testing Matrix
@@ -109,10 +109,10 @@ class TelemetryHandler:
 | Scenario | Expected Outcome |
 |----------|------------------|
 | Simple agent → model | 2 spans same trace; parent-child link set |
-| Agent → model(tool request) → tool task | 3 spans same trace; tool parent = model span |
-| Agent → model(tool request) → tool task → follow-up model | 4 spans same trace; follow-up model parent = tool task (or agent if flatten flag true) |
+| Agent → model(tool request) → tool step | 3 spans same trace; tool parent = model span |
+| Agent → model(tool request) → tool step → follow-up model | 4 spans same trace; follow-up model parent = tool step (or agent if flatten flag true) |
 | Orphan child (inject bad parent_run_id) | Span created; attribute `gen_ai.parent.missing=true` |
-| Parallel tool tasks | All tool spans share agent trace; each child parent = triggering model span |
+| Parallel tool steps | All tool spans share agent trace; each child parent = triggering model span |
 | Error in tool | Tool span status=ERROR; trace continuity preserved |
 | Nested agent inside workflow | Inner agent span child of workflow span (single trace) |
 
@@ -134,7 +134,7 @@ class TelemetryHandler:
 ## 10. Incremental Delivery Plan
 
 1. Implement registry + parenting for LLMInvocation only (minimal change).
-2. Extend to Tool Tasks.
+2. Extend to Tool Steps.
 3. Add agent/workflow deferred end semantics.
 4. Introduce config flags & diagnostics.
 5. Finalize tests & docs; update CHANGELOG.

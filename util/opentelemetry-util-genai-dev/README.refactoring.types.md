@@ -5,7 +5,7 @@ Owner: (add GitHub handle)
 Last Updated: 2025-10-08
 
 ## 1. Objective
-Refactor `opentelemetry-instrumentation-langchain-dev` so it no longer emits spans / attributes directly. Instead it constructs GenAI dataclass instances (`LLMInvocation`, `Workflow`, `AgentInvocation`, `Task`, `ToolCall`) and drives emission exclusively through `opentelemetry.util.genai` (`TelemetryHandler`). This aligns LangChain instrumentation with the implementation‑aligned architecture and enables: centralized emitter configuration, evaluation pipeline reuse, consistent semantic conventions, and simplified vendor flavor extensions.
+Refactor `opentelemetry-instrumentation-langchain-dev` so it no longer emits spans / attributes directly. Instead it constructs GenAI dataclass instances (`LLMInvocation`, `Workflow`, `AgentInvocation`, `Step`, `ToolCall`) and drives emission exclusively through `opentelemetry.util.genai` (`TelemetryHandler`). This aligns LangChain instrumentation with the implementation‑aligned architecture and enables: centralized emitter configuration, evaluation pipeline reuse, consistent semantic conventions, and simplified vendor flavor extensions.
 
 ### Vendor-Neutral Schema Rule
 GenAI dataclasses MUST remain vendor-neutral:
@@ -44,11 +44,11 @@ LangChain callbacks map to GenAI invocation types:
 | `on_llm_start` | (Initial Phase) `LLMInvocation` | Non-chat, treat as completion style; same dataclass. |
 | `on_llm_end` | (Finish) same `LLMInvocation` | Populate response fields, tokens, finish reasons then `stop_llm()`. |
 | `on_chain_start` (root) | `Workflow` | First chain in a trace becomes a `Workflow`. |
-| `on_chain_start` (nested non-agent) | `Task` | Nested chain that is not agent -> `Task` child of workflow / agent. |
+| `on_chain_start` (nested non-agent) | `Step` | Nested chain that is not agent -> `Step` child of workflow / agent. |
 | `on_chain_start` (agent detected) | `AgentInvocation` | Use heuristics already present to classify. |
-| `on_chain_end` | Finish corresponding object | `stop_workflow` / `stop_task` / `stop_agent`. |
-| `on_tool_start` | `Task` (or future `ToolInvocation`) | Represent tool execution as `Task` with `task_type="tool_use"` and name=tool. (Optional future: distinct `ToolInvocation` dataclass). |
-| `on_tool_end` | Finish Task | Set `output_data`. |
+| `on_chain_end` | Finish corresponding object | `stop_workflow` / `stop_step` / `stop_agent`. |
+| `on_tool_start` | `Step` (or future `ToolInvocation`) | Represent tool execution as `Step` with `step_type="tool_use"` and name=tool. (Optional future: distinct `ToolInvocation` dataclass). |
+| `on_tool_end` | Finish Step | Set `output_data`. |
 | `on_*_error` | Fail relevant type | Use `fail_*` API with `Error(message, type)` before discarding state. |
 
 ## 4. Required / Proposed Type Adjustments
@@ -56,9 +56,9 @@ LangChain callbacks map to GenAI invocation types:
 |------|--------|-----------|
 | `Workflow` | Add semconv fields? (None needed now) | Keep minimal; semantic conventions for workflows evolving. |
 | `AgentInvocation` | Already includes `operation`, `description`, `model`, `tools` | Ensure mapping of agent id/name from run_id and name. |
-| `Task` | Reuse for chain/task/tool nodes | Avoid over-proliferation; `task_type` differentiates (chain, tool, internal). |
+| `Step` | Reuse for chain/step/tool nodes | Avoid over-proliferation; `step_type` differentiates (chain, tool, internal). |
 | `ToolCall` | Already present for LLM tool calls (function calling) | No change; enumeration occurs inside LLM content parts. |
-| New (defer) | `ToolInvocation` specialized dataclass | Only if semantics diverge strongly from generic Task. |
+| New (defer) | `ToolInvocation` specialized dataclass | Only if semantics diverge strongly from generic Step. |
 
 No immediate schema changes required; rely on `attributes` for ancillary *neutral* data (tags, metadata). Add helper to convert LangChain metadata into sanitized `attributes` while placing any legacy `ls_*` / LangChain-specific keys inside `attributes['langchain_legacy']` (a dict). Vendor emitters may later translate those into their own prefixed attributes.
 
@@ -68,8 +68,8 @@ chat start  -> build LLMInvocation -> handler.start_llm
 chat end    -> populate response_* tokens -> handler.stop_llm
 chain start (root, non-agent) -> build Workflow -> handler.start_workflow
 chain start (agent) -> build AgentInvocation -> handler.start_agent
-chain start (nested non-agent) -> build Task(task_type="chain") -> handler.start_task
-tool start  -> build Task(task_type="tool_use") -> handler.start_task
+chain start (nested non-agent) -> build Step(step_type="chain") -> handler.start_step
+tool start  -> build Step(step_type="tool_use") -> handler.start_step
 chain/tool end -> set outputs -> handler.stop_*(obj)
 errors (llm/chain/tool/agent) -> handler.fail_*(obj, Error)
 ```
@@ -77,18 +77,18 @@ Parent propagation: Keep dict[run_id -> GenAI] similar to existing `_invocations
 
 ## 6. State Management Strategy
 Internal maps:
-- `_entities: dict[UUID, GenAI]` stores all active objects (workflow, agent, task, llm).
+- `_entities: dict[UUID, GenAI]` stores all active objects (workflow, agent, step, llm).
 - `_llms: dict[UUID, LLMInvocation]` subset for quick access.
 - Optional stacks are derivable via parent links; no explicit stack structure required.
 Creation rules:
 1. Root `on_chain_start` with no parent -> Workflow.
 2. `on_chain_start` with agent heuristic true -> AgentInvocation.
-3. Other chain start -> Task(task_type="chain").
-4. `on_tool_start` -> Task(task_type="tool_use").
-5. LLM chat/completion -> LLMInvocation (child of enclosing agent/task/workflow). If parent is AgentInvocation, copy `agent_name/id`.
+3. Other chain start -> Step(step_type="chain").
+4. `on_tool_start` -> Step(step_type="tool_use").
+5. LLM chat/completion -> LLMInvocation (child of enclosing agent/step/workflow). If parent is AgentInvocation, copy `agent_name/id`.
 
 ## 7. Error Handling
-- On `on_*_error`, locate entity, populate any partial fields (e.g., `output_result=str(error)` for Agent, `output_data` for Task) then call `fail_*` with `UtilError(message, type(exception))`.
+- On `on_*_error`, locate entity, populate any partial fields (e.g., `output_result=str(error)` for Agent, `output_data` for Step) then call `fail_*` with `UtilError(message, type(exception))`.
 - Ensure entity removal from `_entities` after fail to avoid memory growth.
 
 ## 8. Token & Content Population
@@ -96,7 +96,7 @@ LLM end:
 - Extract first generation content + finish_reason.
 - Map usage: `prompt_tokens -> input_tokens`, `completion_tokens -> output_tokens`.
 - Functions/tool calls: push into `request_functions` if available at start; response tool calls appear as output message parts if LangChain provides them (future – currently minimal).
-Tasks / tools:
+Steps / tools:
 - Serialize inputs/outputs into `input_data` / `output_data` when JSON-serializable and small (< configurable size threshold, e.g., 8 KB) else put a truncated marker and length attribute.
 
 ## 9. Telemetry Handler Integration Pattern
@@ -110,15 +110,15 @@ def _fail(entity: GenAI, exc: BaseException) -> None: ...
 ```
 This removes duplication in callback methods.
 
-## 10. Refactoring Steps / Tasks
+## 10. Refactoring Steps / Steps
 (Each should become a PR / changelog entry.)
 1. Introduce `_entities` registry + helpers without changing current behavior (internal prep).
 2. Replace direct span creation for chat model start/end with existing util calls (already partially done) — remove legacy commented span code.
-3. Implement Workflow/Agent/Task creation logic in `on_chain_start` / `on_tool_start`; adjust `on_chain_end`, `on_tool_end` to stop entities instead of ending spans.
+3. Implement Workflow/Agent/Step creation logic in `on_chain_start` / `on_tool_start`; adjust `on_chain_end`, `on_tool_end` to stop entities instead of ending spans.
 4. Migrate error pathways to `_fail` helper invoking handler.fail_*.
 5. Remove now-unused span creation utilities for LLM spans (`_create_llm_span`, `set_llm_request`, etc.) or gate behind legacy flag for rollback (since dev branch, removal acceptable).
 6. Purge residual attribute setting / association_properties logic (rely on util emitters for semantic attr projection). Retain minimal metadata sanitation to fill `attributes` dict of dataclasses.
-7. Add task/tool output serialization & truncation helper.
+7. Add step/tool output serialization & truncation helper.
 8. Update tests & examples to validate new pipeline (spans still produced through util emitters, but instrumentation no longer sets them directly).
 9. Update docs: this README (plan) and `README.refactoring.telemetry.md` changelog.
 
@@ -134,7 +134,7 @@ This removes duplication in callback methods.
 - No direct OpenTelemetry span creation calls remain in handler (except maybe for still-unconverted paths clearly flagged TODO).
 - All LangChain lifecycle events create/update GenAI dataclasses and call appropriate handler methods.
 - Tests green; manual example emits spans with semantic `gen_ai.*` attributes only (no `ls_*`, no `traceloop.*`).
-- README changelog entries created per task.
+- README changelog entries created per step.
 
 ## 13. Changelog (to be appended by implementer)
 Format:
@@ -146,10 +146,10 @@ Details: ...
 ```
 Initial planned entries:
 1. entities-registry-intro (planned)
-2. workflow-agent-task-mapping (planned)
+2. workflow-agent-step-mapping (planned)
 3. llm-span-removal (planned)
 4. error-path-refactor (planned)
-5. tool-task-consolidation (planned)
+5. tool-step-consolidation (planned)
 6. metadata-truncation (planned)
 7. tests-update (planned)
 8. vendor-neutral-migration (planned)
@@ -159,9 +159,9 @@ Status: done
 Summary: Replace span bookkeeping with GenAI entity registry.
 Details: Introduced `_entities`/`_llms` maps, lifecycle helpers, and removed direct span management.
 
-### 2-workflow-agent-task-mapping
+### 2-workflow-agent-step-mapping
 Status: done
-Summary: Map LangChain chain/tool callbacks to Workflow/Agent/Task dataclasses.
+Summary: Map LangChain chain/tool callbacks to Workflow/Agent/Step dataclasses.
 Details: `on_chain_start`, `on_tool_start`, and related handlers now create/utilize GenAI types with parent propagation and payload capture.
 
 ### 3-llm-span-removal
@@ -174,10 +174,10 @@ Status: done
 Summary: Centralize error handling through GenAI fail lifecycle.
 Details: `_handle_error` routes failures to `_fail_entity`, recording error metadata without span mutation.
 
-### 5-tool-task-consolidation
+### 5-tool-step-consolidation
 Status: done
-Summary: Normalize chain/tool callbacks into `Task` entities.
-Details: Tool and nested chain flows share `_build_task`, including truncation-aware input/output capture.
+Summary: Normalize chain/tool callbacks into `Step` entities.
+Details: Tool and nested chain flows share `_build_step`, including truncation-aware input/output capture.
 
 ### 6-metadata-truncation
 Status: done
@@ -206,8 +206,8 @@ Details: Ensured LLM invocation spans are started via util handler early enough 
 
 ### 11-tool-parent-span-linkage
 Status: done
-Summary: Confirmed tool Task entities correctly inherit parent_run_id and emit spans.
-Details: Reviewed `_build_task` and `on_tool_start` ensuring `parent_run_id` propagation. Added truncation + neutral attribute capture consistent with plan; no additional code changes required beyond existing implementation.
+Summary: Confirmed tool Step entities correctly inherit parent_run_id and emit spans.
+Details: Reviewed `_build_step` and `on_tool_start` ensuring `parent_run_id` propagation. Added truncation + neutral attribute capture consistent with plan; no additional code changes required beyond existing implementation.
 
 ### 12-implicit-parent-fallback
 Status: in-progress

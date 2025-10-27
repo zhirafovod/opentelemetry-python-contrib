@@ -157,7 +157,7 @@ Invocation complete -> EvaluatorManager -> collect raw results (deepeval + heuri
 
 Expose thresholds via config module; allow environment overrides like `OTEL_GENAI_EVAL_TOXICITY_PASS_THRESHOLD=0.3`.
 
-## 9. Phase 1 Implementation Tasks
+## 9. Phase 1 Implementation Steps
 1. Ensure evaluation manager config lists metrics: relevance,hallucination,sentiment,toxicity,bias.
 2. Extend deepeval evaluator: after converting results, derive hallucination score or run custom prompt fallback.
 3. Add lexical relevance fallback if AnswerRelevancyMetric missing.
@@ -165,7 +165,7 @@ Expose thresholds via config module; allow environment overrides like `OTEL_GENA
 5. Update CHANGELOG with phase split and Phase 1 completion when done.
 6. Defer all other metrics to Phase 2 without partial implementations.
 
-## 10. Phase 2 (Future) Tasks (Do Not Implement Yet)
+## 10. Phase 2 (Future) Steps (Do Not Implement Yet)
 1. Advanced metrics (factual_accuracy distinct, coherence heuristic/LLM, linguistic_quality aggregate).
 2. Readability & grammar heuristics.
 3. Utility keywords coverage & conciseness metrics.
@@ -259,7 +259,7 @@ Contract Additions:
 - `EvaluationResult` may gain optional fields: `direction: Literal['higher_better','lower_better']`, `components: Dict[str,float] | None`.
 - Emitters propagate these to attributes: `gen_ai.evaluation.direction`, and flattened `gen_ai.evaluation.components.<name>` if small (<=6 keys) else aggregated JSON string under `gen_ai.evaluation.components.json`.
 
-Phase 1 Stepwise Tasks:
+Phase 1 Stepwise Steps:
 1. Add metrics list (relevance,hallucination,sentiment,toxicity,bias) to configuration.
 2. Implement lexical relevance fallback function.
 3. Implement hallucination derivation or custom prompt fallback.

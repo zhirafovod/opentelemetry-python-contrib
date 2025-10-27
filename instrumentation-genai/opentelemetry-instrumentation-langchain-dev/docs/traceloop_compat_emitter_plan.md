@@ -8,7 +8,7 @@ Owner: (to be filled by implementer)
 Add a pluggable GenAI telemetry "emitter" that recreates (as close as practical) the original Traceloop LangChain instrumentation span & attribute model while preserving the new `opentelemetry-util-genai-dev` architecture. Enable it via an environment variable so downstream users can opt into backward-compatible telemetry without forking.
 
 ## Summary
-The current development callback handler (`opentelemetry-instrumentation-langchain-dev`) switched from in-place span construction (Traceloop style) to delegating LLM lifecycle to `TelemetryHandler` in `opentelemetry-util-genai-dev`. Some original Traceloop logic (hierarchical workflow / task / LLM spans and attribute conventions) is now commented out in:
+The current development callback handler (`opentelemetry-instrumentation-langchain-dev`) switched from in-place span construction (Traceloop style) to delegating LLM lifecycle to `TelemetryHandler` in `opentelemetry-util-genai-dev`. Some original Traceloop logic (hierarchical workflow / step / LLM spans and attribute conventions) is now commented out in:
 
 `instrumentation-genai/opentelemetry-instrumentation-langchain-dev/src/opentelemetry/instrumentation/langchain/callback_handler.py`
 
@@ -16,14 +16,14 @@ Specifically inside:
 - `on_chat_model_start` (original span creation commented)
 - `on_llm_end` (original span finalization + usage attribution commented)
 
-We will introduce a new emitter (e.g. `TraceloopCompatEmitter`) that can generate spans matching the *LLM span layer* semantics (naming + attributes) and optionally re-enable hierarchical spans for workflows/tasks if feasible with minimal callback modifications.
+We will introduce a new emitter (e.g. `TraceloopCompatEmitter`) that can generate spans matching the *LLM span layer* semantics (naming + attributes) and optionally re-enable hierarchical spans for workflows/steps if feasible with minimal callback modifications.
 
 ## Constraints & Design Principles
 1. **Pluggable via env var** – Reuse `OTEL_INSTRUMENTATION_GENAI_EMITTERS`; add a new accepted token (proposal: `traceloop_compat`).
 2. **Non-invasive** – Avoid large rewrites of `TelemetryHandler`; implement the emitter as an additional concrete emitter class living under `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/emitters/`.
 3. **Graceful coexistence** – Allow combinations (e.g. `span_metric,traceloop_compat`) where Traceloop spans are produced alongside semconv spans (document implications / duplication risk).
-4. **Backward-compatible naming** – Use span names & attributes patterned after original code (`<name>.<request_type>` for LLM spans, `workflow_name.task`, etc.).
-5. **Trace shape** – If full hierarchy cannot be reproduced with only the current utility handler interface, provide at least equivalent LLM span attributes; optionally add a light modification to callback handler to emit workflow/task spans *only when env var is enabled*.
+4. **Backward-compatible naming** – Use span names & attributes patterned after original code (`<name>.<request_type>` for LLM spans, `workflow_name.step`, etc.).
+5. **Trace shape** – If full hierarchy cannot be reproduced with only the current utility handler interface, provide at least equivalent LLM span attributes; optionally add a light modification to callback handler to emit workflow/step spans *only when env var is enabled*.
 6. **Fail-safe** – If emitter misconfigured / errors, fallback silently to existing emitters (never break primary telemetry path).
 
 ## Current Architecture Overview (for Agent Reference)
@@ -79,7 +79,7 @@ These indicate Traceloop originally:
 Custom attributes (names via `SpanAttributes` enum) include:
 - `traceloop.workflow.name`
 - `traceloop.entity.path`
-- `traceloop.span.kind` (workflow | task | llm | tool)
+- `traceloop.span.kind` (workflow | step | llm | tool)
 - `traceloop.entity.name`
 - `traceloop.entity.input` / `traceloop.entity.output` (JSON strings)
 Plus semconv incubating GenAI attributes:
@@ -106,7 +106,7 @@ Plus semconv incubating GenAI attributes:
      - Add keys:
        - `traceloop.entity.name` (the callback name)
        - `traceloop.workflow.name` (root chain name if determinable – may need small bookkeeping dictionary for run_id→workflow, replicating existing `self.spans` logic minimally or reuse `self.spans` holder already present).
-       - `traceloop.span.kind` = `llm` for the LLM span (workflow/task spans Phase 2).
+       - `traceloop.span.kind` = `llm` for the LLM span (workflow/step spans Phase 2).
        - Raw inputs (if content capture enabled and events not used) aggregated into `traceloop.entity.input`.
    - On `on_llm_end` add similar output attributes (`traceloop.entity.output`) & usage if available.
 5. **Metrics**: Continue using existing `MetricsEmitter`; no changes required (it already records duration + tokens).
@@ -115,18 +115,18 @@ Plus semconv incubating GenAI attributes:
 
 ## Implementation Phases
 ### Phase 1 (MVP – This Request Scope)
-- [ ] Add new emitter class (LLM span only, no workflow/task hierarchy) producing Traceloop attribute keys & span naming.
+- [ ] Add new emitter class (LLM span only, no workflow/step hierarchy) producing Traceloop attribute keys & span naming.
 - [ ] Add env var token handling (`traceloop_compat`).
 - [ ] Inject minimal extra attributes in callback handler when flag active.
 - [ ] Unit tests validating span name + key attributes presence.
 - [ ] Update docs & changelog stub.
 
 ### Phase 2 (Optional / Future)
-- Reintroduce workflow/task span hierarchy using a small state manager storing run_id relationships (mirroring old `self.spans` but only for naming + parent spans in compat mode).
+- Reintroduce workflow/step span hierarchy using a small state manager storing run_id relationships (mirroring old `self.spans` but only for naming + parent spans in compat mode).
 - Emit tool call spans via either existing ToolCall start/stop or additional callback hooks.
 - Add option to disable semconv span when traceloop compat is enabled alone (controlled by specifying ONLY `traceloop_compat` in env).
 
-## Detailed Task Breakdown for Coding Agent
+## Detailed Step Breakdown for Coding Agent
 1. Parse Env Support
    - File: `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/config.py`
      - Accept new token: if `gen_choice` contains `traceloop_compat` (comma-separated handling needed – currently single value). Adjust parsing to split list (today it treats as single). Option A: extend semantics so variable may be comma-separated; interpret first token as base flavor (span/span_metric/span_metric_event) and additional tokens as augmenting emitters.
@@ -194,7 +194,7 @@ Plus semconv incubating GenAI attributes:
 
 ## Open Questions (Flag for Maintainers)
 1. Should `traceloop_compat` suppress the default semconv span automatically when used alone? (Recommend: yes – document expectation.)
-2. Do we need hierarchical workflow/task spans for MVP? (Recommend: defer; collect feedback.)
+2. Do we need hierarchical workflow/step spans for MVP? (Recommend: defer; collect feedback.)
 3. Should we map `traceloop.span.kind` to semconv `gen_ai.operation.name` or keep separate? (Keep separate for purity.)
 
 ## Acceptance Criteria (Phase 1)
@@ -298,7 +298,7 @@ assert any(s.name.endswith('.chat') and 'traceloop.span.kind' in s.attributes fo
 All changes are additive behind an env flag; rollback is simply removing the emitter file and references. No persistent schema migration or public API change.
 
 ## Next Step
-Implement Phase 1 tasks exactly as listed. This document serves as the execution checklist for the coding AI agent.
+Implement Phase 1 steps exactly as listed. This document serves as the execution checklist for the coding AI agent.
 
 ---
 End of Plan.

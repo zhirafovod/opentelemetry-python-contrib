@@ -52,7 +52,7 @@ _events.set_event_logger_provider(EventLoggerProvider())
 
 
 def _flush_evaluations():
-    """Drain pending async GenAI evaluation tasks if handler is available."""
+    """Drain pending async GenAI evaluation steps if handler is available."""
     try:
         handler = get_telemetry_handler()  # type: ignore
         if handler is not None:

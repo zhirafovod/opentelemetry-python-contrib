@@ -9,7 +9,7 @@ Progress should be appended under the "Refactoring Progress Log" section with da
 Included packages (paths):
 
 - `util/opentelemetry-util-genai-dev/src/opentelemetry/util/genai/` (core types, handler, emitters, instruments, callbacks, attributes, config, tests)
-- `util/opentelemetry-util-genai-dev/src` (any additional subpackages referencing Task)
+- `util/opentelemetry-util-genai-dev/src` (any additional subpackages referencing Step)
 - `util/opentelemetry-util-genai-emitters-splunk`
 - `util/opentelemetry-util-genai-emitters-traceloop`
 - `util/opentelemetry-util-genai-evals-deepeval`
@@ -29,7 +29,7 @@ Core type & lifecycle:
 - Class `Task` -> `Step`
 - Handler methods: `start_task` -> `start_step`; `stop_task` -> `stop_step`; `fail_task` -> `fail_step`
 - Generic handler dispatch branches referencing `Task` updated to `Step`
-- Registry logic (`finish_by_run_id`, `fail_by_run_id`, `start`, `finish`, `fail`) update `Task` cases
+- Registry logic (`finish_by_run_id`, `fail_by_run_id`, `start`, `finish`, `fail`) update `Task` cases to `Step`
 
 Dataclass fields (retain semantics, only names containing `task`):
 
@@ -83,8 +83,8 @@ Impacts:
 
 - Trace readability: span names will shift; no compatibility layer; downstream analysis tools must adapt.
 - Metrics dashboards must be adjusted to new metric names (`gen_ai.step.*`).
-- Any external JSON/log consumers expecting `gen_ai.task.*` will break—acceptable per scope.
-- Evaluation flows unaffected except if they inspect entity type names; ensure no evaluator logic hardcodes `Task`.
+- Any external JSON/log consumers expecting `gen_ai.step.*` will break—acceptable per scope.
+- Evaluation flows unaffected except if they inspect entity type names; ensure no evaluator logic hardcodes `Step`.
 
 ## Ordered Execution Plan
 
@@ -104,12 +104,12 @@ Impacts:
    - `fail_task` -> `fail_step`
    - span name format `gen_ai.task` -> `gen_ai.step`
    - Enum / constants `TASK` -> `STEP` (avoid unrelated contexts)
-9. Update instrumentation (`callback_handler.py` etc.) mapping logic producing Task entities.
-10. Refactor tests: search for regex `task` (case-insensitive) and update expectations, fixtures, variable names.
-11. Rename example variable names and textual prompts containing conceptual "task" to "step" where they refer to Task concept.
-12. Update documentation files and READMEs; rename file names if contain "task".
+9. Update instrumentation (`callback_handler.py` etc.) mapping logic producing Step entities.
+10. Refactor tests: search for regex `step` (case-insensitive) and update expectations, fixtures, variable names.
+11. Rename example variable names and textual prompts containing conceptual "step" to "step" where they refer to Step concept.
+12. Update documentation files and READMEs; rename file names if contain "step".
 13. Run `pytest -k genai` (or full suite) to reveal residual references; fix until green.
-14. Run grep searches to assert zero remaining `gen_ai.task.` keys and `Task` symbol imports in scoped packages.
+14. Run grep searches to assert zero remaining `gen_ai.step.` keys and `Step` symbol imports in scoped packages.
 15. Update CHANGELOG or create temporary dev log entry summarizing the refactor (since dev package, may log in plan only if CHANGELOG policy differs).
 16. Final validation: metrics registration, emitter pipeline, example scripts run sanity check.
 17. Remove this plan's TODO items referencing completion milestones.
@@ -120,8 +120,8 @@ Impacts:
 
 Search verification:
 
-- grep -R "Task" util/opentelemetry-util-genai-dev/src | wc -l
-- grep -R "gen_ai.task" util/opentelemetry-util-genai-dev/src | wc -l
+- grep -R "Step" util/opentelemetry-util-genai-dev/src | wc -l
+- grep -R "gen_ai.step" util/opentelemetry-util-genai-dev/src | wc -l
 
 Refactor sequence suggestion:
 
@@ -153,6 +153,20 @@ H. Update docs & READMEs
 
 Since no backward compatibility is desired, rollback implies reverting to pre-refactor commit using git (e.g., `git revert` or branch reset). Document in Progress Log.
 
+## Refactoring Progress Log
+
+### 2025-10-27
+- [x] Step 2: types.py renamed Task->Step (commit: pending)
+- [x] Step 3: handler.py lifecycle methods updated (commit: pending)
+- [x] Step 4: attributes constants updated (commit: pending)
+- [x] Step 5: emitters (span/metrics/utils) and span names updated (commit: pending)
+- [x] Step 6: instruments metric renamed to gen_ai.step.duration (commit: pending)
+- [x] Step 8: recursive Task→Step replacements applied across scoped packages (commit: pending)
+- [x] Step 9: instrumentation callback handler and related logic emit Step entities (commit: pending)
+- [x] Step 10: tests updated for Step expectations (commit: pending)
+- [x] Step 11: examples refreshed to use Step terminology (commit: pending)
+- [x] Step 12: docs/READMEs migrated to Step language (commit: pending)
+
 ## Progress Log Template
 
 Append entries chronologically.
@@ -168,7 +182,7 @@ Append entries chronologically.
 ## Outstanding Decisions
 
 - Whether to rename `task_type` -> `step_type` (DECIDED: yes)
-- Whether to normalize any natural language in prompts (DECIDED: yes, replace conceptual mentions)
+- Whether to normalize any natural language in prompts (DECIDED: yes, replace conceptual Task mentions)
 - Any migration guide? (DECIDED: Not required in dev packages)
 
 ## Approval & Execution

@@ -98,7 +98,7 @@ def _simple_agent_demo_inner(llm: ChatOpenAI) -> None:
         "Reason step by step to extract the country from the query and call the tool."
     )
 
-    supervisor_system_prompt = """You are a supervisor tasked with routing user queries.
+    supervisor_system_prompt = """You are a supervisor steped with routing user queries.
 Route to the appropriate agent:
 - run_capital_agent: for questions about capital cities or similar
 - run_general_agent: for all other general questions

@@ -197,7 +197,7 @@ Add tests in both packages:
 | Normalization when min != 0 | Rare now; handle later | Assume min=0, log if not |
 
 ---
-## 9. Implementation Task List
+## 9. Implementation Step List
 (Ordered)
 1. Inventory existing constants; add missing (`EXPLANATION`).
 2. Update `EvaluationEventsEmitter`:

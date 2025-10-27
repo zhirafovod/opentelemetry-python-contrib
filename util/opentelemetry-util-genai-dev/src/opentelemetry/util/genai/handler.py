@@ -84,7 +84,7 @@ from opentelemetry.util.genai.types import (
     EvaluationResult,
     GenAI,
     LLMInvocation,
-    Task,
+    Step,
     ToolCall,
     Workflow,
 )
@@ -649,23 +649,23 @@ class TelemetryHandler:
                 pass
         return agent
 
-    # Task lifecycle ------------------------------------------------------
-    def start_task(self, task: Task) -> Task:
-        """Start a task and create a pending span entry."""
+    # Step lifecycle ------------------------------------------------------
+    def start_step(self, step: Step) -> Step:
+        """Start a step and create a pending span entry."""
         self._refresh_capture_content()
-        self._emitter.on_start(task)
-        span = getattr(task, "span", None)
+        self._emitter.on_start(step)
+        span = getattr(step, "span", None)
         if span is not None:
-            self._span_registry[str(task.run_id)] = span
-        self._entity_registry[str(task.run_id)] = task
-        return task
+            self._span_registry[str(step.run_id)] = span
+        self._entity_registry[str(step.run_id)] = step
+        return step
 
-    def stop_task(self, task: Task) -> Task:
-        """Finalize a task successfully and end its span."""
-        task.end_time = time.time()
-        self._emitter.on_end(task)
-        self._notify_completion(task)
-        self._entity_registry.pop(str(task.run_id), None)
+    def stop_step(self, step: Step) -> Step:
+        """Finalize a step successfully and end its span."""
+        step.end_time = time.time()
+        self._emitter.on_end(step)
+        self._notify_completion(step)
+        self._entity_registry.pop(str(step.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -674,14 +674,14 @@ class TelemetryHandler:
                 self._meter_provider.force_flush()  # type: ignore[attr-defined]
             except Exception:
                 pass
-        return task
+        return step
 
-    def fail_task(self, task: Task, error: Error) -> Task:
-        """Fail a task and end its span with error status."""
-        task.end_time = time.time()
-        self._emitter.on_error(error, task)
-        self._notify_completion(task)
-        self._entity_registry.pop(str(task.run_id), None)
+    def fail_step(self, step: Step, error: Error) -> Step:
+        """Fail a step and end its span with error status."""
+        step.end_time = time.time()
+        self._emitter.on_error(error, step)
+        self._notify_completion(step)
+        self._entity_registry.pop(str(step.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -690,7 +690,7 @@ class TelemetryHandler:
                 self._meter_provider.force_flush()  # type: ignore[attr-defined]
             except Exception:
                 pass
-        return task
+        return step
 
     def evaluate_llm(
         self,
@@ -740,7 +740,7 @@ class TelemetryHandler:
         """Wait for all pending evaluations to complete, up to the specified timeout.
 
         This is primarily intended for use in test scenarios to ensure that
-        all asynchronous evaluation tasks have finished before assertions are made.
+        all asynchronous evaluation steps have finished before assertions are made.
         """
         manager = getattr(self, "_evaluation_manager", None)
         if manager is None or not manager.has_evaluators:
@@ -754,8 +754,8 @@ class TelemetryHandler:
             return self.start_workflow(obj)
         if isinstance(obj, (AgentCreation, AgentInvocation)):
             return self.start_agent(obj)
-        if isinstance(obj, Task):
-            return self.start_task(obj)
+        if isinstance(obj, Step):
+            return self.start_step(obj)
         if isinstance(obj, LLMInvocation):
             return self.start_llm(obj)
         if isinstance(obj, EmbeddingInvocation):
@@ -795,8 +795,8 @@ class TelemetryHandler:
             self.stop_workflow(entity)
         elif isinstance(entity, (AgentCreation, AgentInvocation)):
             self.stop_agent(entity)
-        elif isinstance(entity, Task):
-            self.stop_task(entity)
+        elif isinstance(entity, Step):
+            self.stop_step(entity)
         elif isinstance(entity, LLMInvocation):
             self.stop_llm(entity)
         elif isinstance(entity, EmbeddingInvocation):
@@ -812,8 +812,8 @@ class TelemetryHandler:
             self.fail_workflow(entity, error)
         elif isinstance(entity, (AgentCreation, AgentInvocation)):
             self.fail_agent(entity, error)
-        elif isinstance(entity, Task):
-            self.fail_task(entity, error)
+        elif isinstance(entity, Step):
+            self.fail_step(entity, error)
         elif isinstance(entity, LLMInvocation):
             self.fail_llm(entity, error)
         elif isinstance(entity, EmbeddingInvocation):
@@ -827,8 +827,8 @@ class TelemetryHandler:
             return self.stop_workflow(obj)
         if isinstance(obj, (AgentCreation, AgentInvocation)):
             return self.stop_agent(obj)
-        if isinstance(obj, Task):
-            return self.stop_task(obj)
+        if isinstance(obj, Step):
+            return self.stop_step(obj)
         if isinstance(obj, LLMInvocation):
             return self.stop_llm(obj)
         if isinstance(obj, EmbeddingInvocation):
@@ -843,8 +843,8 @@ class TelemetryHandler:
             return self.fail_workflow(obj, error)
         if isinstance(obj, (AgentCreation, AgentInvocation)):
             return self.fail_agent(obj, error)
-        if isinstance(obj, Task):
-            return self.fail_task(obj, error)
+        if isinstance(obj, Step):
+            return self.fail_step(obj, error)
         if isinstance(obj, LLMInvocation):
             return self.fail_llm(obj, error)
         if isinstance(obj, EmbeddingInvocation):

@@ -12,7 +12,7 @@ The implementation broadly aligns with the intended layered design (Types → Ha
 * Evaluation results aggregation: implementation aggregates only when env flag set; architecture doc matches this but does not mention dual emitters (metrics + events) always registered.
 * Environment variable grammar: supports additional directives (`prepend`, `replace-same-name`) and a consolidated baseline selector `OTEL_INSTRUMENTATION_GENAI_EMITTERS` (values: `span`, `span_metric`, `span_metric_event`, plus extras) not fully described in current architecture README.
 * Content capture gating depends on experimental semantic convention opt-in (`OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`); doc currently presents capture variables w/o experimental caveat.
-* Invocation types extended (Workflow, AgentInvocation, Task, EmbeddingInvocation, ToolCall) with additional metrics; architecture snapshot partially anticipates but does not detail metrics instrumentation for agentic types.
+* Invocation types extended (Workflow, AgentInvocation, Step, EmbeddingInvocation, ToolCall) with additional metrics; architecture snapshot partially anticipates but does not detail metrics instrumentation for agentic types.
 * Missing `EvaluationResults` aggregate class (architecture document references an aggregate container) – implementation forwards raw `list[EvaluationResult]`.
 * No explicit `CompositeEmitter.register_emitter` public API (architecture describes one); implementation relies on env parsing + spec registration but lacks runtime chain mutation helpers beyond instantiation.
 * Evaluator plugin system more elaborate than described (plan parsing, per-type metric configuration), but lacks an abstraction for aggregated vs non-aggregated result object.
@@ -27,7 +27,7 @@ The implementation broadly aligns with the intended layered design (Types → Ha
 | Base class name | `GenAI` dataclass | `GenAIInvocation` conceptually | Minor naming divergence (fine if documented) |
 | Semantic attribute surfacing | Dataclass fields with `metadata{"semconv"}` + `semantic_convention_attributes()` | Matches spec | ✅ |
 | Message modeling | `InputMessage` / `OutputMessage` with `parts` (Text / ToolCall / ToolCallResponse / Any) | Doc mentions role/content parts | ✅ |
-| Additional invocation types | `EmbeddingInvocation`, `Workflow`, `AgentInvocation`, `Task`, `ToolCall` | Architecture lists prospective types (Agent, Workflow, Step/Task) | ✅ (needs README refresh) |
+| Additional invocation types | `EmbeddingInvocation`, `Workflow`, `AgentInvocation`, `Step`, `ToolCall` | Architecture lists prospective types (Agent, Workflow, Step/Step) | ✅ (needs README refresh) |
 | Evaluation aggregate | Only `EvaluationResult` (atomic) | `EvaluationResults` aggregate class referenced | Missing class or doc update required |
 | Error representation | `Error(message, type)` | Architecture brief mention only | ✅ |
 | Token fields for embedding | `input_tokens` only; no output tokens | Acceptable (embedding output token concept ambiguous) | Note for doc |
@@ -91,7 +91,7 @@ The implementation broadly aligns with the intended layered design (Types → Ha
 ### 10. Potential Bugs / Risks
 1. `after` / `before` fields in `EmitterSpec` unused – user expectations unmet if third-party supplies ordering hints.
 2. `MetricsEmitter.role = "metric"` may cause confusion; composite categories use plural name.
-3. `ContentEventsEmitter` excludes agent/workflow/task events (commented out) – mismatch with potential future design; silent omission might surprise users.
+3. `ContentEventsEmitter` excludes agent/workflow/step events (commented out) – mismatch with potential future design; silent omission might surprise users.
 4. Content capture silently disabled unless experimental semconv opt-in env var includes `gen_ai_latest_experimental`; architecture doc could mislead users expecting capture.
 5. Evaluation sampling relies on presence of `invocation.span` and its context; if spans disabled but evaluations desired, sampling may degrade (manager logs debug). Consider fallback to random sampling when no trace id.
 6. `_refresh_capture_content` mutates emitters mid-flight; race conditions unlikely (single-thread instrumentation typical) but not guarded by locks.

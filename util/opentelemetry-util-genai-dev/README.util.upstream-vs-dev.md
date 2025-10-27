@@ -9,11 +9,11 @@
 
 | Dimension | Upstream (Stable) | Dev (Refactored) |
 |-----------|-------------------|------------------|
-| Primary Scope | Single LLM invocation lifecycle | Multi-entity (LLM, Embedding, ToolCall, Workflow, Agent, Task) |
+| Primary Scope | Single LLM invocation lifecycle | Multi-entity (LLM, Embedding, ToolCall, Workflow, Agent, Step) |
 | Emission Strategy | Direct span creation & attribute mutation | Pluggable emitter pipeline (spans, content events, metrics, evaluations) |
 | Evaluation Support | None | Built-in evaluator manager + completion callbacks |
 | Content Capture | Fixed (span attributes only) | Dynamic mode (span, events, both) via env + control layer |
-| Type System | Minimal `LLMInvocation` only | Hierarchical base (`GenAI`) + rich invocation/agent/workflow/task structs |
+| Type System | Minimal `LLMInvocation` only | Hierarchical base (`GenAI`) + rich invocation/agent/workflow/step structs |
 | Identifier Strategy | Span identity only | UUID `run_id` + optional `parent_run_id` preserves identity off-trace |
 | Extensibility | Low | High (emitters, evaluators, callbacks, generic lifecycle) |
 | Performance Overhead | Very low | Moderate (dynamic checks, pipeline indirection) |
@@ -34,7 +34,7 @@
 
 ### Dev (`TelemetryHandler`)
 
-- Lifecycle coverage across multiple entity types: `LLMInvocation`, `EmbeddingInvocation`, `ToolCall`, `Workflow`, `AgentInvocation` (create/invoke phases), `Task`.
+- Lifecycle coverage across multiple entity types: `LLMInvocation`, `EmbeddingInvocation`, `ToolCall`, `Workflow`, `AgentInvocation` (create/invoke phases), `Step`.
 - Generic dispatch: `start(obj)`, `finish(obj)`, `fail(obj)` selects concrete handlers.
 - Dynamic environment-driven content capture toggling (`_refresh_capture_content`).
 - Emitter pipeline composed via `build_emitter_pipeline()` (span emitters, content emitters, evaluation emitters, compatibility emitters).
@@ -68,7 +68,7 @@
 
 - Introduces base `GenAI` dataclass (shared telemetry fields: span/context refs, timing, provider, framework, run IDs, agent metadata, conversation/data source IDs).
 - `LLMInvocation` extended with exhaustive request/response control parameters: temperature, top_p, top_k, penalties, stop sequences, choice count, seed, encoding formats, service tiers, fingerprint, finish reasons, function definitions.
-- Additional entity types: `EmbeddingInvocation`, `Workflow`, `AgentCreation`, `AgentInvocation`, `Task`, `ToolCall`, `EvaluationResult`.
+- Additional entity types: `EmbeddingInvocation`, `Workflow`, `AgentCreation`, `AgentInvocation`, `Step`, `ToolCall`, `EvaluationResult`.
 - Each field mapped to semantic convention keys via `metadata={'semconv': ...}` enabling reflection-driven emission.
 - UUID-based `run_id` enabling correlation across non-span channels (e.g., evaluation callbacks) and post-processing.
 
@@ -87,7 +87,7 @@
 | Finish/Error Reasons | Applied at stop/fail | Captured + exposed via structured fields (`response_finish_reasons`) |
 | Token Usage | Basic integers | Typed fields with SEMCONV keys, optional attribute values |
 | Function/Tool Capture | Limited (via messages) | Explicit `request_functions` and tool call lifecycle spans |
-| Agent/Workflow Context | Not supported | First-class workflow/agent/task modeling |
+| Agent/Workflow Context | Not supported | First-class workflow/agent/step modeling |
 
 ---
 

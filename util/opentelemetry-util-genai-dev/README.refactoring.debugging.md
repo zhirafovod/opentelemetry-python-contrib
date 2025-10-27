@@ -80,9 +80,9 @@ Only include keys that are non-empty. Additional contextual keys can be passed v
 - Integration with OpenTelemetry Logs pipeline (currently plain Python logger only).
 - Rich diff of attribute changes between start/stop phases.
 
-## Tasks & Status
+## Steps & Status
 
-| ID | Task | Status |
+| ID | Step | Status |
 |----|------|--------|
 | 1 | Create debug module with helpers | DONE |
 | 2 | Add imports & calls in handler methods | DONE |
@@ -122,4 +122,4 @@ GENAIDEBUG event=emitter.splunk.conversation.on_end class=LLMInvocation output_m
 ```
 
 ---
-Maintained by automated AI coder; update tasks & changelog entries upon each patch.
+Maintained by automated AI coder; update steps & changelog entries upon each patch.

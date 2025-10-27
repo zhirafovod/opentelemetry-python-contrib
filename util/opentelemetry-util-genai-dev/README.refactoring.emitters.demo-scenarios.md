@@ -260,7 +260,7 @@ These can be adapted to query your backend (pseudo examples):
 - Invocation type filtering (EmitterSpec.invocation_types) may not yet be enforced; scenarios assume future alignment.
 - Traceloop & Splunk external packages require their own entry points; if not published, scenario serves as forward-looking example.
 - Deepeval scenario is forward-looking until an adapter provides the evaluator entry point. The included plug-in disables Deepeval's internal telemetry by default; set ``DEEPEVAL_TELEMETRY_OPT_OUT=0`` to re-enable vendor spans.
-- Adjust environment variable names if subsequent refactor tasks rename or consolidate evaluation toggles.
+- Adjust environment variable names if subsequent refactor steps rename or consolidate evaluation toggles.
 
 ### Current Built-in Metric Instruments
 Emitted today when corresponding emitters are enabled:
@@ -268,7 +268,7 @@ Emitted today when corresponding emitters are enabled:
 - gen_ai.client.token.usage (Histogram)
 - gen_ai.workflow.duration (Histogram)
 - gen_ai.agent.duration (Histogram)
-- gen_ai.task.duration (Histogram)
+- gen_ai.step.duration (Histogram)
 - gen_ai.evaluation.score.<metric> (Histogram of numeric evaluation scores per evaluator)
 
 Token usage attributes also appear on spans (gen_ai.usage.input_tokens / output_tokens) and are bucketed into gen_ai.client.token.usage when MetricsEmitter is active.

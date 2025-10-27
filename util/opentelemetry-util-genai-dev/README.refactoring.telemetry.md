@@ -164,7 +164,7 @@ D. LangChain Callback Handler
 | Agent linking | gen_ai.agent.name/id | agent_name / agent_id | (same) | parent agent | Keep fields |
 
 ---
-## 5. Concrete Refactoring Tasks (To Be Executed by AI Coder Agent)
+## 5. Concrete Refactoring Steps (To Be Executed by AI Coder Agent)
 
 ### Data Model (`types.py`)
 - [x] Remove unused `chat_generations` field from `LLMInvocation` (or mark deprecated comment first if backward compat needed).
@@ -265,7 +265,7 @@ Migration Notes: None.
 
 ---
 ## 8. Agent Directives (You Are The Senior Software Engineer)
-When implementing tasks from Section 5:
+When implementing steps from Section 5:
 - Apply one logical group per commit / patch to ease review.
 - Always update this README section 7 (Changelog) marking entries status transitions.
 - Maintain zero failing tests; if a test requires rewrite, adjust fixture/matcher rather than reintroducing deprecated attributes.
@@ -279,7 +279,7 @@ When implementing tasks from Section 5:
 - Keep dataclass field ordering stable except for removed fields to minimize diff noise.
 
 ### Definition of Done
-- All tasks in Section 5 have corresponding completed changelog entries.
+- All steps in Section 5 have corresponding completed changelog entries.
 - Running LangChain example with both span flavors produces:
   * Semconv span: ONLY `gen_ai.*` spec fields + allowed extras (`gen_ai.framework` if retained) and NO `ls_*`.
   * Traceloop span: Legacy attributes and enumerated prompt/completion fields; no JSON aggregated message attributes.
@@ -296,7 +296,7 @@ When implementing tasks from Section 5:
 - Treat as the source of truth for the refactor state.
 - Each code change MUST update Section 7 (Changelog) before merge.
 - Do not remove historical entries; append new ones chronologically.
-- Keep Open Questions updated; move resolved items into tasks / changelog entries.
+- Keep Open Questions updated; move resolved items into steps / changelog entries.
 
 ---
 (End of document)

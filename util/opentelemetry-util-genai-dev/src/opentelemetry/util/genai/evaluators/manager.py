@@ -27,7 +27,7 @@ from ..types import (
     EvaluationResult,
     GenAI,
     LLMInvocation,
-    Task,
+    Step,
     ToolCall,
     Workflow,
 )
@@ -68,7 +68,7 @@ _GENAI_TYPE_LOOKUP: Mapping[str, type[GenAI]] = {
     "EmbeddingInvocation": EmbeddingInvocation,
     "ToolCall": ToolCall,
     "Workflow": Workflow,
-    "Task": Task,
+    "Step": Step,
 }
 
 

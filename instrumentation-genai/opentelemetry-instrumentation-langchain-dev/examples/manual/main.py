@@ -404,7 +404,7 @@ def simple_agent_demo(llm: ChatOpenAI):
         general_metadata["ls_provider"] = provider_label
 
     classifier_metadata: dict[str, Any] = {
-        "ls_task_type": "routing",
+        "ls_step_type": "routing",
         "framework": "langgraph",
     }
 
@@ -413,7 +413,7 @@ def simple_agent_demo(llm: ChatOpenAI):
         "classify",
         RunnableLambda(classifier).with_config(
             run_name="routing_classifier",
-            tags=["task", "routing"],
+            tags=["step", "routing"],
             metadata=classifier_metadata,
         ),
     )

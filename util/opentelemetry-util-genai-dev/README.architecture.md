@@ -21,7 +21,7 @@ Implemented dataclasses (in `types.py`):
 - `EmbeddingInvocation`
 - `Workflow`
 - `AgentInvocation`
-- `Task`
+- `Step`
 - `ToolCall`
 - `EvaluationResult` (atomic)
 
@@ -39,7 +39,7 @@ Messages: `InputMessage` / `OutputMessage` each hold `role` and `parts` (which m
 `TelemetryHandler` (formerly referred to as `Handler`) orchestrates lifecycle & evaluation emission.
 
 Capabilities:
-- Type-specific lifecycle: `start_llm`, `stop_llm`, `fail_llm`, plus `start/stop/fail` for embedding, tool call, workflow, agent, task.
+- Type-specific lifecycle: `start_llm`, `stop_llm`, `fail_llm`, plus `start/stop/fail` for embedding, tool call, workflow, agent, step.
 - Generic dispatchers: `start(obj)`, `finish(obj)`, `fail(obj, error)`.
 - Dynamic content capture refresh (`_refresh_capture_content`) each LLM / agentic start (re-reads env + experimental gating).
 - Delegation to `CompositeEmitter` (`on_start`, `on_end`, `on_error`, `on_evaluation_results`).
@@ -98,10 +98,10 @@ CompositeEmitter wraps all emitter calls; failures are debug‑logged. Error met
 Emits semantic attributes, optional input/output message content, system instructions, function definitions, token usage, and agent context. Finalization order ensures attributes set before span closure.
 
 ### 4.2 MetricsEmitter
-Records durations and token usage to histograms: `gen_ai.client.operation.duration`, `gen_ai.client.token.usage`, plus agentic histograms (`gen_ai.workflow.duration`, `gen_ai.agent.duration`, `gen_ai.task.duration`). Role string is `metric` (singular) – may diverge from category name `metrics`.
+Records durations and token usage to histograms: `gen_ai.client.operation.duration`, `gen_ai.client.token.usage`, plus agentic histograms (`gen_ai.workflow.duration`, `gen_ai.agent.duration`, `gen_ai.step.duration`). Role string is `metric` (singular) – may diverge from category name `metrics`.
 
 ### 4.3 ContentEventsEmitter
-Emits **one** structured log record summarizing an entire LLM invocation (inputs, outputs, system instructions) — a deliberate deviation from earlier message-per-event concept to reduce event volume. Agent/workflow/task event emission is commented out (future option).
+Emits **one** structured log record summarizing an entire LLM invocation (inputs, outputs, system instructions) — a deliberate deviation from earlier message-per-event concept to reduce event volume. Agent/workflow/step event emission is commented out (future option).
 
 ### 4.4 Evaluation Emitters
 Always present:

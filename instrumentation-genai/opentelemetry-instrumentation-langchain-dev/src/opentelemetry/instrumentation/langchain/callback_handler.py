@@ -18,7 +18,7 @@ from opentelemetry.trace import Tracer
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
     Workflow,
-    Task,
+    Step,
     AgentInvocation,
     LLMInvocation,
     InputMessage,
@@ -122,8 +122,8 @@ def _extract_tool_details(
             detection_flag = True
 
     for hint_key in (
-        "gen_ai.task.type",
-        "task_type",
+        "gen_ai.step.type",
+        "step_type",
         "type",
         "run_type",
         "langchain_run_type",
@@ -136,7 +136,7 @@ def _extract_tool_details(
     if not detection_flag:
         return None
 
-    name_value = tool_data.get("name") or metadata.get("gen_ai.task.name")
+    name_value = tool_data.get("name") or metadata.get("gen_ai.step.name")
     if not name_value:
         return None
 
@@ -311,19 +311,19 @@ class LangchainCallbackHandler(BaseCallbackHandler):
                     if serialized_args is not None:
                         tool.attributes.setdefault("tool.arguments", serialized_args)
             else:
-                task = Task(
+                step = Step(
                     name=name,
                     run_id=run_id,
                     parent_run_id=parent_run_id,
-                    task_type="chain",
+                    step_type="chain",
                     attributes=attrs,
                 )
                 if context_agent is not None:
                     if context_agent_name is not None:
-                        task.agent_name = context_agent_name
-                    task.agent_id = str(context_agent.run_id)
-                task.input_data = _serialize(inputs)
-                self._handler.start_task(task)
+                        step.agent_name = context_agent_name
+                    step.agent_id = str(context_agent.run_id)
+                step.input_data = _serialize(inputs)
+                self._handler.start_step(step)
 
     def on_chain_end(
         self,
@@ -342,9 +342,9 @@ class LangchainCallbackHandler(BaseCallbackHandler):
         elif isinstance(entity, AgentInvocation):
             entity.output_result = _serialize(outputs)
             self._handler.stop_agent(entity)
-        elif isinstance(entity, Task):
+        elif isinstance(entity, Step):
             entity.output_data = _serialize(outputs)
-            self._handler.stop_task(entity)
+            self._handler.stop_step(entity)
         elif isinstance(entity, ToolCall):
             serialized = _serialize(outputs)
             if serialized is not None:

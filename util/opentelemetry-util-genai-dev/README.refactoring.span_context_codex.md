@@ -69,7 +69,7 @@ Context propagation helpers:
 2. **No canonical `SpanContext` snapshot stored on GenAI objects.** Consumers fetch IDs from `invocation.span` even after the span is ended. Replacing the span emitter, disabling spans, or serializing invocations would break downstream sampling (handler.py:257-338; manager.py:103-126).
 3. **Metrics correlation depends on a live span object.** When span emission is disabled (`enable_span=false`), `invocation.span` stays `None`, causing metrics to record without context and evaluation sampling to fall back to the "no trace id" branch (metrics.py:214-312; manager.py:103-126).
 4. **Evaluation Manager lacks guard rails for missing spans.** `invocation.span.get_span_context()` is called without a `None` check; if spans are disabled or an alternate emitter replaces the span, this raises (manager.py:103-110).
-5. **Auxiliary log helpers (workflow/agent/task)** share the same missing-context issue (emitters/utils.py:498-740). When re-enabled, these would emit logs that also lack trace correlation.
+5. **Auxiliary log helpers (workflow/agent/step)** share the same missing-context issue (emitters/utils.py:498-740). When re-enabled, these would emit logs that also lack trace correlation.
 
 ---
 ## Desired Design
@@ -93,14 +93,14 @@ Context propagation helpers:
    - Migrate debug logging, metrics, logs, and evaluation emitters to this helper to avoid duplication and inconsistent fallbacks.
 
 ---
-## Task Breakdown
+## Step Breakdown
 
 1. **Model update**  
    - Add persistent context fields to `GenAI` / `LLMInvocation` and capture them in `SpanEmitter.on_start`.  
    - Populate the fields when spans are created externally (e.g., agent/workflow spans) and provide backwards-compatible defaults.
 
 2. **Logging fixes**  
-   - Modify `_llm_invocation_to_log_record`, `_workflow_to_log_record`, `_agent_to_log_record`, `_task_to_log_record`, `_embedding_to_log_record` (emitters/utils.py:319-740) to set `trace_id`, `span_id`, `trace_flags`, or `context`.  
+   - Modify `_llm_invocation_to_log_record`, `_workflow_to_log_record`, `_agent_to_log_record`, `_step_to_log_record`, `_embedding_to_log_record` (emitters/utils.py:319-740) to set `trace_id`, `span_id`, `trace_flags`, or `context`.  
    - Pass the snapshot from `ContentEventsEmitter.on_end` and any future workflow/agent emitters.
    - Add regression tests asserting that emitted OTLP logs include matching IDs.
 

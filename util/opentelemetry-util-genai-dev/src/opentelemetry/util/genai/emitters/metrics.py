@@ -15,7 +15,7 @@ from ..types import (
     EmbeddingInvocation,
     Error,
     LLMInvocation,
-    Task,
+    Step,
     Workflow,
 )
 from .utils import (
@@ -28,7 +28,7 @@ from .utils import (
 class MetricsEmitter(EmitterMeta):
     """Emits GenAI metrics (duration + token usage).
 
-    Supports LLMInvocation, EmbeddingInvocation, ToolCall, Workflow, Agent, and Task.
+    Supports LLMInvocation, EmbeddingInvocation, ToolCall, Workflow, Agent, and Step.
     """
 
     role = "metric"
@@ -47,8 +47,8 @@ class MetricsEmitter(EmitterMeta):
         self._agent_duration_histogram: Histogram = (
             instruments.agent_duration_histogram
         )
-        self._task_duration_histogram: Histogram = (
-            instruments.task_duration_histogram
+        self._step_duration_histogram: Histogram = (
+            instruments.step_duration_histogram
         )
 
     def on_start(self, obj: Any) -> None:  # no-op for metrics
@@ -61,8 +61,8 @@ class MetricsEmitter(EmitterMeta):
         if isinstance(obj, AgentInvocation):
             self._record_agent_metrics(obj)
             return
-        if isinstance(obj, Task):
-            self._record_task_metrics(obj)
+        if isinstance(obj, Step):
+            self._record_step_metrics(obj)
             return
 
         if isinstance(obj, LLMInvocation):
@@ -150,8 +150,8 @@ class MetricsEmitter(EmitterMeta):
         if isinstance(obj, AgentInvocation):
             self._record_agent_metrics(obj)
             return
-        if isinstance(obj, Task):
-            self._record_task_metrics(obj)
+        if isinstance(obj, Step):
+            self._record_step_metrics(obj)
             return
 
         # Handle existing types with agent context
@@ -232,7 +232,7 @@ class MetricsEmitter(EmitterMeta):
                 ToolCall,
                 Workflow,
                 AgentInvocation,
-                Task,
+                Step,
                 EmbeddingInvocation,
             ),
         )
@@ -290,29 +290,29 @@ class MetricsEmitter(EmitterMeta):
             duration, attributes=metric_attrs, context=context
         )
 
-    def _record_task_metrics(self, task: Task) -> None:
-        """Record metrics for a task."""
-        if task.end_time is None:
+    def _record_step_metrics(self, step: Step) -> None:
+        """Record metrics for a step."""
+        if step.end_time is None:
             return
-        duration = task.end_time - task.start_time
+        duration = step.end_time - step.start_time
         metric_attrs = {
-            "gen_ai.task.name": task.name,
+            "gen_ai.step.name": step.name,
         }
-        if task.task_type:
-            metric_attrs["gen_ai.task.type"] = task.task_type
-        if task.source:
-            metric_attrs["gen_ai.task.source"] = task.source
-        if task.assigned_agent:
-            metric_attrs[GenAI.GEN_AI_AGENT_NAME] = task.assigned_agent
+        if step.step_type:
+            metric_attrs["gen_ai.step.type"] = step.step_type
+        if step.source:
+            metric_attrs["gen_ai.step.source"] = step.source
+        if step.assigned_agent:
+            metric_attrs[GenAI.GEN_AI_AGENT_NAME] = step.assigned_agent
 
         context = None
-        span = getattr(task, "span", None)
+        span = getattr(step, "span", None)
         if span is not None:
             try:
                 context = trace.set_span_in_context(span)
             except Exception:  # pragma: no cover - defensive
                 context = None
 
-        self._task_duration_histogram.record(
+        self._step_duration_histogram.record(
             duration, attributes=metric_attrs, context=context
         )

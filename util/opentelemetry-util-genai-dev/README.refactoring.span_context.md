@@ -21,7 +21,7 @@ runs evaluation and creates evaluation result
 submits evaluation result and invocation to handler on_evaluationResult
 which calls the emitter to create an evaluationResult event with the invocation span context, which is still referring to the original LLMInvocation. 
 
-Do thorough research of the codebase and provide all of the details for how it is implemented now. Provide ascii sequence or lifecycle diagram, idfeally similar to util/README.architecture.packages.md but focusing on span and context. Document the desired design, current design and tasks to fix it in the document util/opentelemetry-util-genai-dev/README.refactoring.span_context_codex.md
+Do thorough research of the codebase and provide all of the details for how it is implemented now. Provide ascii sequence or lifecycle diagram, idfeally similar to util/README.architecture.packages.md but focusing on span and context. Document the desired design, current design and steps to fix it in the document util/opentelemetry-util-genai-dev/README.refactoring.span_context_codex.md
 
 ## Purpose
 Provide a deep analysis of the current span context lifecycle across GenAI instrumentation (core util package, LangChain instrumentation, Deepeval evaluator, emitters) and define the desired unified design for reliable trace/span correlation across:
@@ -31,17 +31,17 @@ Provide a deep analysis of the current span context lifecycle across GenAI instr
 - Log records (SDKLogRecord-based emitters)
 - Evaluation results
 
-Deliver concrete tasks to close the gap between current and desired behavior.
+Deliver concrete steps to close the gap between current and desired behavior.
 
 ---
 ## Overview of Key Types & Components
 
 | Component | Responsibility | Span Field Usage |
 |-----------|----------------|------------------|
-| `LLMInvocation` / `AgentInvocation` / `Workflow` / `Task` | Dataclasses representing GenAI operations | Field `span: Optional[Span]` populated by span emitters |
+| `LLMInvocation` / `AgentInvocation` / `Workflow` / `Step` | Dataclasses representing GenAI operations | Field `span: Optional[Span]` populated by span emitters |
 | `TelemetryHandler` | Lifecycle orchestration (start/stop/fail), evaluation trigger | Creates spans via emitter pipeline (`on_start`), logs span context via debug API |
 | Span Emitters (`span.py`) | Create and finish spans; assign `invocation.span` | Use tracer.start_as_current_span; set semantic attributes |
-| Metrics Emitters (`metrics.py`) | Record duration, tokens histograms | Use `trace.set_span_in_context(span)` for workflow/agent/task/llm metrics (duration/tokens) except evaluation metrics |
+| Metrics Emitters (`metrics.py`) | Record duration, tokens histograms | Use `trace.set_span_in_context(span)` for workflow/agent/step/llm metrics (duration/tokens) except evaluation metrics |
 | Evaluation Metrics Emitter (`evaluation.py` → `EvaluationMetricsEmitter`) | Record canonical evaluation metric histograms | DOES NOT attach context (no `context=`) currently |
 | Evaluation Events Emitter (`evaluation.py` → `EvaluationEventsEmitter`) | Emits one event per evaluation result | Derives span_context from `invocation.span.context` or fallback to `get_span_context()`; sets `span_id` & `trace_id` on event |
 | Splunk Emitters (`emitters/splunk.py`) | Emit aggregated log records with evaluation batches and conversation details | Add `trace_id` / `span_id` as attributes; do not create log record with explicit span context API (SDKLogRecord has no trace fields directly passed here) |
@@ -93,9 +93,9 @@ User code / LangChain
           • Evaluation events (scoped by explicit trace_id/span_id fields)
 ```
 
-### AgentInvocation / Workflow / Task Similarities
+### AgentInvocation / Workflow / Step Similarities
 - `start_agent` / `stop_agent` creates & finalizes spans (agent span emitter). Evaluation for agent triggered on `stop_agent`.
-- Duration metrics for agent/workflow/task include context. No evaluation metrics for workflow/task currently.
+- Duration metrics for agent/workflow/step include context. No evaluation metrics for workflow/step currently.
 - Splunk evaluation results emitter attaches `trace_id`/`span_id` as attributes (hex strings) but not via log record context linking API.
 
 ## Current Span Context Handling Summary
@@ -119,7 +119,7 @@ User code / LangChain
 5. Evaluation events rely on manually copying trace_id/span_id; other emitters (metrics) rely on context injection — design could unify on a helper `extract_span_context(invocation)`.
 6. Potential race: evaluation may occur after span end (currently acceptable; context still valid, but document explicitly). 
 7. No tests asserting evaluation metric histograms carry span context (they currently do not). 
-8. Agent/Workflow/Task evaluation path limited (only LLM & Agent evaluated) — clarify whether to propagate context for future evaluation types.
+8. Agent/Workflow/Step evaluation path limited (only LLM & Agent evaluated) — clarify whether to propagate context for future evaluation types.
 
 ## Desired Design
 
@@ -156,9 +156,9 @@ evaluate(inv)
 `with_span_context(span, fn)` — convenience for metrics emission.
 
 ---
-## Refactoring Task List
+## Refactoring Step List
 
-| ID | Task | Description | Effort | Status |
+| ID | Step | Description | Effort | Status |
 |----|------|-------------|--------|--------|
 | SC-1 | Add span context helper module | Implement `span_context_utils.py` with extraction + hex formatting | Low | Pending |
 | SC-2 | Update all emitters to use helper | Replace duplicated get_span_context blocks (handler, evaluation, metrics, splunk) | Med | Pending |
@@ -232,4 +232,4 @@ evaluate(inv)
 Begin SC-1 and SC-3 in a dedicated branch (e.g., `genai-span-context-refactor`) and iterate with tests before broader emitter updates.
 
 ---
-Maintained by automated AI coder; update task statuses upon implementation.
+Maintained by automated AI coder; update step statuses upon implementation.

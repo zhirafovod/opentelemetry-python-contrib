@@ -286,11 +286,11 @@ def flight_specialist_node(state: PlannerState) -> PlannerState:
             }
         )
     )
-    task = (
+    step = (
         f"Find an appealing flight from {state['origin']} to {state['destination']} "
         f"departing {state['departure']} for {state['travellers']} travellers."
     )
-    result = agent.invoke({"messages": [HumanMessage(content=task)]})
+    result = agent.invoke({"messages": [HumanMessage(content=step)]})
     final_message = result["messages"][-1]
     state["flight_summary"] = (
         final_message.content
@@ -322,11 +322,11 @@ def hotel_specialist_node(state: PlannerState) -> PlannerState:
             }
         )
     )
-    task = (
+    step = (
         f"Recommend a boutique hotel in {state['destination']} between {state['departure']} "
         f"and {state['return_date']} for {state['travellers']} travellers."
     )
-    result = agent.invoke({"messages": [HumanMessage(content=task)]})
+    result = agent.invoke({"messages": [HumanMessage(content=step)]})
     final_message = result["messages"][-1]
     state["hotel_summary"] = (
         final_message.content
@@ -358,8 +358,8 @@ def activity_specialist_node(state: PlannerState) -> PlannerState:
             }
         )
     )
-    task = f"Curate signature activities for travellers spending a week in {state['destination']}."
-    result = agent.invoke({"messages": [HumanMessage(content=task)]})
+    step = f"Curate signature activities for travellers spending a week in {state['destination']}."
+    result = agent.invoke({"messages": [HumanMessage(content=step)]})
     final_message = result["messages"][-1]
     state["activities_summary"] = (
         final_message.content

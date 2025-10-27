@@ -54,7 +54,7 @@ Emitter Composition (Current Status)
 Built via ``build_emitter_pipeline`` which:
 
 1. Adds builtin semantic convention emitters based on flavor.
-2. Optionally adds Traceloop compatibility span (still internal; extraction planned – see refactoring plan Tasks 13–14).
+2. Optionally adds Traceloop compatibility span (still internal; extraction planned – see refactoring plan Steps 13–14).
 3. Always adds evaluation emitters (metrics + events + optional spans) when enabled.
 4. Applies entry point specs & category overrides (append, prepend, replace-category, replace-same-name).
 
