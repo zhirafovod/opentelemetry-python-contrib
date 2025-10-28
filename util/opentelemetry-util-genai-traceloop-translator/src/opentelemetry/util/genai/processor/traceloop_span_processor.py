@@ -178,13 +178,17 @@ class TraceloopSpanProcessor(SpanProcessor):
     def _default_span_filter(self, span: ReadableSpan) -> bool:
         """Default filter: Transform spans that look like LLM/AI calls.
 
-        Previously this required both a name and at least one attribute. Some
-        tests (and real-world scenarios) emit spans with meaningful names like
-        "chat gpt-4" before any model/provider attributes are recorded. We now
-        allow name-only detection; attributes merely increase confidence.
+        Filters out spans that don't appear to be LLM-related while keeping
+        Traceloop task/workflow spans for transformation.
         """
         if not span.name:
             return False
+
+        # Always process Traceloop task/workflow spans (they need transformation)
+        if span.attributes:
+            span_kind = span.attributes.get("traceloop.span.kind")
+            if span_kind in ("task", "workflow", "tool", "agent"):
+                return True
 
         # Check for common LLM/AI span indicators
         llm_indicators = [
@@ -208,18 +212,20 @@ class TraceloopSpanProcessor(SpanProcessor):
 
         # Check attributes for AI/LLM markers (if any attributes present)
         if span.attributes:
-            # Check for traceloop entity attributes (highest priority)
+            # Check for traceloop entity attributes
             if (
                 "traceloop.entity.input" in span.attributes
                 or "traceloop.entity.output" in span.attributes
             ):
+                # We already filtered task/workflow spans above, so if we get here
+                # it means it has model data
                 return True
             # Check for other AI/LLM markers
             for attr_key in span.attributes.keys():
                 attr_key_lower = str(attr_key).lower()
                 if any(
                     marker in attr_key_lower
-                    for marker in ["llm", "ai", "gen_ai", "model", "traceloop"]
+                    for marker in ["llm", "ai", "gen_ai", "model"]
                 ):
                     return True
         return False
@@ -450,19 +456,17 @@ class TraceloopSpanProcessor(SpanProcessor):
         new_name = self._derive_new_name(
             existing_span.name, name_transformations
         )
-        if new_name:
-            # Provide override for SpanEmitter (we extended it to honor this)
-            base_attrs.setdefault("gen_ai.override.span_name", new_name)
+        
+        # Try to get model from various attribute sources
         request_model = (
             base_attrs.get("gen_ai.request.model")
+            or base_attrs.get("gen_ai.response.model")
             or base_attrs.get("llm.request.model")
             or base_attrs.get("ai.model.name")
-            or "unknown"
         )
-        # Infer model from original span name pattern like "chat gpt-4" if still unknown
-        if (
-            not request_model or request_model == "unknown"
-        ) and existing_span.name:
+        
+        # Infer model from original span name pattern like "chat gpt-4" if not found
+        if not request_model and existing_span.name:
             # Simple heuristic: take token(s) after first space
             parts = existing_span.name.strip().split()
             if len(parts) >= 2:
@@ -475,6 +479,23 @@ class TraceloopSpanProcessor(SpanProcessor):
                     "ai",
                 }:
                     request_model = candidate
+        
+        # For Traceloop task/workflow spans without model info, preserve original span name
+        # instead of generating "chat unknown" or similar
+        span_kind = base_attrs.get("gen_ai.span.kind") or base_attrs.get("traceloop.span.kind")
+        if not request_model and span_kind in ("task", "workflow"):
+            # Use the original span name to avoid "chat unknown"
+            if not new_name:
+                new_name = existing_span.name
+            request_model = "unknown"  # Still need a model for LLMInvocation
+        elif not request_model:
+            # Default to "unknown" only if we still don't have a model
+            request_model = "unknown"
+            
+        # Set the span name override if we have one
+        if new_name:
+            # Provide override for SpanEmitter (we extended it to honor this)
+            base_attrs.setdefault("gen_ai.override.span_name", new_name)
         invocation = LLMInvocation(
             request_model=str(request_model),
             attributes=base_attrs,
