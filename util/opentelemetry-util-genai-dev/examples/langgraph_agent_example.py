@@ -5,7 +5,7 @@ LangGraph ReAct Agent Example with Manual OpenTelemetry Instrumentation.
 This example demonstrates:
 1. A LangGraph ReAct agent that answers capital city questions
 2. Full manual instrumentation using opentelemetry-util-genai-dev
-3. Workflow for graph execution, Agent for ReAct agent, Tasks for each step
+3. Workflow for graph execution, Agent for ReAct agent, Steps for each step
 4. Manual LLM invocation tracking (not using OpenAI instrumentation)
 5. Tool usage tracking with proper telemetry
 
@@ -57,7 +57,7 @@ from opentelemetry.util.genai.types import (
     InputMessage,
     LLMInvocation,
     OutputMessage,
-    Task,
+    Step,
     Text,
     ToolCallResponse,
     Workflow,
@@ -104,7 +104,7 @@ class TelemetryCallback(BaseCallbackHandler):
     Captures data from:
     - LLM calls (on_llm_start/end) - for LLMInvocation spans
     - Chain/Graph execution (on_chain_start/end) - for Workflow tracking
-    - Tool calls (on_tool_start/end) - for Task/Tool tracking
+    - Tool calls (on_tool_start/end) - for Step/Tool tracking
     - Agent actions (on_agent_action/finish) - for Agent tracking
     """
 
@@ -224,7 +224,7 @@ class TelemetryCallback(BaseCallbackHandler):
             self.current_chain = None
 
     def on_tool_start(self, serialized, input_str, **kwargs):
-        """Capture tool start event for Task/Tool tracking."""
+        """Capture tool start event for Step/Tool tracking."""
         tool_name = serialized.get("name", "unknown_tool")
         self.current_tool = {
             "name": tool_name,
@@ -415,30 +415,30 @@ def run_agent_with_telemetry(question: str):
         print(f"\n--- Step {step_count} ---")
         print(f"Message type: {type(last_message).__name__}")
 
-        # Create task for this step
+        # Create step for this step
         if isinstance(last_message, AIMessage):
             if hasattr(last_message, "tool_calls") and last_message.tool_calls:
                 # Agent decided to use a tool
-                task_name = "tool_planning"
-                task_type = "planning"
+                step_name = "tool_planning"
+                step_type = "planning"
                 objective = f"Decide to call tool: {last_message.tool_calls[0]['name']}"
             else:
                 # Agent provided final answer
-                task_name = "final_response"
-                task_type = "generation"
+                step_name = "final_response"
+                step_type = "generation"
                 objective = "Generate final response to user"
         elif isinstance(last_message, ToolMessage):
-            task_name = "tool_execution"
-            task_type = "execution"
+            step_name = "tool_execution"
+            step_type = "execution"
             objective = "Execute tool and return result"
         else:
-            task_name = f"step_{step_count}"
-            task_type = "processing"
+            step_name = f"step_{step_count}"
+            step_type = "processing"
             objective = "Process message"
 
-        task = Task(
-            name=task_name,
-            task_type=task_type,
+        step = Step(
+            name=step_name,
+            step_type=step_type,
             objective=objective,
             source="agent",
             assigned_agent="capital_agent",
@@ -447,7 +447,7 @@ def run_agent_with_telemetry(question: str):
             if hasattr(last_message, "content")
             else "",
         )
-        handler.start_task(task)
+        handler.start_step(step)
 
         # If this is an AI message, create LLM invocation telemetry from captured data
         if isinstance(last_message, AIMessage):
@@ -584,14 +584,14 @@ def run_agent_with_telemetry(question: str):
         elif isinstance(last_message, ToolMessage):
             print(f"Tool result: {last_message.content}")
 
-        # Complete task
-        task.output_data = (
+        # Complete step
+        step.output_data = (
             str(last_message.content)[:100]
             if hasattr(last_message, "content")
             else "completed"
         )
-        task.status = "completed"
-        handler.stop_task(task)
+        step.status = "completed"
+        handler.stop_step(step)
 
     # Get final answer
     final_message = current_messages[-1]

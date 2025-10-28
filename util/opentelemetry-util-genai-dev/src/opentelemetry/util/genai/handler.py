@@ -53,6 +53,10 @@ import os
 import time
 from typing import Any, Optional
 
+from opentelemetry.util._importlib_metadata import (
+    entry_points,  # pyright: ignore[reportUnknownVariableType]
+)
+
 try:
     from opentelemetry.util.genai.debug import genai_debug_log
 except Exception:  # pragma: no cover - fallback if debug module missing
@@ -84,7 +88,7 @@ from opentelemetry.util.genai.types import (
     EvaluationResult,
     GenAI,
     LLMInvocation,
-    Task,
+    Step,
     ToolCall,
     Workflow,
 )
@@ -95,6 +99,8 @@ from .callbacks import CompletionCallback
 from .config import parse_env
 from .environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT,
+    OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS,
+    OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,10 +108,96 @@ _LOGGER = logging.getLogger(__name__)
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
 
-def _is_truthy_env(value: str | None) -> bool:
+def _coerce_completion_callback(
+    provider: object, name: str
+) -> CompletionCallback | None:
+    if provider is None:
+        return None
+    if hasattr(provider, "on_completion"):
+        if isinstance(provider, type):
+            try:
+                instance = provider()
+            except Exception as exc:  # pragma: no cover - defensive
+                _LOGGER.warning(
+                    "Completion callback class '%s' failed to instantiate: %s",
+                    name,
+                    exc,
+                )
+                return None
+            return instance  # type: ignore[return-value]
+        return provider  # type: ignore[return-value]
+    if callable(provider):
+        try:
+            instance = provider()
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOGGER.warning(
+                "Completion callback factory '%s' raised an exception: %s",
+                name,
+                exc,
+            )
+            return None
+        if hasattr(instance, "on_completion"):
+            return instance  # type: ignore[return-value]
+        _LOGGER.warning(
+            "Completion callback factory '%s' returned an object without on_completion",
+            name,
+        )
+        return None
+    _LOGGER.warning(
+        "Completion callback entry point '%s' is not callable or instance",
+        name,
+    )
+    return None
+
+
+def _load_completion_callbacks(
+    selected: set[str] | None,
+) -> tuple[list[tuple[str, CompletionCallback]], set[str]]:
+    callbacks: list[tuple[str, CompletionCallback]] = []
+    seen: set[str] = set()
+    try:
+        entries = entry_points(
+            group="opentelemetry_util_genai_completion_callbacks"
+        )
+    except Exception:  # pragma: no cover - defensive
+        _LOGGER.debug("Completion callback entry point group not available")
+        return callbacks, seen
+    for ep in entries:  # type: ignore[assignment]
+        name = getattr(ep, "name", "")
+        lowered = name.lower()
+        seen.add(lowered)
+        if selected and lowered not in selected:
+            continue
+        try:
+            provider = ep.load()
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOGGER.debug(
+                "Failed to load completion callback '%s': %s",
+                name,
+                exc,
+                exc_info=True,
+            )
+            continue
+        instance = _coerce_completion_callback(provider, name)
+        if instance is None:
+            continue
+        callbacks.append((name, instance))
+    return callbacks, seen
+
+
+def _is_truthy_env(value: Optional[str]) -> bool:
     if value is None:
         return False
     return value.strip().lower() in _TRUTHY_VALUES
+
+
+def _parse_callback_filter(value: Optional[str]) -> set[str] | None:
+    if value is None:
+        return None
+    selected = {
+        item.strip().lower() for item in value.split(",") if item.strip()
+    }
+    return selected or None
 
 
 class TelemetryHandler:
@@ -118,10 +210,9 @@ class TelemetryHandler:
     def __init__(self, **kwargs: Any):
         tracer_provider = kwargs.get("tracer_provider")
         # Store provider reference for later identity comparison (test isolation)
-        from opentelemetry import trace as _trace_mod_local
-
+        # Use already imported _trace_mod for provider reference; avoid re-import for lint.
         self._tracer_provider_ref = (
-            tracer_provider or _trace_mod_local.get_tracer_provider()
+            tracer_provider or _trace_mod.get_tracer_provider()
         )
         self._tracer = get_tracer(
             __name__,
@@ -186,6 +277,15 @@ class TelemetryHandler:
         self._evaluation_manager = None
         # Active agent identity stack (name, id) for implicit propagation to nested operations
         self._agent_context_stack: list[tuple[str, str]] = []
+        # Span registry (run_id -> Span) to allow parenting even after original invocation ended.
+        # We intentionally retain ended parent spans to preserve trace linkage for late children
+        # (e.g., final LLM call after agent/workflow termination). A lightweight size cap can be
+        # added later if memory pressure surfaces.
+        self._span_registry: dict[str, _trace_mod.Span] = {}
+        # Generic entity registry (run_id -> entity object) allowing instrumentation
+        # layers to avoid storing lifecycle objects. This supports simplified
+        # instrumentations that only pass run_id on end/error callbacks.
+        self._entity_registry: dict[str, GenAI] = {}
         self._initialize_default_callbacks()
 
     def _refresh_capture_content(
@@ -257,6 +357,12 @@ class TelemetryHandler:
                 invocation.agent_id = top_id
         # Start invocation span; tracer context propagation handles parent/child links
         self._emitter.on_start(invocation)
+        # Register span if created
+        span = getattr(invocation, "span", None)
+        if span is not None:
+            self._span_registry[str(invocation.run_id)] = span
+        # Register entity for later stop/fail by run_id
+        self._entity_registry[str(invocation.run_id)] = invocation
         try:
             span_context = invocation.span_context
             if span_context is None and invocation.span is not None:
@@ -281,6 +387,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_end(invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         try:
             span_context = invocation.span_context
             if span_context is None and invocation.span is not None:
@@ -318,6 +425,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_error(error, invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         try:
             span_context = invocation.span_context
             if span_context is None and invocation.span is not None:
@@ -359,6 +467,10 @@ class TelemetryHandler:
                 invocation.agent_id = top_id
         invocation.start_time = time.time()
         self._emitter.on_start(invocation)
+        span = getattr(invocation, "span", None)
+        if span is not None:
+            self._span_registry[str(invocation.run_id)] = span
+        self._entity_registry[str(invocation.run_id)] = invocation
         return invocation
 
     def stop_embedding(
@@ -368,6 +480,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_end(invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         # Force flush metrics if a custom provider with force_flush is present
         if (
             hasattr(self, "_meter_provider")
@@ -386,6 +499,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_error(error, invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -408,6 +522,10 @@ class TelemetryHandler:
             if not invocation.agent_id:
                 invocation.agent_id = top_id
         self._emitter.on_start(invocation)
+        span = getattr(invocation, "span", None)
+        if span is not None:
+            self._span_registry[str(invocation.run_id)] = span
+        self._entity_registry[str(invocation.run_id)] = invocation
         return invocation
 
     def stop_tool_call(self, invocation: ToolCall) -> ToolCall:
@@ -415,6 +533,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_end(invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         return invocation
 
     def fail_tool_call(self, invocation: ToolCall, error: Error) -> ToolCall:
@@ -422,6 +541,7 @@ class TelemetryHandler:
         invocation.end_time = time.time()
         self._emitter.on_error(error, invocation)
         self._notify_completion(invocation)
+        self._entity_registry.pop(str(invocation.run_id), None)
         return invocation
 
     # Workflow lifecycle --------------------------------------------------
@@ -429,6 +549,10 @@ class TelemetryHandler:
         """Start a workflow and create a pending span entry."""
         self._refresh_capture_content()
         self._emitter.on_start(workflow)
+        span = getattr(workflow, "span", None)
+        if span is not None:
+            self._span_registry[str(workflow.run_id)] = span
+        self._entity_registry[str(workflow.run_id)] = workflow
         return workflow
 
     def _handle_evaluation_results(
@@ -490,30 +614,70 @@ class TelemetryHandler:
                 continue
 
     def _initialize_default_callbacks(self) -> None:
-        try:
-            from .evaluators.manager import Manager
-        except Exception:  # pragma: no cover - import errors
+        disable_defaults = _is_truthy_env(
+            os.getenv(
+                OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS
+            )
+        )
+        if disable_defaults:
             _LOGGER.debug(
-                "Evaluation manager not available; skipping default registration",
-                exc_info=True,
+                "Default completion callbacks disabled via %s",
+                OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS,
             )
             return
-        try:
-            manager = Manager(self)
-        except Exception as exc:  # pragma: no cover - defensive
-            _LOGGER.warning("Failed to initialise evaluation manager: %s", exc)
+
+        selected = _parse_callback_filter(
+            os.getenv(OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS)
+        )
+        callbacks, seen = _load_completion_callbacks(selected)
+        if selected:
+            missing = selected - seen
+            for name in missing:
+                _LOGGER.debug(
+                    "Completion callback '%s' not found in entry points",
+                    name,
+                )
+        if not callbacks:
             return
-        if not manager.has_evaluators:
-            manager.shutdown()
-            return
-        self._evaluation_manager = manager
-        self.register_completion_callback(manager)
+
+        for name, callback in callbacks:
+            bound_ok = True
+            binder = getattr(callback, "bind_handler", None)
+            if callable(binder):
+                try:
+                    bound_ok = bool(binder(self))
+                except Exception as exc:  # pragma: no cover - defensive
+                    _LOGGER.warning(
+                        "Completion callback '%s' failed to bind: %s",
+                        name,
+                        exc,
+                    )
+                    shutdown = getattr(callback, "shutdown", None)
+                    if callable(shutdown):
+                        try:
+                            shutdown()
+                        except Exception:  # pragma: no cover - defensive
+                            pass
+                    continue
+            if not bound_ok:
+                shutdown = getattr(callback, "shutdown", None)
+                if callable(shutdown):
+                    try:
+                        shutdown()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                continue
+            manager = getattr(callback, "manager", None)
+            if manager is not None:
+                self._evaluation_manager = manager
+            self.register_completion_callback(callback)
 
     def stop_workflow(self, workflow: Workflow) -> Workflow:
         """Finalize a workflow successfully and end its span."""
         workflow.end_time = time.time()
         self._emitter.on_end(workflow)
         self._notify_completion(workflow)
+        self._entity_registry.pop(str(workflow.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -529,6 +693,7 @@ class TelemetryHandler:
         workflow.end_time = time.time()
         self._emitter.on_error(error, workflow)
         self._notify_completion(workflow)
+        self._entity_registry.pop(str(workflow.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -546,6 +711,10 @@ class TelemetryHandler:
         """Start an agent operation (create or invoke) and create a pending span entry."""
         self._refresh_capture_content()
         self._emitter.on_start(agent)
+        span = getattr(agent, "span", None)
+        if span is not None:
+            self._span_registry[str(agent.run_id)] = span
+        self._entity_registry[str(agent.run_id)] = agent
         # Push agent identity context (use run_id as canonical id)
         if isinstance(agent, AgentInvocation):
             try:
@@ -564,6 +733,7 @@ class TelemetryHandler:
         agent.end_time = time.time()
         self._emitter.on_end(agent)
         self._notify_completion(agent)
+        self._entity_registry.pop(str(agent.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -590,6 +760,7 @@ class TelemetryHandler:
         agent.end_time = time.time()
         self._emitter.on_error(error, agent)
         self._notify_completion(agent)
+        self._entity_registry.pop(str(agent.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -609,18 +780,23 @@ class TelemetryHandler:
                 pass
         return agent
 
-    # Task lifecycle ------------------------------------------------------
-    def start_task(self, task: Task) -> Task:
-        """Start a task and create a pending span entry."""
+    # Step lifecycle ------------------------------------------------------
+    def start_step(self, step: Step) -> Step:
+        """Start a step and create a pending span entry."""
         self._refresh_capture_content()
-        self._emitter.on_start(task)
-        return task
+        self._emitter.on_start(step)
+        span = getattr(step, "span", None)
+        if span is not None:
+            self._span_registry[str(step.run_id)] = span
+        self._entity_registry[str(step.run_id)] = step
+        return step
 
-    def stop_task(self, task: Task) -> Task:
-        """Finalize a task successfully and end its span."""
-        task.end_time = time.time()
-        self._emitter.on_end(task)
-        self._notify_completion(task)
+    def stop_step(self, step: Step) -> Step:
+        """Finalize a step successfully and end its span."""
+        step.end_time = time.time()
+        self._emitter.on_end(step)
+        self._notify_completion(step)
+        self._entity_registry.pop(str(step.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -629,13 +805,14 @@ class TelemetryHandler:
                 self._meter_provider.force_flush()  # type: ignore[attr-defined]
             except Exception:
                 pass
-        return task
+        return step
 
-    def fail_task(self, task: Task, error: Error) -> Task:
-        """Fail a task and end its span with error status."""
-        task.end_time = time.time()
-        self._emitter.on_error(error, task)
-        self._notify_completion(task)
+    def fail_step(self, step: Step, error: Error) -> Step:
+        """Fail a step and end its span with error status."""
+        step.end_time = time.time()
+        self._emitter.on_error(error, step)
+        self._notify_completion(step)
+        self._entity_registry.pop(str(step.run_id), None)
         if (
             hasattr(self, "_meter_provider")
             and self._meter_provider is not None
@@ -644,7 +821,7 @@ class TelemetryHandler:
                 self._meter_provider.force_flush()  # type: ignore[attr-defined]
             except Exception:
                 pass
-        return task
+        return step
 
     def evaluate_llm(
         self,
@@ -694,7 +871,7 @@ class TelemetryHandler:
         """Wait for all pending evaluations to complete, up to the specified timeout.
 
         This is primarily intended for use in test scenarios to ensure that
-        all asynchronous evaluation tasks have finished before assertions are made.
+        all asynchronous evaluation steps have finished before assertions are made.
         """
         manager = getattr(self, "_evaluation_manager", None)
         if manager is None or not manager.has_evaluators:
@@ -708,8 +885,8 @@ class TelemetryHandler:
             return self.start_workflow(obj)
         if isinstance(obj, (AgentCreation, AgentInvocation)):
             return self.start_agent(obj)
-        if isinstance(obj, Task):
-            return self.start_task(obj)
+        if isinstance(obj, Step):
+            return self.start_step(obj)
         if isinstance(obj, LLMInvocation):
             return self.start_llm(obj)
         if isinstance(obj, EmbeddingInvocation):
@@ -718,14 +895,71 @@ class TelemetryHandler:
             return self.start_tool_call(obj)
         return obj
 
+    # ---- registry helpers -----------------------------------------------
+    def get_span_by_run_id(
+        self, run_id: Any
+    ) -> Optional[_trace_mod.Span]:  # run_id may be UUID or str
+        try:
+            key = str(run_id)
+        except Exception:
+            return None
+        return self._span_registry.get(key)
+
+    def has_span(self, run_id: Any) -> bool:
+        try:
+            return str(run_id) in self._span_registry
+        except Exception:
+            return False
+
+    # ---- entity registry helpers ---------------------------------------
+    def get_entity(self, run_id: Any) -> Optional[GenAI]:
+        try:
+            return self._entity_registry.get(str(run_id))
+        except Exception:
+            return None
+
+    def finish_by_run_id(self, run_id: Any) -> None:
+        entity = self.get_entity(run_id)
+        if entity is None:
+            return
+        if isinstance(entity, Workflow):
+            self.stop_workflow(entity)
+        elif isinstance(entity, (AgentCreation, AgentInvocation)):
+            self.stop_agent(entity)
+        elif isinstance(entity, Step):
+            self.stop_step(entity)
+        elif isinstance(entity, LLMInvocation):
+            self.stop_llm(entity)
+        elif isinstance(entity, EmbeddingInvocation):
+            self.stop_embedding(entity)
+        elif isinstance(entity, ToolCall):
+            self.stop_tool_call(entity)
+
+    def fail_by_run_id(self, run_id: Any, error: Error) -> None:
+        entity = self.get_entity(run_id)
+        if entity is None:
+            return
+        if isinstance(entity, Workflow):
+            self.fail_workflow(entity, error)
+        elif isinstance(entity, (AgentCreation, AgentInvocation)):
+            self.fail_agent(entity, error)
+        elif isinstance(entity, Step):
+            self.fail_step(entity, error)
+        elif isinstance(entity, LLMInvocation):
+            self.fail_llm(entity, error)
+        elif isinstance(entity, EmbeddingInvocation):
+            self.fail_embedding(entity, error)
+        elif isinstance(entity, ToolCall):
+            self.fail_tool_call(entity, error)
+
     def finish(self, obj: Any) -> Any:
         """Generic finish method for any invocation type."""
         if isinstance(obj, Workflow):
             return self.stop_workflow(obj)
         if isinstance(obj, (AgentCreation, AgentInvocation)):
             return self.stop_agent(obj)
-        if isinstance(obj, Task):
-            return self.stop_task(obj)
+        if isinstance(obj, Step):
+            return self.stop_step(obj)
         if isinstance(obj, LLMInvocation):
             return self.stop_llm(obj)
         if isinstance(obj, EmbeddingInvocation):
@@ -740,8 +974,8 @@ class TelemetryHandler:
             return self.fail_workflow(obj, error)
         if isinstance(obj, (AgentCreation, AgentInvocation)):
             return self.fail_agent(obj, error)
-        if isinstance(obj, Task):
-            return self.fail_task(obj, error)
+        if isinstance(obj, Step):
+            return self.fail_step(obj, error)
         if isinstance(obj, LLMInvocation):
             return self.fail_llm(obj, error)
         if isinstance(obj, EmbeddingInvocation):

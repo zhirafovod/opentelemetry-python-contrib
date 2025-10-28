@@ -12,14 +12,14 @@ from ..types import (
     EmbeddingInvocation,
     Error,
     LLMInvocation,
-    Task,
+    Step,
     Workflow,
 )
 from .utils import (
     _agent_to_log_record,
     _embedding_to_log_record,
     _llm_invocation_to_log_record,
-    _task_to_log_record,
+    _step_to_log_record,
     _workflow_to_log_record,
 )
 
@@ -72,8 +72,8 @@ class ContentEventsEmitter(EmitterMeta):
         # if isinstance(obj, Agent):
         #     self._emit_agent_event(obj)
         #     return
-        # if isinstance(obj, Task):
-        #     self._emit_task_event(obj)
+        # if isinstance(obj, Step):
+        #     self._emit_step_event(obj)
         #     return
         # if isinstance(obj, EmbeddingInvocation):
         #     self._emit_embedding_event(obj)
@@ -110,7 +110,7 @@ class ContentEventsEmitter(EmitterMeta):
     def handles(self, obj: Any) -> bool:
         return isinstance(
             obj,
-            (LLMInvocation, Workflow, AgentCreation, AgentInvocation, Task),
+            (LLMInvocation, Workflow, AgentCreation, AgentInvocation, Step),
         )
 
     # Helper methods for new agentic types
@@ -134,10 +134,10 @@ class ContentEventsEmitter(EmitterMeta):
         except Exception:
             pass
 
-    def _emit_task_event(self, task: Task) -> None:
-        """Emit an event for a task."""
+    def _emit_step_event(self, step: Step) -> None:
+        """Emit an event for a step."""
         try:
-            record = _task_to_log_record(task, self._capture_content)
+            record = _step_to_log_record(step, self._capture_content)
             if record and self._logger:
                 self._logger.emit(record)
         except Exception:

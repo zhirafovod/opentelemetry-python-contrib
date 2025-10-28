@@ -21,7 +21,7 @@ Implemented dataclasses (in `types.py`):
 - `EmbeddingInvocation`
 - `Workflow`
 - `AgentInvocation`
-- `Task`
+- `Step`
 - `ToolCall`
 - `EvaluationResult` (atomic)
 
@@ -39,7 +39,7 @@ Messages: `InputMessage` / `OutputMessage` each hold `role` and `parts` (which m
 `TelemetryHandler` (formerly referred to as `Handler`) orchestrates lifecycle & evaluation emission.
 
 Capabilities:
-- Type-specific lifecycle: `start_llm`, `stop_llm`, `fail_llm`, plus `start/stop/fail` for embedding, tool call, workflow, agent, task.
+- Type-specific lifecycle: `start_llm`, `stop_llm`, `fail_llm`, plus `start/stop/fail` for embedding, tool call, workflow, agent, step.
 - Generic dispatchers: `start(obj)`, `finish(obj)`, `fail(obj, error)`.
 - Dynamic content capture refresh (`_refresh_capture_content`) each LLM / agentic start (re-reads env + experimental gating).
 - Delegation to `CompositeEmitter` (`on_start`, `on_end`, `on_error`, `on_evaluation_results`).
@@ -98,10 +98,10 @@ CompositeEmitter wraps all emitter calls; failures are debug‑logged. Error met
 Emits semantic attributes, optional input/output message content, system instructions, function definitions, token usage, and agent context. Finalization order ensures attributes set before span closure.
 
 ### 4.2 MetricsEmitter
-Records durations and token usage to histograms: `gen_ai.client.operation.duration`, `gen_ai.client.token.usage`, plus agentic histograms (`gen_ai.workflow.duration`, `gen_ai.agent.duration`, `gen_ai.task.duration`). Role string is `metric` (singular) – may diverge from category name `metrics`.
+Records durations and token usage to histograms: `gen_ai.client.operation.duration`, `gen_ai.client.token.usage`, plus agentic histograms (`gen_ai.workflow.duration`, `gen_ai.agent.duration`, `gen_ai.step.duration`). Role string is `metric` (singular) – may diverge from category name `metrics`.
 
 ### 4.3 ContentEventsEmitter
-Emits **one** structured log record summarizing an entire LLM invocation (inputs, outputs, system instructions) — a deliberate deviation from earlier message-per-event concept to reduce event volume. Agent/workflow/task event emission is commented out (future option).
+Emits **one** structured log record summarizing an entire LLM invocation (inputs, outputs, system instructions) — a deliberate deviation from earlier message-per-event concept to reduce event volume. Agent/workflow/step event emission is commented out (future option).
 
 ### 4.4 Evaluation Emitters
 Always present:
@@ -155,15 +155,21 @@ Emitted attributes (core):
 ### 7.3 Invocation Type Filtering
 `EmitterSpec.invocation_types` drives dynamic `handles` wrapper (fast pre-dispatch predicate). Evaluation emitters see results independently of invocation type filtering.
 
-## 8. Evaluators Integration
-Entry point group: `opentelemetry_util_genai_evaluators`.
+## 8. Evaluations Integration
+Entry point groups:
+- `opentelemetry_util_genai_completion_callbacks` (completion callback plug-ins; evaluation manager registers here).
+- `opentelemetry_util_genai_evaluators` (per-evaluator factories/registrations discovered by the evaluation manager).
 
-Evaluation Manager:
-- Auto-registers if evaluators available.
-- Trace-id ratio sampling via `OTEL_INSTRUMENTATION_GENAI_EVALUATION_SAMPLE_RATE` (falls back if no span context).
-- Parses evaluator grammar into per-type plans (metric + options).
-- Aggregation flag merges buckets into a single list when true.
-- Emits lists of `EvaluationResult` (no wrapper class yet).
+Default loading honours two environment variables:
+- `OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS` – optional comma-separated filter applied before instantiation.
+- `OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS` – when truthy, skips loading built-in callbacks (e.g., evaluation manager).
+
+Evaluation Manager behaviour (now shipped from `opentelemetry-util-genai-evals`):
+- Instantiated lazily when the evaluation completion callback binds to `TelemetryHandler`.
+- Trace-id ratio sampling via `OTEL_INSTRUMENTATION_GENAI_EVALUATION_SAMPLE_RATE` (falls back to enqueue if span context missing).
+- Parses evaluator grammar into per-type plans (metric + options) sourced from registered evaluators.
+- Aggregation flag merges buckets into a single list when true (`OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION`).
+- Emits lists of `EvaluationResult` to `handler.evaluation_results`.
 - Marks invocation `attributes["gen_ai.evaluation.executed"] = True` post emission.
 
 ## 9. Lifecycle Overview

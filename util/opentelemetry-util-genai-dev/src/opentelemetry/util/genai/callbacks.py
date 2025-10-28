@@ -12,4 +12,13 @@ class CompletionCallback(Protocol):
         """Handle completion of a GenAI invocation."""
 
 
-__all__ = ["CompletionCallback"]
+class NoOpCompletionCallback:
+    """Completion callback that performs no work."""
+
+    def on_completion(
+        self, invocation: GenAI
+    ) -> None:  # pragma: no cover - trivial
+        return None
+
+
+__all__ = ["CompletionCallback", "NoOpCompletionCallback"]

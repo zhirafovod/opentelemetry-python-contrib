@@ -319,10 +319,10 @@ class EmbeddingInvocation(GenAI):
 
 @dataclass
 class Workflow(GenAI):
-    """Represents a workflow orchestrating multiple agents and tasks.
+    """Represents a workflow orchestrating multiple agents and steps.
 
     A workflow is the top-level orchestration unit in agentic AI systems,
-    coordinating agents and tasks to achieve a complex goal. Workflows are optional
+    coordinating agents and steps to achieve a complex goal. Workflows are optional
     and typically used in multi-agent or multi-step scenarios.
 
     Attributes:
@@ -394,27 +394,27 @@ class AgentInvocation(_BaseAgent):
 
 
 @dataclass
-class Task(GenAI):
+class Step(GenAI):
     """Represents a discrete unit of work in an agentic AI system.
 
-    Tasks can be orchestrated at the workflow level (assigned to agents) or
+    Steps can be orchestrated at the workflow level (assigned to agents) or
     decomposed internally by agents during execution. This design supports both
     scenarios through flexible parent relationships.
     """
 
     name: str
-    objective: Optional[str] = None  # what the task aims to achieve
-    task_type: Optional[str] = (
+    objective: Optional[str] = None  # what the step aims to achieve
+    step_type: Optional[str] = (
         None  # planning, execution, reflection, tool_use, etc.
     )
     source: Optional[Literal["workflow", "agent"]] = (
-        None  # where task originated
+        None  # where step originated
     )
-    assigned_agent: Optional[str] = None  # for workflow-assigned tasks
+    assigned_agent: Optional[str] = None  # for workflow-assigned steps
     status: Optional[str] = None  # pending, in_progress, completed, failed
     description: Optional[str] = None
-    input_data: Optional[str] = None  # Input data/context for the task
-    output_data: Optional[str] = None  # Output data/result from the task
+    input_data: Optional[str] = None  # Input data/context for the step
+    output_data: Optional[str] = None  # Output data/result from the step
 
 
 __all__ = [
@@ -434,6 +434,6 @@ __all__ = [
     "Workflow",
     "AgentCreation",
     "AgentInvocation",
-    "Task",
+    "Step",
     # backward compatibility normalization helpers
 ]

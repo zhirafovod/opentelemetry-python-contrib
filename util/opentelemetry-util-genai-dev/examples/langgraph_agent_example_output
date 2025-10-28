@@ -55,7 +55,7 @@ Invoking agent...
 --- Step 1 ---
 Message type: HumanMessage
 {
-    "name": "gen_ai.task step_1",
+    "name": "gen_ai.step step_1",
     "context": {
         "trace_id": "0x56121ed0b4f95b36f8cc533a1921dd6d",
         "span_id": "0xc4da02597b38fefd",
@@ -69,12 +69,12 @@ Message type: HumanMessage
         "status_code": "UNSET"
     },
     "attributes": {
-        "gen_ai.task.name": "step_1",
-        "gen_ai.task.type": "processing",
-        "gen_ai.task.objective": "Process message",
-        "gen_ai.task.source": "agent",
-        "gen_ai.task.assigned_agent": "capital_agent",
-        "gen_ai.task.status": "completed"
+        "gen_ai.step.name": "step_1",
+        "gen_ai.step.type": "processing",
+        "gen_ai.step.objective": "Process message",
+        "gen_ai.step.source": "agent",
+        "gen_ai.step.assigned_agent": "capital_agent",
+        "gen_ai.step.status": "completed"
     },
     "events": [],
     "links": [],
@@ -196,7 +196,7 @@ Model: gpt-4-0613, Finish Reason: tool_calls
     }
 }
 {
-    "name": "gen_ai.task tool_planning",
+    "name": "gen_ai.step tool_planning",
     "context": {
         "trace_id": "0x56121ed0b4f95b36f8cc533a1921dd6d",
         "span_id": "0xf2db733f70c78589",
@@ -210,12 +210,12 @@ Model: gpt-4-0613, Finish Reason: tool_calls
         "status_code": "UNSET"
     },
     "attributes": {
-        "gen_ai.task.name": "tool_planning",
-        "gen_ai.task.type": "planning",
-        "gen_ai.task.objective": "Decide to call tool: get_capital",
-        "gen_ai.task.source": "agent",
-        "gen_ai.task.assigned_agent": "capital_agent",
-        "gen_ai.task.status": "completed"
+        "gen_ai.step.name": "tool_planning",
+        "gen_ai.step.type": "planning",
+        "gen_ai.step.objective": "Decide to call tool: get_capital",
+        "gen_ai.step.source": "agent",
+        "gen_ai.step.assigned_agent": "capital_agent",
+        "gen_ai.step.status": "completed"
     },
     "events": [],
     "links": [],
@@ -235,7 +235,7 @@ Tool called: get_capital(Brazil) -> Brasília
 Message type: ToolMessage
 Tool result: Brasília
 {
-    "name": "gen_ai.task tool_execution",
+    "name": "gen_ai.step tool_execution",
     "context": {
         "trace_id": "0x56121ed0b4f95b36f8cc533a1921dd6d",
         "span_id": "0x7defcde36943c728",
@@ -249,12 +249,12 @@ Tool result: Brasília
         "status_code": "UNSET"
     },
     "attributes": {
-        "gen_ai.task.name": "tool_execution",
-        "gen_ai.task.type": "execution",
-        "gen_ai.task.objective": "Execute tool and return result",
-        "gen_ai.task.source": "agent",
-        "gen_ai.task.assigned_agent": "capital_agent",
-        "gen_ai.task.status": "completed"
+        "gen_ai.step.name": "tool_execution",
+        "gen_ai.step.type": "execution",
+        "gen_ai.step.objective": "Execute tool and return result",
+        "gen_ai.step.source": "agent",
+        "gen_ai.step.assigned_agent": "capital_agent",
+        "gen_ai.step.status": "completed"
     },
     "events": [],
     "links": [],
@@ -394,7 +394,7 @@ Model: gpt-4-0613, Finish Reason: stop
     }
 }
 {
-    "name": "gen_ai.task final_response",
+    "name": "gen_ai.step final_response",
     "context": {
         "trace_id": "0x56121ed0b4f95b36f8cc533a1921dd6d",
         "span_id": "0xeb58f5bcc7656b6a",
@@ -408,12 +408,12 @@ Model: gpt-4-0613, Finish Reason: stop
         "status_code": "UNSET"
     },
     "attributes": {
-        "gen_ai.task.name": "final_response",
-        "gen_ai.task.type": "generation",
-        "gen_ai.task.objective": "Generate final response to user",
-        "gen_ai.task.source": "agent",
-        "gen_ai.task.assigned_agent": "capital_agent",
-        "gen_ai.task.status": "completed"
+        "gen_ai.step.name": "final_response",
+        "gen_ai.step.type": "generation",
+        "gen_ai.step.objective": "Generate final response to user",
+        "gen_ai.step.source": "agent",
+        "gen_ai.step.assigned_agent": "capital_agent",
+        "gen_ai.step.status": "completed"
     },
     "events": [],
     "links": [],
@@ -662,16 +662,16 @@ Waiting for metrics export...
                             }
                         },
                         {
-                            "name": "gen_ai.task.duration",
-                            "description": "Duration of task executions",
+                            "name": "gen_ai.step.duration",
+                            "description": "Duration of step executions",
                             "unit": "s",
                             "data": {
                                 "data_points": [
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "step_1",
-                                            "gen_ai.task.type": "processing",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "step_1",
+                                            "gen_ai.step.type": "processing",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "capital_agent"
                                         },
                                         "start_time_unix_nano": 1759422722682073000,
@@ -727,9 +727,9 @@ Waiting for metrics export...
                                     },
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "tool_planning",
-                                            "gen_ai.task.type": "planning",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "tool_planning",
+                                            "gen_ai.step.type": "planning",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "capital_agent"
                                         },
                                         "start_time_unix_nano": 1759422725048146000,
@@ -785,9 +785,9 @@ Waiting for metrics export...
                                     },
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "tool_execution",
-                                            "gen_ai.task.type": "execution",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "tool_execution",
+                                            "gen_ai.step.type": "execution",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "capital_agent"
                                         },
                                         "start_time_unix_nano": 1759422725049794000,
@@ -843,9 +843,9 @@ Waiting for metrics export...
                                     },
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "final_response",
-                                            "gen_ai.task.type": "generation",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "final_response",
+                                            "gen_ai.step.type": "generation",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "capital_agent"
                                         },
                                         "start_time_unix_nano": 1759422726247145000,
@@ -1328,16 +1328,16 @@ Waiting for metrics export...
                             }
                         },
                         {
-                            "name": "gen_ai.task.duration",
-                            "description": "Duration of task executions",
+                            "name": "gen_ai.step.duration",
+                            "description": "Duration of step executions",
                             "unit": "s",
                             "data": {
                                 "data_points": [
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "step_1",
-                                            "gen_ai.task.type": "processing",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "step_1",
+                                            "gen_ai.step.type": "processing",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "capital_agent"
                                         },
                                         "start_time_unix_nano": 1759422722682073000,
@@ -1385,9 +1385,9 @@ Waiting for metrics export...
                                     },
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "tool_planning",
-                                            "gen_ai.task.type": "planning",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "tool_planning",
+                                            "gen_ai.step.type": "planning",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "capital_agent"
                                         },
                                         "start_time_unix_nano": 1759422725048146000,
@@ -1435,9 +1435,9 @@ Waiting for metrics export...
                                     },
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "tool_execution",
-                                            "gen_ai.task.type": "execution",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "tool_execution",
+                                            "gen_ai.step.type": "execution",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "capital_agent"
                                         },
                                         "start_time_unix_nano": 1759422725049794000,
@@ -1485,9 +1485,9 @@ Waiting for metrics export...
                                     },
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "final_response",
-                                            "gen_ai.task.type": "generation",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "final_response",
+                                            "gen_ai.step.type": "generation",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "capital_agent"
                                         },
                                         "start_time_unix_nano": 1759422726247145000,

@@ -28,6 +28,7 @@ dependencies = [
   "opentelemetry-instrumentation ~= 0.57b0",
   "opentelemetry-semantic-conventions ~= 0.57b0",
   "opentelemetry-api>=1.31.0",
+  "opentelemetry-util-genai-evals>=0.1b0.dev0",
   "nltk>=3.8.0",
 ]
 

@@ -38,7 +38,7 @@ from ..types import (
     InputMessage,
     LLMInvocation,
     OutputMessage,
-    Task,
+    Step,
     Text,
     ToolCall,
     ToolCallResponse,
@@ -750,60 +750,60 @@ def _agent_to_log_record(
     return record
 
 
-def _task_to_log_record(
-    task: Task, capture_content: bool
+def _step_to_log_record(
+    step: Step, capture_content: bool
 ) -> Optional[SDKLogRecord]:
-    """Create a log record for a task event.
+    """Create a log record for a step event.
 
-    Note: Task events are not yet in semantic conventions but follow
+    Note: Step events are not yet in semantic conventions but follow
     the message structure pattern for consistency.
     """
     # Attributes contain metadata (not content)
-    _ensure_span_context(task)
+    _ensure_span_context(step)
     otel_context = build_otel_context(
-        getattr(task, "span", None),
-        getattr(task, "span_context", None),
+        getattr(step, "span", None),
+        getattr(step, "span_context", None),
     )
-    trace_id = getattr(task, "trace_id", None)
-    span_id = getattr(task, "span_id", None)
-    trace_flags = getattr(task, "trace_flags", None)
+    trace_id = getattr(step, "trace_id", None)
+    span_id = getattr(step, "span_id", None)
+    trace_flags = getattr(step, "trace_flags", None)
 
     attributes: Dict[str, Any] = {
-        "event.name": "gen_ai.client.task.operation.details",
-        "gen_ai.task.name": task.name,
+        "event.name": "gen_ai.client.step.operation.details",
+        "gen_ai.step.name": step.name,
     }
 
-    if task.task_type:
-        attributes["gen_ai.task.type"] = task.task_type
-    if task.objective:
-        attributes["gen_ai.task.objective"] = task.objective
-    if task.source:
-        attributes["gen_ai.task.source"] = task.source
-    if task.assigned_agent:
-        attributes[GenAI.GEN_AI_AGENT_NAME] = task.assigned_agent
-    if task.status:
-        attributes["gen_ai.task.status"] = task.status
+    if step.step_type:
+        attributes["gen_ai.step.type"] = step.step_type
+    if step.objective:
+        attributes["gen_ai.step.objective"] = step.objective
+    if step.source:
+        attributes["gen_ai.step.source"] = step.source
+    if step.assigned_agent:
+        attributes[GenAI.GEN_AI_AGENT_NAME] = step.assigned_agent
+    if step.status:
+        attributes["gen_ai.step.status"] = step.status
 
     # Body contains messages/content only (following semantic conventions pattern)
     # If capture_content is disabled, emit empty content (like LLM messages do)
     body: Dict[str, Any] = {}
 
     if capture_content:
-        if task.input_data:
-            body["input_data"] = task.input_data
-        if task.output_data:
-            body["output_data"] = task.output_data
+        if step.input_data:
+            body["input_data"] = step.input_data
+        if step.output_data:
+            body["output_data"] = step.output_data
     else:
         # Emit structure with empty content when capture is disabled
-        if task.input_data:
+        if step.input_data:
             body["input_data"] = ""
-        if task.output_data:
+        if step.output_data:
             body["output_data"] = ""
 
     record = SDKLogRecord(
         body=body or None,
         attributes=attributes,
-        event_name="gen_ai.client.task.operation.details",
+        event_name="gen_ai.client.step.operation.details",
         context=otel_context,
     )
     if trace_id is not None:

@@ -9,7 +9,7 @@ from opentelemetry import context as context_api
 from opentelemetry._events import get_event_logger
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.langchain.callback_handler import (
-    TraceloopCallbackHandler,
+    LangchainCallbackHandler,
 )
 from opentelemetry.instrumentation.langchain.config import Config
 from opentelemetry.instrumentation.langchain.utils import is_package_available
@@ -104,7 +104,7 @@ class LangchainInstrumentor(BaseInstrumentor):
         if meter_provider is not None:
             telemetry_handler_kwargs["meter_provider"] = meter_provider
 
-        traceloopCallbackHandler = TraceloopCallbackHandler(
+        langchainCallbackHandler = LangchainCallbackHandler(
             tracer,
             duration_histogram,
             token_histogram,
@@ -113,11 +113,11 @@ class LangchainInstrumentor(BaseInstrumentor):
         wrap_function_wrapper(
             module="langchain_core.callbacks",
             name="BaseCallbackManager.__init__",
-            wrapper=_BaseCallbackManagerInitWrapper(traceloopCallbackHandler),
+            wrapper=_BaseCallbackManagerInitWrapper(langchainCallbackHandler),
         )
 
         if not self.disable_trace_context_propagation:
-            self._wrap_openai_functions_for_tracing(traceloopCallbackHandler)
+            self._wrap_openai_functions_for_tracing(langchainCallbackHandler)
 
         # Initialize telemetry handler for embeddings
         self._telemetry_handler = TelemetryHandler(
@@ -126,8 +126,8 @@ class LangchainInstrumentor(BaseInstrumentor):
         )
         self._wrap_embedding_functions()
 
-    def _wrap_openai_functions_for_tracing(self, traceloopCallbackHandler):
-        openai_tracing_wrapper = _OpenAITracingWrapper(traceloopCallbackHandler)
+    def _wrap_openai_functions_for_tracing(self, langchainCallbackHandler):
+        openai_tracing_wrapper = _OpenAITracingWrapper(langchainCallbackHandler)
 
         if is_package_available("langchain_community"):
             # Wrap langchain_community.llms.openai.BaseOpenAI
@@ -355,7 +355,7 @@ LangChainInstrumentor = LangchainInstrumentor
 
 
 class _BaseCallbackManagerInitWrapper:
-    def __init__(self, callback_handler: "TraceloopCallbackHandler"):
+    def __init__(self, callback_handler: "LangchainCallbackHandler"):
         self._callback_handler = callback_handler
 
     def __call__(
@@ -385,7 +385,7 @@ class _BaseCallbackManagerInitWrapper:
 #    allows us to add extra headers (including tracing headers) to the OpenAI request by
 #    modifying the `extra_headers` argument in `kwargs`.
 class _OpenAITracingWrapper:
-    def __init__(self, callback_manager: "TraceloopCallbackHandler"):
+    def __init__(self, callback_manager: "LangchainCallbackHandler"):
         self._callback_manager = callback_manager
 
     def __call__(

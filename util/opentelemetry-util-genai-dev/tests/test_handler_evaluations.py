@@ -6,6 +6,9 @@ from opentelemetry.util.genai.callbacks import CompletionCallback
 from opentelemetry.util.genai.environment_variables import (
     OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS,
 )
+from opentelemetry.util.genai.evals.bootstrap import (
+    EvaluatorCompletionCallback,
+)
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
     InputMessage,
@@ -57,7 +60,16 @@ class TestHandlerCompletionCallbacks(unittest.TestCase):
         clear=True,
     )
     def test_default_manager_registered_when_env_set(self) -> None:
-        handler = get_telemetry_handler()
+        def _mock_load_callbacks(_selected):
+            return [("evaluations", EvaluatorCompletionCallback())], {
+                "evaluations"
+            }
+
+        with patch(
+            "opentelemetry.util.genai.handler._load_completion_callbacks",
+            side_effect=_mock_load_callbacks,
+        ):
+            handler = get_telemetry_handler()
         manager = getattr(handler, "_evaluation_manager", None)
         self.assertIsNotNone(manager)
         if manager is not None:

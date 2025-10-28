@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Iterable, List, Mapping, Sequence
 
-from opentelemetry.util.genai.evaluators.base import Evaluator
-from opentelemetry.util.genai.evaluators.registry import (
+from opentelemetry.util.genai.evals.base import Evaluator
+from opentelemetry.util.genai.evals.registry import (
     EvaluatorRegistration,
     register_evaluator,
 )

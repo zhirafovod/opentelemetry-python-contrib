@@ -40,15 +40,15 @@ GEN_AI_WORKFLOW_DESCRIPTION = "gen_ai.workflow.description"
 GEN_AI_WORKFLOW_INITIAL_INPUT = "gen_ai.workflow.initial_input"
 GEN_AI_WORKFLOW_FINAL_OUTPUT = "gen_ai.workflow.final_output"
 
-# Task attributes (not in semantic conventions)
-GEN_AI_TASK_NAME = "gen_ai.task.name"
-GEN_AI_TASK_TYPE = "gen_ai.task.type"
-GEN_AI_TASK_OBJECTIVE = "gen_ai.task.objective"
-GEN_AI_TASK_SOURCE = "gen_ai.task.source"
-GEN_AI_TASK_ASSIGNED_AGENT = "gen_ai.task.assigned_agent"
-GEN_AI_TASK_STATUS = "gen_ai.task.status"
-GEN_AI_TASK_INPUT_DATA = "gen_ai.task.input_data"
-GEN_AI_TASK_OUTPUT_DATA = "gen_ai.task.output_data"
+# Step attributes (not in semantic conventions)
+GEN_AI_STEP_NAME = "gen_ai.step.name"
+GEN_AI_STEP_TYPE = "gen_ai.step.type"
+GEN_AI_STEP_OBJECTIVE = "gen_ai.step.objective"
+GEN_AI_STEP_SOURCE = "gen_ai.step.source"
+GEN_AI_STEP_ASSIGNED_AGENT = "gen_ai.step.assigned_agent"
+GEN_AI_STEP_STATUS = "gen_ai.step.status"
+GEN_AI_STEP_INPUT_DATA = "gen_ai.step.input_data"
+GEN_AI_STEP_OUTPUT_DATA = "gen_ai.step.output_data"
 
 # Embedding attributes
 GEN_AI_EMBEDDINGS_DIMENSION_COUNT = "gen_ai.embeddings.dimension.count"

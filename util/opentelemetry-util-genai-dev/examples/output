@@ -40,7 +40,7 @@ Creating agent: classifier_agent
     }
 }
 Invoking agent: classifier_agent
-Executing task: classify_intent
+Executing step: classify_intent
 LLM call with agent context
 {
     "body": {
@@ -141,7 +141,7 @@ LLM call with agent context
     }
 }
 {
-    "name": "gen_ai.task classify_intent",
+    "name": "gen_ai.step classify_intent",
     "context": {
         "trace_id": "0xfb966ec08a3eb16a1757a5d3ef6fc432",
         "span_id": "0xba9e92b58852ef2f",
@@ -155,11 +155,11 @@ LLM call with agent context
         "status_code": "UNSET"
     },
     "attributes": {
-        "gen_ai.task.name": "classify_intent",
-        "gen_ai.task.type": "classification",
-        "gen_ai.task.objective": "Determine the user's intent from their query",
-        "gen_ai.task.source": "agent",
-        "gen_ai.task.status": "completed"
+        "gen_ai.step.name": "classify_intent",
+        "gen_ai.step.type": "classification",
+        "gen_ai.step.objective": "Determine the user's intent from their query",
+        "gen_ai.step.source": "agent",
+        "gen_ai.step.status": "completed"
     },
     "events": [],
     "links": [],
@@ -251,7 +251,7 @@ Creating agent: support_agent
     }
 }
 Invoking agent: support_agent
-  📝 Executing task: handle_request
+  📝 Executing step: handle_request
 LLM call with agent context
 {
     "body": {
@@ -384,7 +384,7 @@ LLM call with agent context
     }
 }
 {
-    "name": "gen_ai.task handle_request",
+    "name": "gen_ai.step handle_request",
     "context": {
         "trace_id": "0xfb966ec08a3eb16a1757a5d3ef6fc432",
         "span_id": "0x9965233a81c98378",
@@ -398,12 +398,12 @@ LLM call with agent context
         "status_code": "UNSET"
     },
     "attributes": {
-        "gen_ai.task.name": "handle_request",
-        "gen_ai.task.type": "execution",
-        "gen_ai.task.objective": "Provide order status information to customer",
-        "gen_ai.task.source": "agent",
-        "gen_ai.task.assigned_agent": "support_agent",
-        "gen_ai.task.status": "completed"
+        "gen_ai.step.name": "handle_request",
+        "gen_ai.step.type": "execution",
+        "gen_ai.step.objective": "Provide order status information to customer",
+        "gen_ai.step.source": "agent",
+        "gen_ai.step.assigned_agent": "support_agent",
+        "gen_ai.step.status": "completed"
     },
     "events": [],
     "links": [],
@@ -490,10 +490,10 @@ Completing workflow
 
 ================================================================================
 Workflow completed! Check the console output above for:
-  • Span hierarchy (Workflow → Agent → Task → LLM)
+  • Span hierarchy (Workflow → Agent → Step → LLM)
   • Agent context on LLM spans (gen_ai.agent.name, gen_ai.agent.id)
   • Metrics with agent attributes
-  • Events for workflow/agent/task (if content capture enabled)
+  • Events for workflow/agent/step (if content capture enabled)
 ================================================================================
 
 
@@ -1280,16 +1280,16 @@ Error handling demonstrated - check spans for error status
                             }
                         },
                         {
-                            "name": "gen_ai.task.duration",
-                            "description": "Duration of task executions",
+                            "name": "gen_ai.step.duration",
+                            "description": "Duration of step executions",
                             "unit": "s",
                             "data": {
                                 "data_points": [
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "classify_intent",
-                                            "gen_ai.task.type": "classification",
-                                            "gen_ai.task.source": "agent"
+                                            "gen_ai.step.name": "classify_intent",
+                                            "gen_ai.step.type": "classification",
+                                            "gen_ai.step.source": "agent"
                                         },
                                         "start_time_unix_nano": 1759531378016755000,
                                         "time_unix_nano": 1759531382593590000,
@@ -1344,9 +1344,9 @@ Error handling demonstrated - check spans for error status
                                     },
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "handle_request",
-                                            "gen_ai.task.type": "execution",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "handle_request",
+                                            "gen_ai.step.type": "execution",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "support_agent"
                                         },
                                         "start_time_unix_nano": 1759531378333242000,
@@ -2154,16 +2154,16 @@ Error handling demonstrated - check spans for error status
                             }
                         },
                         {
-                            "name": "gen_ai.task.duration",
-                            "description": "Duration of task executions",
+                            "name": "gen_ai.step.duration",
+                            "description": "Duration of step executions",
                             "unit": "s",
                             "data": {
                                 "data_points": [
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "classify_intent",
-                                            "gen_ai.task.type": "classification",
-                                            "gen_ai.task.source": "agent"
+                                            "gen_ai.step.name": "classify_intent",
+                                            "gen_ai.step.type": "classification",
+                                            "gen_ai.step.source": "agent"
                                         },
                                         "start_time_unix_nano": 1759531378016755000,
                                         "time_unix_nano": 1759531385340039000,
@@ -2210,9 +2210,9 @@ Error handling demonstrated - check spans for error status
                                     },
                                     {
                                         "attributes": {
-                                            "gen_ai.task.name": "handle_request",
-                                            "gen_ai.task.type": "execution",
-                                            "gen_ai.task.source": "agent",
+                                            "gen_ai.step.name": "handle_request",
+                                            "gen_ai.step.type": "execution",
+                                            "gen_ai.step.source": "agent",
                                             "gen_ai.agent.name": "support_agent"
                                         },
                                         "start_time_unix_nano": 1759531378333242000,

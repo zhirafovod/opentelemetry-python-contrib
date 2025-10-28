@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from opentelemetry.util.evaluator import deepeval as plugin
-from opentelemetry.util.genai.evaluators.registry import clear_registry
+from opentelemetry.util.genai.evals.registry import clear_registry
 from opentelemetry.util.genai.types import (
     InputMessage,
     LLMInvocation,

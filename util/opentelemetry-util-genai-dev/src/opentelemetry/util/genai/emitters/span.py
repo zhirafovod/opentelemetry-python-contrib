@@ -26,12 +26,12 @@ from ..attributes import (
     GEN_AI_OUTPUT_MESSAGES,
     GEN_AI_PROVIDER_NAME,
     GEN_AI_REQUEST_ENCODING_FORMATS,
-    GEN_AI_TASK_ASSIGNED_AGENT,
-    GEN_AI_TASK_NAME,
-    GEN_AI_TASK_OBJECTIVE,
-    GEN_AI_TASK_SOURCE,
-    GEN_AI_TASK_STATUS,
-    GEN_AI_TASK_TYPE,
+    GEN_AI_STEP_ASSIGNED_AGENT,
+    GEN_AI_STEP_NAME,
+    GEN_AI_STEP_OBJECTIVE,
+    GEN_AI_STEP_SOURCE,
+    GEN_AI_STEP_STATUS,
+    GEN_AI_STEP_TYPE,
     GEN_AI_WORKFLOW_DESCRIPTION,
     GEN_AI_WORKFLOW_NAME,
     GEN_AI_WORKFLOW_TYPE,
@@ -47,7 +47,7 @@ from ..types import (
     EmbeddingInvocation,
     Error,
     LLMInvocation,
-    Task,
+    Step,
     ToolCall,
     Workflow,
 )
@@ -294,13 +294,22 @@ class SpanEmitter(EmitterMeta):
             self._start_workflow(invocation)
         elif isinstance(invocation, (AgentCreation, AgentInvocation)):
             self._start_agent(invocation)
-        elif isinstance(invocation, Task):
-            self._start_task(invocation)
+        elif isinstance(invocation, Step):
+            self._start_step(invocation)
         # Handle existing types
         elif isinstance(invocation, ToolCall):
             span_name = f"tool {invocation.name}"
+            parent_span = getattr(invocation, "parent_span", None)
+            parent_ctx = (
+                trace.set_span_in_context(parent_span)
+                if parent_span is not None
+                else None
+            )
             cm = self._tracer.start_as_current_span(
-                span_name, kind=SpanKind.CLIENT, end_on_exit=False
+                span_name,
+                kind=SpanKind.CLIENT,
+                end_on_exit=False,
+                context=parent_ctx,
             )
             span = cm.__enter__()
             self._attach_span(invocation, span, cm)
@@ -317,8 +326,17 @@ class SpanEmitter(EmitterMeta):
                 operation = getattr(invocation, "operation", "chat")
                 model_name = invocation.request_model
                 span_name = f"{operation} {model_name}"
+            parent_span = getattr(invocation, "parent_span", None)
+            parent_ctx = (
+                trace.set_span_in_context(parent_span)
+                if parent_span is not None
+                else None
+            )
             cm = self._tracer.start_as_current_span(
-                span_name, kind=SpanKind.CLIENT, end_on_exit=False
+                span_name,
+                kind=SpanKind.CLIENT,
+                end_on_exit=False,
+                context=parent_ctx,
             )
             span = cm.__enter__()
             self._attach_span(invocation, span, cm)
@@ -329,8 +347,8 @@ class SpanEmitter(EmitterMeta):
             self._finish_workflow(invocation)
         elif isinstance(invocation, (AgentCreation, AgentInvocation)):
             self._finish_agent(invocation)
-        elif isinstance(invocation, Task):
-            self._finish_task(invocation)
+        elif isinstance(invocation, Step):
+            self._finish_step(invocation)
         elif isinstance(invocation, EmbeddingInvocation):
             self._finish_embedding(invocation)
         else:
@@ -353,8 +371,8 @@ class SpanEmitter(EmitterMeta):
             self._error_workflow(error, invocation)
         elif isinstance(invocation, (AgentCreation, AgentInvocation)):
             self._error_agent(error, invocation)
-        elif isinstance(invocation, Task):
-            self._error_task(error, invocation)
+        elif isinstance(invocation, Step):
+            self._error_step(error, invocation)
         elif isinstance(invocation, EmbeddingInvocation):
             self._error_embedding(error, invocation)
         else:
@@ -379,8 +397,17 @@ class SpanEmitter(EmitterMeta):
     def _start_workflow(self, workflow: Workflow) -> None:
         """Start a workflow span."""
         span_name = f"gen_ai.workflow {workflow.name}"
+        parent_span = getattr(workflow, "parent_span", None)
+        parent_ctx = (
+            trace.set_span_in_context(parent_span)
+            if parent_span is not None
+            else None
+        )
         cm = self._tracer.start_as_current_span(
-            span_name, kind=SpanKind.CLIENT, end_on_exit=False
+            span_name,
+            kind=SpanKind.CLIENT,
+            end_on_exit=False,
+            context=parent_ctx,
         )
         span = cm.__enter__()
         self._attach_span(workflow, span, cm)
@@ -468,8 +495,17 @@ class SpanEmitter(EmitterMeta):
         else:
             span_name = f"invoke_agent {agent.name}"
 
+        parent_span = getattr(agent, "parent_span", None)
+        parent_ctx = (
+            trace.set_span_in_context(parent_span)
+            if parent_span is not None
+            else None
+        )
         cm = self._tracer.start_as_current_span(
-            span_name, kind=SpanKind.CLIENT, end_on_exit=False
+            span_name,
+            kind=SpanKind.CLIENT,
+            end_on_exit=False,
+            context=parent_ctx,
         )
         span = cm.__enter__()
         self._attach_span(agent, span, cm)
@@ -570,66 +606,75 @@ class SpanEmitter(EmitterMeta):
                 pass
         span.end()
 
-    # ---- Task lifecycle --------------------------------------------------
-    def _start_task(self, task: Task) -> None:
-        """Start a task span."""
-        span_name = f"gen_ai.task {task.name}"
+    # ---- Step lifecycle --------------------------------------------------
+    def _start_step(self, step: Step) -> None:
+        """Start a step span."""
+        span_name = f"gen_ai.step {step.name}"
+        parent_span = getattr(step, "parent_span", None)
+        parent_ctx = (
+            trace.set_span_in_context(parent_span)
+            if parent_span is not None
+            else None
+        )
         cm = self._tracer.start_as_current_span(
-            span_name, kind=SpanKind.CLIENT, end_on_exit=False
+            span_name,
+            kind=SpanKind.CLIENT,
+            end_on_exit=False,
+            context=parent_ctx,
         )
         span = cm.__enter__()
-        self._attach_span(task, span, cm)
+        self._attach_span(step, span, cm)
 
-        # Set task attributes
-        span.set_attribute(GEN_AI_TASK_NAME, task.name)
-        if task.task_type:
-            span.set_attribute(GEN_AI_TASK_TYPE, task.task_type)
-        if task.objective:
-            span.set_attribute(GEN_AI_TASK_OBJECTIVE, task.objective)
-        if task.source:
-            span.set_attribute(GEN_AI_TASK_SOURCE, task.source)
-        if task.assigned_agent:
-            span.set_attribute(GEN_AI_TASK_ASSIGNED_AGENT, task.assigned_agent)
-        if task.status:
-            span.set_attribute(GEN_AI_TASK_STATUS, task.status)
-        if task.input_data and self._capture_content:
+        # Set step attributes
+        span.set_attribute(GEN_AI_STEP_NAME, step.name)
+        if step.step_type:
+            span.set_attribute(GEN_AI_STEP_TYPE, step.step_type)
+        if step.objective:
+            span.set_attribute(GEN_AI_STEP_OBJECTIVE, step.objective)
+        if step.source:
+            span.set_attribute(GEN_AI_STEP_SOURCE, step.source)
+        if step.assigned_agent:
+            span.set_attribute(GEN_AI_STEP_ASSIGNED_AGENT, step.assigned_agent)
+        if step.status:
+            span.set_attribute(GEN_AI_STEP_STATUS, step.status)
+        if step.input_data and self._capture_content:
             import json
 
             input_msg = {
                 "role": "user",
-                "parts": [{"type": "text", "content": task.input_data}],
+                "parts": [{"type": "text", "content": step.input_data}],
             }
             span.set_attribute(
                 "gen_ai.input.messages", json.dumps([input_msg])
             )
         _apply_gen_ai_semconv_attributes(
-            span, task.semantic_convention_attributes()
+            span, step.semantic_convention_attributes()
         )
 
-    def _finish_task(self, task: Task) -> None:
-        """Finish a task span."""
-        span = task.span
+    def _finish_step(self, step: Step) -> None:
+        """Finish a step span."""
+        span = step.span
         if span is None:
             return
         # Set output data if capture_content enabled
-        if task.output_data and self._capture_content:
+        if step.output_data and self._capture_content:
             import json
 
             output_msg = {
                 "role": "assistant",
-                "parts": [{"type": "text", "content": task.output_data}],
+                "parts": [{"type": "text", "content": step.output_data}],
                 "finish_reason": "stop",
             }
             span.set_attribute(
                 "gen_ai.output.messages", json.dumps([output_msg])
             )
         # Update status if changed
-        if task.status:
-            span.set_attribute(GEN_AI_TASK_STATUS, task.status)
+        if step.status:
+            span.set_attribute(GEN_AI_STEP_STATUS, step.status)
         _apply_gen_ai_semconv_attributes(
-            span, task.semantic_convention_attributes()
+            span, step.semantic_convention_attributes()
         )
-        token = task.context_token
+        token = step.context_token
         if token is not None and hasattr(token, "__exit__"):
             try:
                 token.__exit__(None, None, None)  # type: ignore[misc]
@@ -637,9 +682,9 @@ class SpanEmitter(EmitterMeta):
                 pass
         span.end()
 
-    def _error_task(self, error: Error, task: Task) -> None:
-        """Fail a task span with error status."""
-        span = task.span
+    def _error_step(self, error: Error, step: Step) -> None:
+        """Fail a step span with error status."""
+        span = step.span
         if span is None:
             return
         span.set_status(Status(StatusCode.ERROR, error.message))
@@ -648,11 +693,11 @@ class SpanEmitter(EmitterMeta):
                 ErrorAttributes.ERROR_TYPE, error.type.__qualname__
             )
         # Update status to failed
-        span.set_attribute(GEN_AI_TASK_STATUS, "failed")
+        span.set_attribute(GEN_AI_STEP_STATUS, "failed")
         _apply_gen_ai_semconv_attributes(
-            span, task.semantic_convention_attributes()
+            span, step.semantic_convention_attributes()
         )
-        token = task.context_token
+        token = step.context_token
         if token is not None and hasattr(token, "__exit__"):
             try:
                 token.__exit__(None, None, None)  # type: ignore[misc]
@@ -664,8 +709,17 @@ class SpanEmitter(EmitterMeta):
     def _start_embedding(self, embedding: EmbeddingInvocation) -> None:
         """Start an embedding span."""
         span_name = f"{embedding.operation_name} {embedding.request_model}"
+        parent_span = getattr(embedding, "parent_span", None)
+        parent_ctx = (
+            trace.set_span_in_context(parent_span)
+            if parent_span is not None
+            else None
+        )
         cm = self._tracer.start_as_current_span(
-            span_name, kind=SpanKind.CLIENT, end_on_exit=False
+            span_name,
+            kind=SpanKind.CLIENT,
+            end_on_exit=False,
+            context=parent_ctx,
         )
         span = cm.__enter__()
         self._attach_span(embedding, span, cm)

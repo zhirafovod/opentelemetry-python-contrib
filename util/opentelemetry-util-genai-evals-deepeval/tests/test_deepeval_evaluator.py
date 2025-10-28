@@ -174,7 +174,7 @@ class DeeEvaluationResult:  # type: ignore[override]
 
 
 from opentelemetry.util.evaluator import deepeval as plugin
-from opentelemetry.util.genai.evaluators.registry import (
+from opentelemetry.util.genai.evals.registry import (
     clear_registry,
     get_evaluator,
     list_evaluators,

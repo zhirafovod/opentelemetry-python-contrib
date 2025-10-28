@@ -5,7 +5,7 @@ Example demonstrating OpenTelemetry GenAI telemetry for agentic AI use cases.
 This example shows:
 1. Workflow orchestration with multiple agents
 2. Agent creation and invocation
-3. Task execution
+3. Step execution
 4. LLM calls within agent context
 5. Parent-child span relationships
 6. Metrics and events emission
@@ -38,7 +38,7 @@ from opentelemetry.util.genai.types import (
     InputMessage,
     LLMInvocation,
     OutputMessage,
-    Task,
+    Step,
     Text,
     ToolCall,
     ToolCallResponse,
@@ -78,11 +78,11 @@ def simulate_multi_agent_workflow():
     Workflow: customer_support_pipeline
       ├─ Agent: create_agent (classifier_agent)
       ├─ Agent: invoke_agent (classifier_agent)
-      │   └─ Task: classify_intent
+      │   └─ Step: classify_intent
       │       └─ LLM: chat (with agent context)
       ├─ Agent: create_agent (support_agent)
       └─ Agent: invoke_agent (support_agent)
-          └─ Task: handle_request
+          └─ Step: handle_request
               └─ LLM: chat (with agent context)
     """
 
@@ -128,20 +128,20 @@ def simulate_multi_agent_workflow():
     handler.start_agent(classifier_invocation)
     time.sleep(0.1)
 
-    # 4. Task: Classify Intent
-    print("Executing task: classify_intent")
-    classify_task = Task(
+    # 4. Step: Classify Intent
+    print("Executing step: classify_intent")
+    classify_step = Step(
         name="classify_intent",
-        task_type="classification",
+        step_type="classification",
         objective="Determine the user's intent from their query",
         source="agent",
         status="in_progress",
         input_data="My order hasn't arrived yet",
     )
-    handler.start_task(classify_task)
+    handler.start_step(classify_step)
     time.sleep(0.05)
 
-    # 5. LLM Call within Task (with agent context)
+    # 5. LLM Call within Step (with agent context)
     print("LLM call with agent context")
     llm_invocation = LLMInvocation(
         request_model="gpt-4",
@@ -176,10 +176,10 @@ def simulate_multi_agent_workflow():
     llm_invocation.output_tokens = 8
     handler.stop_llm(llm_invocation)
 
-    # Complete task
-    classify_task.output_data = "order_status"
-    classify_task.status = "completed"
-    handler.stop_task(classify_task)
+    # Complete step
+    classify_step.output_data = "order_status"
+    classify_step.status = "completed"
+    handler.stop_step(classify_step)
 
     # Complete agent invocation
     classifier_invocation.output_result = "Intent classified as: order_status"
@@ -213,18 +213,18 @@ def simulate_multi_agent_workflow():
     handler.start_agent(support_invocation)
     time.sleep(0.1)
 
-    # 8. Task: Handle Request
-    print("  📝 Executing task: handle_request")
-    handle_task = Task(
+    # 8. Step: Handle Request
+    print("  📝 Executing step: handle_request")
+    handle_step = Step(
         name="handle_request",
-        task_type="execution",
+        step_type="execution",
         objective="Provide order status information to customer",
         source="agent",
         assigned_agent="support_agent",
         status="in_progress",
         input_data="Query about order status",
     )
-    handler.start_task(handle_task)
+    handler.start_step(handle_step)
     time.sleep(0.05)
 
     # 9. LLM Call for Support Response
@@ -295,10 +295,10 @@ def simulate_multi_agent_workflow():
     support_llm.output_tokens = 28
     handler.stop_llm(support_llm)
 
-    # Complete task
-    handle_task.output_data = "Order status provided to customer"
-    handle_task.status = "completed"
-    handler.stop_task(handle_task)
+    # Complete step
+    handle_step.output_data = "Order status provided to customer"
+    handle_step.status = "completed"
+    handler.stop_step(handle_step)
 
     # Complete agent invocation
     support_invocation.output_result = "Customer informed about order status"
@@ -311,12 +311,12 @@ def simulate_multi_agent_workflow():
 
     print("\n" + "=" * 80)
     print("Workflow completed! Check the console output above for:")
-    print("  • Span hierarchy (Workflow → Agent → Task → LLM)")
+    print("  • Span hierarchy (Workflow → Agent → Step → LLM)")
     print(
         "  • Agent context on LLM spans (gen_ai.agent.name, gen_ai.agent.id)"
     )
     print("  • Metrics with agent attributes")
-    print("  • Events for workflow/agent/task (if content capture enabled)")
+    print("  • Events for workflow/agent/step (if content capture enabled)")
     print("=" * 80 + "\n")
 
 

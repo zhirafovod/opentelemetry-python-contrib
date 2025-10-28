@@ -96,8 +96,9 @@ class Evaluator:
 Entry points:
 
 ```text
-opentelemetry_util_genai_emitters   # returns list[EmitterSpec]
-opentelemetry_util_genai_evaluators # returns list[Evaluator factory/spec]
+opentelemetry_util_genai_emitters             # returns list[EmitterSpec]
+opentelemetry_util_genai_evaluators           # returns list[Evaluator factory/spec]
+opentelemetry_util_genai_completion_callbacks # returns completion callback instances or factories
 ```
 
 Environment variables (subset – updated):
@@ -114,7 +115,31 @@ OTEL_INSTRUMENTATION_GENAI_EVALS_EVALUATORS=...             # grammar for evalua
 OTEL_INSTRUMENTATION_GENAI_EVALS_RESULTS_AGGREGATION=true|false
 OTEL_INSTRUMENTATION_GENAI_EVALS_INTERVAL=5.0               # async worker poll interval (seconds)
 OTEL_INSTRUMENTATION_GENAI_EVALUATION_SAMPLE_RATE=1.0       # 0.0–1.0 trace-based sampling for evaluations
+OTEL_INSTRUMENTATION_GENAI_COMPLETION_CALLBACKS=...         # filter completion plugin names
+OTEL_INSTRUMENTATION_GENAI_DISABLE_DEFAULT_COMPLETION_CALLBACKS=true|false
 ```
+
+---
+
+## Evaluations Package: `opentelemetry-util-genai-evals`
+
+Purpose: Provides the pluggable evaluation manager, registry, and environment parsing used by
+`opentelemetry-util-genai` when evaluation features are installed. Completion callbacks are exposed
+via the `opentelemetry_util_genai_completion_callbacks` entry point group so downstream packages can
+participate without hard dependencies.
+
+Key modules (`src/opentelemetry/util/genai/evals/`):
+
+```text
+bootstrap.py  # EvaluatorCompletionCallback factory invoked by completion callback loader
+manager.py    # Asynchronous evaluation queue, sampler, and result publication pipeline
+registry.py   # Evaluator registration + entry point discovery helpers
+env.py        # Centralised parsing for evaluation-related environment variables
+builtins.py   # Lightweight builtin evaluators (e.g., length) for default smoke coverage
+```
+
+Tests reside in `util/opentelemetry-util-genai-evals/tests/` and cover manager behaviour,
+environment parsing, and handler integration via the exported completion callback.
 
 ---
 

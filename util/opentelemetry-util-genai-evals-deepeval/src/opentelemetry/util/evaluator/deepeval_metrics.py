@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping as MappingABC
+from collections.abc import Sequence as SequenceABC
 from importlib import import_module
 from typing import Any, Mapping, Sequence
+
+from deepeval.metrics import GEval
+from deepeval.test_case import LLMTestCaseParams
 
 from opentelemetry.util.genai.types import Error, EvaluationResult
 
@@ -24,8 +29,6 @@ METRIC_REGISTRY: Mapping[str, str] = {
 
 def coerce_option(value: Any) -> Any:
     # Best-effort recursive coercion to primitives
-    from collections.abc import Mapping as MappingABC
-
     if isinstance(value, MappingABC):
         out: dict[Any, Any] = {}
         for k, v in value.items():  # type: ignore[assignment]
@@ -50,8 +53,6 @@ def coerce_option(value: Any) -> Any:
 
 
 def _missing_required_params(metric_cls: Any, test_case: Any) -> list[str]:
-    from collections.abc import Sequence as SequenceABC
-
     required = getattr(metric_cls, "_required_params", [])
     missing: list[str] = []
     for param in required:
@@ -83,9 +84,6 @@ def _missing_required_params(metric_cls: Any, test_case: Any) -> list[str]:
 def build_hallucination_metric(
     options: Mapping[str, Any], default_model: str | None
 ) -> Any:
-    from deepeval.metrics import GEval
-    from deepeval.test_case import LLMTestCaseParams
-
     criteria = (
         "Assess if the output hallucinates by introducing facts, details, or claims not directly supported "
         "or implied by the input. Score 1 for fully grounded outputs (no fabrications) and 0 for severe hallucination."
@@ -120,9 +118,6 @@ def build_hallucination_metric(
 def build_sentiment_metric(
     options: Mapping[str, Any], default_model: str | None
 ) -> Any:
-    from deepeval.metrics import GEval
-    from deepeval.test_case import LLMTestCaseParams
-
     criteria = "Determine the overall sentiment polarity of the output text: -1 very negative, 0 neutral, +1 very positive."
     steps = [
         "Read the text and note words/phrases indicating sentiment.",

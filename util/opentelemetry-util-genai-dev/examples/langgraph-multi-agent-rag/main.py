@@ -55,7 +55,7 @@ from opentelemetry.util.genai.types import (
     InputMessage,
     LLMInvocation,
     OutputMessage,
-    Task,
+    Step,
     Text,
     Workflow,
 )
@@ -664,17 +664,17 @@ def research_agent(state: AgentState):
     if handler:
         handler.start_agent(agent)
 
-    # Create Task span
-    task = Task(
-        name="research_task",
-        task_type="research",
+    # Create Step span
+    step = Step(
+        name="research_step",
+        step_type="research",
         objective="Search and analyze current information",
         source="agent",
         input_data=query,
     )
 
     if handler:
-        handler.start_task(task)
+        handler.start_step(step)
 
     try:
         # Clear callback data for this agent
@@ -740,10 +740,10 @@ def research_agent(state: AgentState):
             f"🔍 **Research Results (Fallback):**\n{raw_search_results}"
         )
 
-    # Stop Task and Agent spans
+    # Stop Step and Agent spans
     if handler:
-        task.output_result = research_results
-        handler.stop_task(task)
+        step.output_result = research_results
+        handler.stop_step(step)
 
         agent.output_result = research_results
         handler.stop_agent(agent)
@@ -789,17 +789,17 @@ def memory_agent(state: AgentState):
     if handler:
         handler.start_agent(agent)
 
-    # Create Task span
-    task = Task(
-        name="memory_retrieval_task",
-        task_type="retrieval",
+    # Create Step span
+    step = Step(
+        name="memory_retrieval_step",
+        step_type="retrieval",
         objective="Retrieve and analyze historical context",
         source="agent",
         input_data=query,
     )
 
     if handler:
-        handler.start_task(task)
+        handler.start_step(step)
 
     decision_prompt = f"""
 You are a memory analyst. For the query: "{query}"
@@ -934,10 +934,10 @@ Provide:
             f"🧠 **Memory Context (Fallback):**\n{raw_memory_context}"
         )
 
-    # Stop Task and Agent spans
+    # Stop Step and Agent spans
     if handler:
-        task.output_result = memory_context
-        handler.stop_task(task)
+        step.output_result = memory_context
+        handler.stop_step(step)
 
         agent.output_result = memory_context
         handler.stop_agent(agent)
@@ -973,20 +973,20 @@ def synthesizer_agent(state: AgentState):
     if handler:
         handler.start_agent(agent)
 
-    # Create Task span
-    task = Task(
-        name="synthesis_task",
-        task_type="synthesis",
+    # Create Step span
+    step = Step(
+        name="synthesis_step",
+        step_type="synthesis",
         objective="Synthesize research and memory into comprehensive response",
         source="agent",
         input_data=query,
     )
 
     if handler:
-        handler.start_task(task)
+        handler.start_step(step)
 
     synthesis_prompt = f"""
-You are an expert analyst tasked with creating a comprehensive response by synthesizing current research with historical context.
+You are an expert analyst steped with creating a comprehensive response by synthesizing current research with historical context.
 
 Original Query: "{query}"
 
@@ -1056,10 +1056,10 @@ Structure your response with clear sections and make it informative and engaging
     except Exception as e:
         final_response = f"🎯 **Error:** Could not create synthesis: {str(e)}"
 
-    # Stop Task and Agent spans
+    # Stop Step and Agent spans
     if handler:
-        task.output_result = final_response
-        handler.stop_task(task)
+        step.output_result = final_response
+        handler.stop_step(step)
 
         agent.output_result = final_response
         handler.stop_agent(agent)

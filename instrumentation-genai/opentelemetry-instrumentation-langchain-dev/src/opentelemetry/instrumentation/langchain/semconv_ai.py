@@ -300,7 +300,7 @@ class LLMRequestTypeValues(Enum):
 
 class SpanKindValues(Enum):
     WORKFLOW = "workflow"
-    TASK = "task"
+    STEP = "step"
     AGENT = "agent"
     TOOL = "tool"
     UNKNOWN = "unknown"
