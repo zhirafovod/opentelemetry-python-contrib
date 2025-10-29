@@ -240,10 +240,10 @@ class TraceloopSpanProcessor(SpanProcessor):
     ) -> None:
         """Called when a span is started."""
         pass
-    
+
     def _process_span_translation(self, span: ReadableSpan) -> Optional[Any]:
         """Process a single span translation with proper parent mapping.
-        
+
         Returns the invocation object if a translation was created, None otherwise.
         """
         # Skip spans we already produced (recursion guard) - check FIRST before span_filter
@@ -255,9 +255,7 @@ class TraceloopSpanProcessor(SpanProcessor):
             return None
 
         # Per-span dedup guard: avoid emitting multiple synthetic spans if on_end invoked repeatedly.
-        span_id_int = getattr(
-            getattr(span, "context", None), "span_id", None
-        )
+        span_id_int = getattr(getattr(span, "context", None), "span_id", None)
         if span_id_int is not None:
             if span_id_int in self._processed_span_ids:
                 return None
@@ -347,26 +345,43 @@ class TraceloopSpanProcessor(SpanProcessor):
             parent_context = None
             if span.parent:
                 parent_span_id = getattr(span.parent, "span_id", None)
-                if parent_span_id and parent_span_id in self._original_to_translated_invocation:
+                if (
+                    parent_span_id
+                    and parent_span_id
+                    in self._original_to_translated_invocation
+                ):
                     # We found the translated invocation of the parent - use its span
-                    translated_parent_invocation = self._original_to_translated_invocation[parent_span_id]
-                    translated_parent_span = getattr(translated_parent_invocation, 'span', None)
-                    if translated_parent_span and hasattr(translated_parent_span, 'is_recording') and translated_parent_span.is_recording():
+                    translated_parent_invocation = (
+                        self._original_to_translated_invocation[parent_span_id]
+                    )
+                    translated_parent_span = getattr(
+                        translated_parent_invocation, "span", None
+                    )
+                    if (
+                        translated_parent_span
+                        and hasattr(translated_parent_span, "is_recording")
+                        and translated_parent_span.is_recording()
+                    ):
                         from opentelemetry.trace import set_span_in_context
-                        parent_context = set_span_in_context(translated_parent_span)
-            
+
+                        parent_context = set_span_in_context(
+                            translated_parent_span
+                        )
+
             # Store mapping BEFORE starting the span so children can find it
             original_span_id = getattr(
                 getattr(span, "context", None), "span_id", None
             )
-            
+
             handler.start_llm(invocation, parent_context=parent_context)
             # Set the sentinel attribute immediately on the new span to prevent recursion
             if invocation.span and invocation.span.is_recording():
                 invocation.span.set_attribute("_traceloop_processed", True)
                 # Store the mapping from original span_id to translated INVOCATION (we'll close it later)
                 if original_span_id:
-                    self._original_to_translated_invocation[original_span_id] = invocation
+                    self._original_to_translated_invocation[
+                        original_span_id
+                    ] = invocation
             # DON'T call stop_llm yet - we'll do that after processing all children
             return invocation
         except Exception as emit_err:  # pragma: no cover - defensive
@@ -382,22 +397,26 @@ class TraceloopSpanProcessor(SpanProcessor):
         try:
             # Add span to buffer
             self._span_buffer.append(span)
-            
+
             # Check if this is a root span (no parent) - if so, process the entire buffer
             if span.parent is None and not self._processing_buffer:
                 self._processing_buffer = True
                 try:
                     # Sort buffer so parents are processed before children
                     # We'll build a dependency graph and process in topological order
-                    spans_to_process = self._sort_spans_by_hierarchy(self._span_buffer)
-                    
+                    spans_to_process = self._sort_spans_by_hierarchy(
+                        self._span_buffer
+                    )
+
                     # Process each span in order (creates spans but doesn't close them yet)
                     invocations_to_close = []
                     for buffered_span in spans_to_process:
-                        result_invocation = self._process_span_translation(buffered_span)
+                        result_invocation = self._process_span_translation(
+                            buffered_span
+                        )
                         if result_invocation:
                             invocations_to_close.append(result_invocation)
-                    
+
                     # Now close all invocations in reverse order (children first, parents last)
                     handler = self.telemetry_handler or get_telemetry_handler()
                     for invocation in reversed(invocations_to_close):
@@ -407,7 +426,7 @@ class TraceloopSpanProcessor(SpanProcessor):
                             logging.getLogger(__name__).warning(
                                 "Failed to stop invocation: %s", stop_err
                             )
-                    
+
                     # Clear the buffer and mapping
                     self._span_buffer.clear()
                     self._original_to_translated_invocation.clear()
@@ -419,8 +438,10 @@ class TraceloopSpanProcessor(SpanProcessor):
             logging.warning(
                 f"TraceloopSpanProcessor failed to transform span: {e}"
             )
-    
-    def _sort_spans_by_hierarchy(self, spans: List[ReadableSpan]) -> List[ReadableSpan]:
+
+    def _sort_spans_by_hierarchy(
+        self, spans: List[ReadableSpan]
+    ) -> List[ReadableSpan]:
         """Sort spans so parents come before children."""
         # Build a map of span_id to span
         span_map = {}
@@ -428,30 +449,30 @@ class TraceloopSpanProcessor(SpanProcessor):
             span_id = getattr(getattr(s, "context", None), "span_id", None)
             if span_id:
                 span_map[span_id] = s
-        
+
         # Build dependency graph: child -> parent
         result = []
         visited = set()
-        
+
         def visit(span: ReadableSpan) -> None:
             span_id = getattr(getattr(span, "context", None), "span_id", None)
             if not span_id or span_id in visited:
                 return
-            
+
             # Visit parent first
             if span.parent:
                 parent_id = getattr(span.parent, "span_id", None)
                 if parent_id and parent_id in span_map:
                     visit(span_map[parent_id])
-            
+
             # Then add this span
             visited.add(span_id)
             result.append(span)
-        
+
         # Visit all spans
         for span in spans:
             visit(span)
-        
+
         return result
 
     def shutdown(self) -> None:
@@ -556,7 +577,7 @@ class TraceloopSpanProcessor(SpanProcessor):
         new_name = self._derive_new_name(
             existing_span.name, name_transformations
         )
-        
+
         # Try to get model from various attribute sources
         request_model = (
             base_attrs.get("gen_ai.request.model")
@@ -564,7 +585,7 @@ class TraceloopSpanProcessor(SpanProcessor):
             or base_attrs.get("llm.request.model")
             or base_attrs.get("ai.model.name")
         )
-        
+
         # Infer model from original span name pattern like "chat gpt-4" if not found
         if not request_model and existing_span.name:
             # Simple heuristic: take token(s) after first space
@@ -579,11 +600,18 @@ class TraceloopSpanProcessor(SpanProcessor):
                     "ai",
                 }:
                     request_model = candidate
-        
+
         # For Traceloop task/workflow spans without model info, preserve original span name
         # instead of generating "chat unknown" or similar
-        span_kind = base_attrs.get("gen_ai.span.kind") or base_attrs.get("traceloop.span.kind")
-        if not request_model and span_kind in ("task", "workflow", "agent", "tool"):
+        span_kind = base_attrs.get("gen_ai.span.kind") or base_attrs.get(
+            "traceloop.span.kind"
+        )
+        if not request_model and span_kind in (
+            "task",
+            "workflow",
+            "agent",
+            "tool",
+        ):
             # Use the original span name to avoid "chat unknown"
             if not new_name:
                 new_name = existing_span.name
@@ -591,12 +619,12 @@ class TraceloopSpanProcessor(SpanProcessor):
         elif not request_model:
             # Default to "unknown" only if we still don't have a model
             request_model = "unknown"
-        
+
         # For spans that already have gen_ai.* attributes
         # preserve the original span name unless explicitly overridden
         if not new_name and base_attrs.get("gen_ai.system"):
             new_name = existing_span.name
-            
+
         # Set the span name override if we have one
         if new_name:
             # Provide override for SpanEmitter (we extended it to honor this)
