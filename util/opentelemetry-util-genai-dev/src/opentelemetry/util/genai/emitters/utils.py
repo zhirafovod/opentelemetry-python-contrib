@@ -128,9 +128,18 @@ def filter_semconv_gen_ai_attributes(
     for key, value in attributes.items():
         if not isinstance(key, str):
             continue
-        if key not in allowed:
+        # Allow exact matches
+        if key in allowed:
+            filtered[key] = value
             continue
-        filtered[key] = value
+        # Allow gen_ai.* attributes that follow semantic convention patterns
+        if key.startswith("gen_ai."):
+            # Check if it matches known patterns with array indices
+            # e.g., gen_ai.prompt.N.*, gen_ai.completion.N.*, gen_ai.choice.N.*
+            import re
+            if re.match(r"gen_ai\.(prompt|completion|choice)\.\d+\.", key):
+                filtered[key] = value
+                continue
     return filtered
 
 

@@ -174,6 +174,11 @@ class TraceloopSpanProcessor(SpanProcessor):
         # Dedup guard: ensure we only emit one synthetic invocation per original span
         # (helps when user code ends span multiple times or processor accidentally registered twice)
         self._processed_span_ids = set()
+        # Mapping from original span_id to translated INVOCATION (not span) for parent-child relationship preservation
+        self._original_to_translated_invocation: Dict[int, Any] = {}
+        # Buffer spans to process them in the correct order (parents before children)
+        self._span_buffer: List[ReadableSpan] = []
+        self._processing_buffer = False
 
     def _default_span_filter(self, span: ReadableSpan) -> bool:
         """Default filter: Transform spans that look like LLM/AI calls.
@@ -235,124 +240,219 @@ class TraceloopSpanProcessor(SpanProcessor):
     ) -> None:
         """Called when a span is started."""
         pass
-
-    def on_end(self, span: ReadableSpan) -> None:
+    
+    def _process_span_translation(self, span: ReadableSpan) -> Optional[Any]:
+        """Process a single span translation with proper parent mapping.
+        
+        Returns the invocation object if a translation was created, None otherwise.
         """
-        Called when a span is ended.
-        """
-        try:
-            # Skip spans we already produced (recursion guard) - check FIRST before span_filter
-            if span.attributes and "_traceloop_processed" in span.attributes:
-                return
+        # Skip spans we already produced (recursion guard) - check FIRST before span_filter
+        if span.attributes and "_traceloop_processed" in span.attributes:
+            return None
 
-            # Check if this span should be transformed (cheap heuristic)
-            if not self.span_filter(span):
-                return
+        # Check if this span should be transformed (cheap heuristic)
+        if not self.span_filter(span):
+            return None
 
-            # Per-span dedup guard: avoid emitting multiple synthetic spans if on_end invoked repeatedly.
-            span_id_int = getattr(
-                getattr(span, "context", None), "span_id", None
-            )
-            if span_id_int is not None:
-                if span_id_int in self._processed_span_ids:
-                    return
-                self._processed_span_ids.add(span_id_int)
+        # Per-span dedup guard: avoid emitting multiple synthetic spans if on_end invoked repeatedly.
+        span_id_int = getattr(
+            getattr(span, "context", None), "span_id", None
+        )
+        if span_id_int is not None:
+            if span_id_int in self._processed_span_ids:
+                return None
+            self._processed_span_ids.add(span_id_int)
 
-            # Determine which transformation set to use
-            applied_rule: Optional[TransformationRule] = None
-            for rule in self.rules:
-                try:
-                    if rule.matches(span):
-                        applied_rule = rule
-                        break
-                except Exception as match_err:  # pragma: no cover - defensive
-                    logging.warning("Rule match error ignored: %s", match_err)
+        # Determine which transformation set to use
+        applied_rule: Optional[TransformationRule] = None
+        for rule in self.rules:
+            try:
+                if rule.matches(span):
+                    applied_rule = rule
+                    break
+            except Exception as match_err:  # pragma: no cover - defensive
+                logging.warning("Rule match error ignored: %s", match_err)
 
-            sentinel = {"_traceloop_processed": True}
-            # Decide which transformation config to apply
-            if applied_rule is not None:
-                attr_tx = applied_rule.attribute_transformations
-                name_tx = applied_rule.name_transformations
-                extra_tl_attrs = {
-                    **applied_rule.traceloop_attributes,
-                    **sentinel,
-                }
-            else:
-                attr_tx = self.attribute_transformations
-                name_tx = self.name_transformations
-                extra_tl_attrs = {**self.traceloop_attributes, **sentinel}
+        sentinel = {"_traceloop_processed": True}
+        # Decide which transformation config to apply
+        if applied_rule is not None:
+            attr_tx = applied_rule.attribute_transformations
+            name_tx = applied_rule.name_transformations
+            extra_tl_attrs = {
+                **applied_rule.traceloop_attributes,
+                **sentinel,
+            }
+        else:
+            attr_tx = self.attribute_transformations
+            name_tx = self.name_transformations
+            extra_tl_attrs = {**self.traceloop_attributes, **sentinel}
 
-            # Optionally mutate the original span's attributes so backend exporters see renamed keys.
-            if self.mutate_original_span and attr_tx:
-                try:
-                    original = dict(span.attributes) if span.attributes else {}
-                    mutated = self._apply_attribute_transformations(
-                        original.copy(), attr_tx
-                    )
-                    # Write back: remove keys no longer present, then set new ones
-                    for k in list(span.attributes.keys()):  # type: ignore[attr-defined]
-                        if k not in mutated:
-                            try:
-                                span.attributes.pop(k, None)  # type: ignore[attr-defined]
-                            except Exception:
-                                pass
-                    for k, v in mutated.items():
+        # Optionally mutate the original span's attributes so backend exporters see renamed keys.
+        if self.mutate_original_span and attr_tx:
+            try:
+                original = dict(span.attributes) if span.attributes else {}
+                mutated = self._apply_attribute_transformations(
+                    original.copy(), attr_tx
+                )
+                # Write back: remove keys no longer present, then set new ones
+                for k in list(span.attributes.keys()):  # type: ignore[attr-defined]
+                    if k not in mutated:
                         try:
-                            span.attributes[k] = v  # type: ignore[attr-defined]
+                            span.attributes.pop(k, None)  # type: ignore[attr-defined]
                         except Exception:
                             pass
-                except Exception as mut_err:  # pragma: no cover - defensive
-                    logging.getLogger(__name__).debug(
-                        "Attribute mutation skipped due to error: %s", mut_err
-                    )
+                for k, v in mutated.items():
+                    try:
+                        span.attributes[k] = v  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+            except Exception as mut_err:  # pragma: no cover - defensive
+                logging.getLogger(__name__).debug(
+                    "Attribute mutation skipped due to error: %s", mut_err
+                )
 
-            # Name transformation: we cannot change name post-end safely; attempt if span has update_name method.
-            if self.mutate_original_span and name_tx:
-                try:
-                    new_name = self._derive_new_name(span.name, name_tx)
-                    if new_name and hasattr(span, "update_name"):
-                        try:
-                            span.update_name(new_name)  # type: ignore[attr-defined]
-                        except Exception:
-                            # Fallback: add override attribute if update fails
-                            span.attributes.setdefault(
-                                "gen_ai.override.span_name", new_name
-                            )  # type: ignore[attr-defined]
-                    elif new_name:
-                        # Provide override attr for downstream processors/exporters
+        # Name transformation: we cannot change name post-end safely; attempt if span has update_name method.
+        if self.mutate_original_span and name_tx:
+            try:
+                new_name = self._derive_new_name(span.name, name_tx)
+                if new_name and hasattr(span, "update_name"):
+                    try:
+                        span.update_name(new_name)  # type: ignore[attr-defined]
+                    except Exception:
+                        # Fallback: add override attribute if update fails
                         span.attributes.setdefault(
                             "gen_ai.override.span_name", new_name
                         )  # type: ignore[attr-defined]
-                except Exception as name_err:  # pragma: no cover
-                    logging.getLogger(__name__).debug(
-                        "Span name mutation failed: %s", name_err
-                    )
-
-            # Always emit via TelemetryHandler
-            invocation = self._build_invocation(
-                span,
-                attribute_transformations=attr_tx,
-                name_transformations=name_tx,
-                traceloop_attributes=extra_tl_attrs,
-            )
-            invocation.attributes.setdefault("_traceloop_processed", True)
-            handler = self.telemetry_handler or get_telemetry_handler()
-            try:
-                handler.start_llm(invocation)
-                # Set the sentinel attribute immediately on the new span to prevent recursion
-                if invocation.span and invocation.span.is_recording():
-                    invocation.span.set_attribute("_traceloop_processed", True)
-                handler.stop_llm(invocation)
-            except Exception as emit_err:  # pragma: no cover - defensive
-                logging.getLogger(__name__).warning(
-                    "Telemetry handler emission failed: %s", emit_err
+                elif new_name:
+                    # Provide override attr for downstream processors/exporters
+                    span.attributes.setdefault(
+                        "gen_ai.override.span_name", new_name
+                    )  # type: ignore[attr-defined]
+            except Exception as name_err:  # pragma: no cover
+                logging.getLogger(__name__).debug(
+                    "Span name mutation failed: %s", name_err
                 )
+
+        # Always emit via TelemetryHandler
+        invocation = self._build_invocation(
+            span,
+            attribute_transformations=attr_tx,
+            name_transformations=name_tx,
+            traceloop_attributes=extra_tl_attrs,
+        )
+        invocation.attributes.setdefault("_traceloop_processed", True)
+        handler = self.telemetry_handler or get_telemetry_handler()
+        try:
+            # Find the translated parent span if the original span has a parent
+            parent_context = None
+            if span.parent:
+                parent_span_id = getattr(span.parent, "span_id", None)
+                if parent_span_id and parent_span_id in self._original_to_translated_invocation:
+                    # We found the translated invocation of the parent - use its span
+                    translated_parent_invocation = self._original_to_translated_invocation[parent_span_id]
+                    translated_parent_span = getattr(translated_parent_invocation, 'span', None)
+                    if translated_parent_span and hasattr(translated_parent_span, 'is_recording') and translated_parent_span.is_recording():
+                        from opentelemetry.trace import set_span_in_context
+                        parent_context = set_span_in_context(translated_parent_span)
+            
+            # Store mapping BEFORE starting the span so children can find it
+            original_span_id = getattr(
+                getattr(span, "context", None), "span_id", None
+            )
+            
+            handler.start_llm(invocation, parent_context=parent_context)
+            # Set the sentinel attribute immediately on the new span to prevent recursion
+            if invocation.span and invocation.span.is_recording():
+                invocation.span.set_attribute("_traceloop_processed", True)
+                # Store the mapping from original span_id to translated INVOCATION (we'll close it later)
+                if original_span_id:
+                    self._original_to_translated_invocation[original_span_id] = invocation
+            # DON'T call stop_llm yet - we'll do that after processing all children
+            return invocation
+        except Exception as emit_err:  # pragma: no cover - defensive
+            logging.getLogger(__name__).warning(
+                "Telemetry handler emission failed: %s", emit_err
+            )
+            return None
+
+    def on_end(self, span: ReadableSpan) -> None:
+        """
+        Called when a span is ended. Buffer spans and process in correct order.
+        """
+        try:
+            # Add span to buffer
+            self._span_buffer.append(span)
+            
+            # Check if this is a root span (no parent) - if so, process the entire buffer
+            if span.parent is None and not self._processing_buffer:
+                self._processing_buffer = True
+                try:
+                    # Sort buffer so parents are processed before children
+                    # We'll build a dependency graph and process in topological order
+                    spans_to_process = self._sort_spans_by_hierarchy(self._span_buffer)
+                    
+                    # Process each span in order (creates spans but doesn't close them yet)
+                    invocations_to_close = []
+                    for buffered_span in spans_to_process:
+                        result_invocation = self._process_span_translation(buffered_span)
+                        if result_invocation:
+                            invocations_to_close.append(result_invocation)
+                    
+                    # Now close all invocations in reverse order (children first, parents last)
+                    handler = self.telemetry_handler or get_telemetry_handler()
+                    for invocation in reversed(invocations_to_close):
+                        try:
+                            handler.stop_llm(invocation)
+                        except Exception as stop_err:
+                            logging.getLogger(__name__).warning(
+                                "Failed to stop invocation: %s", stop_err
+                            )
+                    
+                    # Clear the buffer and mapping
+                    self._span_buffer.clear()
+                    self._original_to_translated_invocation.clear()
+                finally:
+                    self._processing_buffer = False
 
         except Exception as e:
             # Don't let transformation errors break the original span processing
             logging.warning(
                 f"TraceloopSpanProcessor failed to transform span: {e}"
             )
+    
+    def _sort_spans_by_hierarchy(self, spans: List[ReadableSpan]) -> List[ReadableSpan]:
+        """Sort spans so parents come before children."""
+        # Build a map of span_id to span
+        span_map = {}
+        for s in spans:
+            span_id = getattr(getattr(s, "context", None), "span_id", None)
+            if span_id:
+                span_map[span_id] = s
+        
+        # Build dependency graph: child -> parent
+        result = []
+        visited = set()
+        
+        def visit(span: ReadableSpan) -> None:
+            span_id = getattr(getattr(span, "context", None), "span_id", None)
+            if not span_id or span_id in visited:
+                return
+            
+            # Visit parent first
+            if span.parent:
+                parent_id = getattr(span.parent, "span_id", None)
+                if parent_id and parent_id in span_map:
+                    visit(span_map[parent_id])
+            
+            # Then add this span
+            visited.add(span_id)
+            result.append(span)
+        
+        # Visit all spans
+        for span in spans:
+            visit(span)
+        
+        return result
 
     def shutdown(self) -> None:
         """Called when the tracer provider is shutdown."""
@@ -483,7 +583,7 @@ class TraceloopSpanProcessor(SpanProcessor):
         # For Traceloop task/workflow spans without model info, preserve original span name
         # instead of generating "chat unknown" or similar
         span_kind = base_attrs.get("gen_ai.span.kind") or base_attrs.get("traceloop.span.kind")
-        if not request_model and span_kind in ("task", "workflow"):
+        if not request_model and span_kind in ("task", "workflow", "agent", "tool"):
             # Use the original span name to avoid "chat unknown"
             if not new_name:
                 new_name = existing_span.name
@@ -491,6 +591,11 @@ class TraceloopSpanProcessor(SpanProcessor):
         elif not request_model:
             # Default to "unknown" only if we still don't have a model
             request_model = "unknown"
+        
+        # For spans that already have gen_ai.* attributes
+        # preserve the original span name unless explicitly overridden
+        if not new_name and base_attrs.get("gen_ai.system"):
+            new_name = existing_span.name
             
         # Set the span name override if we have one
         if new_name:

@@ -10,7 +10,7 @@ load_dotenv()
 
 try:
     from traceloop.sdk import Traceloop
-    from traceloop.sdk.decorators import task, workflow
+    from traceloop.sdk.decorators import task, workflow, agent, tool
     from openai import OpenAI
 
     Traceloop.init(disable_batch=True, api_endpoint="http://localhost:4318")
@@ -19,6 +19,27 @@ except ImportError:
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
+
+@agent(name="joke_translation")
+def translate_joke_to_pirate(joke: str):
+    completion = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": f"Translate the below joke to pirate-like english:\n\n{joke}"}],
+    )
+
+    history_jokes_tool()
+
+    return completion.choices[0].message.content
+
+
+@tool(name="history_jokes")
+def history_jokes_tool():
+    completion = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": f"get some history jokes"}],
+    )
+
+    return completion.choices[0].message.content
 
 @task(name="joke_creation")
 def create_joke():
@@ -48,6 +69,7 @@ def generate_signature(joke: str):
 def joke_workflow():
     eng_joke = create_joke()
     # pirate_joke = translate_joke_to_pirate(eng_joke)
+    print(translate_joke_to_pirate(eng_joke))
     signature = generate_signature(eng_joke)
     print(eng_joke + "\n\n" + signature)
 

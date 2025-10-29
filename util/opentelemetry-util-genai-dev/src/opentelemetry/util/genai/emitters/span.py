@@ -326,12 +326,16 @@ class SpanEmitter(EmitterMeta):
                 operation = getattr(invocation, "operation", "chat")
                 model_name = invocation.request_model
                 span_name = f"{operation} {model_name}"
-            parent_span = getattr(invocation, "parent_span", None)
-            parent_ctx = (
-                trace.set_span_in_context(parent_span)
-                if parent_span is not None
-                else None
-            )
+            
+            # Check for parent context (from TraceloopSpanProcessor) or parent span
+            parent_ctx = getattr(invocation, "parent_context", None)
+            if parent_ctx is None:
+                parent_span = getattr(invocation, "parent_span", None)
+                parent_ctx = (
+                    trace.set_span_in_context(parent_span)
+                    if parent_span is not None
+                    else None
+                )
             cm = self._tracer.start_as_current_span(
                 span_name,
                 kind=SpanKind.CLIENT,
