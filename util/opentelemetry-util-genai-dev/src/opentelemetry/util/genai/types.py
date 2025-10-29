@@ -59,7 +59,42 @@ def _new_str_any_dict() -> dict[str, Any]:
 
 @dataclass(kw_only=True)
 class GenAI:
-    """Base type for all GenAI telemetry entities."""
+    """Base type for all GenAI telemetry entities.
+    
+    All GenAI types (LLMInvocation, EmbeddingInvocation, AgentCreation, AgentInvocation,
+    Workflow, Step, ToolCall, etc.) inherit from this base class and have access to:
+    
+    Span and Context Management:
+        - span: The OpenTelemetry span associated with this entity
+        - span_context: The span context for distributed tracing
+        - context_token: Token for managing span context lifecycle
+        - trace_id, span_id, trace_flags: Raw trace/span identifiers
+    
+    Timing:
+        - start_time: When the operation started (auto-generated)
+        - end_time: When the operation completed
+    
+    Identification:
+        - run_id: Unique identifier for this execution (auto-generated UUID)
+        - parent_run_id: Optional parent execution identifier for hierarchies
+    
+    Provider and Framework:
+        - provider: AI provider (e.g., "openai", "anthropic", "cohere")
+        - framework: Framework used (e.g., "langchain", "llamaindex")
+        - system: AI system identifier (semantic convention attribute)
+    
+    Agent and Conversation Context:
+        - agent_name, agent_id: Agent identification
+        - conversation_id: Conversation/session identifier
+        - data_source_id: Data source identifier for RAG scenarios
+    
+    Behavior Control:
+        - mutate_original_span: Whether to modify the original span with transformations
+          (used by span processors like TraceloopSpanProcessor)
+    
+    Custom Attributes:
+        - attributes: Dictionary for custom/additional attributes not covered by fields
+    """
 
     context_token: Optional[ContextToken] = None
     span: Optional[Span] = None
@@ -96,6 +131,14 @@ class GenAI:
     data_source_id: Optional[str] = field(
         default=None,
         metadata={"semconv": GenAIAttributes.GEN_AI_DATA_SOURCE_ID},
+    )
+    mutate_original_span: bool = field(
+        default=True,
+        metadata={
+            "description": "Whether to mutate the original span with transformed attributes. "
+            "When True, the original span will be modified with renamed/transformed attributes. "
+            "When False, only new spans will be created with the transformations."
+        },
     )
 
     def semantic_convention_attributes(self) -> dict[str, Any]:

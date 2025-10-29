@@ -144,7 +144,6 @@ class TraceloopSpanProcessor(SpanProcessor):
         load_env_rules: bool = True,
         telemetry_handler: Optional[TelemetryHandler] = None,
         mutate_original_span: bool = True,
-        # Legacy synthetic span duplication removed – always emit via handler
     ):
         """
         Initialize the Traceloop span processor.
@@ -154,6 +153,13 @@ class TraceloopSpanProcessor(SpanProcessor):
             name_transformations: Rules for transforming span names
             traceloop_attributes: Additional Traceloop-specific attributes to add
             span_filter: Optional filter function to determine which spans to transform
+            rules: Optional list of TransformationRule objects for conditional transformations
+            load_env_rules: Whether to load transformation rules from OTEL_GENAI_SPAN_TRANSFORM_RULES
+            telemetry_handler: Optional TelemetryHandler for emitting transformed spans
+            mutate_original_span: Whether to mutate original spans at the processor level.
+                This flag works in conjunction with the mutate_original_span field on
+                individual GenAI objects. Both must be True for mutation to occur.
+                Default is True for backward compatibility.
         """
         self.attribute_transformations = attribute_transformations or {}
         self.name_transformations = name_transformations or {}
@@ -171,8 +177,6 @@ class TraceloopSpanProcessor(SpanProcessor):
                 len(rules or []),
                 len(env_rules),
             )
-        # Dedup guard: ensure we only emit one synthetic invocation per original span
-        # (helps when user code ends span multiple times or processor accidentally registered twice)
         self._processed_span_ids = set()
         # Mapping from original span_id to translated INVOCATION (not span) for parent-child relationship preservation
         self._original_to_translated_invocation: Dict[int, Any] = {}
@@ -246,15 +250,22 @@ class TraceloopSpanProcessor(SpanProcessor):
 
         Returns the invocation object if a translation was created, None otherwise.
         """
+        logger = logging.getLogger(__name__)
+        
         # Skip spans we already produced (recursion guard) - check FIRST before span_filter
         if span.attributes and "_traceloop_processed" in span.attributes:
             return None
 
-        # Check if this span should be transformed (cheap heuristic)
+        # Check if this span should be transformed
         if not self.span_filter(span):
+            logger.debug("Span %s filtered out by span_filter", span.name)
             return None
+        
+        logger.debug("Processing span for transformation: %s (kind=%s)", 
+                    span.name, 
+                    span.attributes.get("traceloop.span.kind") if span.attributes else None)
 
-        # Per-span dedup guard: avoid emitting multiple synthetic spans if on_end invoked repeatedly.
+        # avoid emitting multiple synthetic spans if on_end invoked repeatedly.
         span_id_int = getattr(getattr(span, "context", None), "span_id", None)
         if span_id_int is not None:
             if span_id_int in self._processed_span_ids:
@@ -285,53 +296,7 @@ class TraceloopSpanProcessor(SpanProcessor):
             name_tx = self.name_transformations
             extra_tl_attrs = {**self.traceloop_attributes, **sentinel}
 
-        # Optionally mutate the original span's attributes so backend exporters see renamed keys.
-        if self.mutate_original_span and attr_tx:
-            try:
-                original = dict(span.attributes) if span.attributes else {}
-                mutated = self._apply_attribute_transformations(
-                    original.copy(), attr_tx
-                )
-                # Write back: remove keys no longer present, then set new ones
-                for k in list(span.attributes.keys()):  # type: ignore[attr-defined]
-                    if k not in mutated:
-                        try:
-                            span.attributes.pop(k, None)  # type: ignore[attr-defined]
-                        except Exception:
-                            pass
-                for k, v in mutated.items():
-                    try:
-                        span.attributes[k] = v  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-            except Exception as mut_err:  # pragma: no cover - defensive
-                logging.getLogger(__name__).debug(
-                    "Attribute mutation skipped due to error: %s", mut_err
-                )
-
-        # Name transformation: we cannot change name post-end safely; attempt if span has update_name method.
-        if self.mutate_original_span and name_tx:
-            try:
-                new_name = self._derive_new_name(span.name, name_tx)
-                if new_name and hasattr(span, "update_name"):
-                    try:
-                        span.update_name(new_name)  # type: ignore[attr-defined]
-                    except Exception:
-                        # Fallback: add override attribute if update fails
-                        span.attributes.setdefault(
-                            "gen_ai.override.span_name", new_name
-                        )  # type: ignore[attr-defined]
-                elif new_name:
-                    # Provide override attr for downstream processors/exporters
-                    span.attributes.setdefault(
-                        "gen_ai.override.span_name", new_name
-                    )  # type: ignore[attr-defined]
-            except Exception as name_err:  # pragma: no cover
-                logging.getLogger(__name__).debug(
-                    "Span name mutation failed: %s", name_err
-                )
-
-        # Always emit via TelemetryHandler
+        # Build invocation (mutation already happened in on_end before this method)
         invocation = self._build_invocation(
             span,
             attribute_transformations=attr_tx,
@@ -339,6 +304,8 @@ class TraceloopSpanProcessor(SpanProcessor):
             traceloop_attributes=extra_tl_attrs,
         )
         invocation.attributes.setdefault("_traceloop_processed", True)
+
+        # Always emit via TelemetryHandler
         handler = self.telemetry_handler or get_telemetry_handler()
         try:
             # Find the translated parent span if the original span has a parent
@@ -392,10 +359,14 @@ class TraceloopSpanProcessor(SpanProcessor):
 
     def on_end(self, span: ReadableSpan) -> None:
         """
-        Called when a span is ended. Buffer spans and process in correct order.
+        Called when a span is ended. Mutate immediately, then buffer for synthetic span creation.
         """
         try:
-            # Add span to buffer
+            # FIRST: Mutate the original span immediately (before other processors/exporters see it)
+            # This ensures mutations happen before exporters capture the span
+            self._mutate_span_if_needed(span)
+            
+            # THEN: Add span to buffer for synthetic span creation
             self._span_buffer.append(span)
 
             # Check if this is a root span (no parent) - if so, process the entire buffer
@@ -486,6 +457,88 @@ class TraceloopSpanProcessor(SpanProcessor):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _mutate_span_if_needed(self, span: ReadableSpan) -> None:
+        """Mutate the original span's attributes and name if configured to do so.
+        
+        This should be called early in on_end() before other processors see the span.
+        """
+        # Check if this span should be transformed
+        if not self.span_filter(span):
+            return
+            
+        # Skip if already processed
+        if span.attributes and "_traceloop_processed" in span.attributes:
+            return
+        
+        # Determine which transformation set to use
+        applied_rule: Optional[TransformationRule] = None
+        for rule in self.rules:
+            try:
+                if rule.matches(span):
+                    applied_rule = rule
+                    break
+            except Exception as match_err:  # pragma: no cover - defensive
+                logging.warning("Rule match error ignored: %s", match_err)
+
+        # Decide which transformation config to apply
+        if applied_rule is not None:
+            attr_tx = applied_rule.attribute_transformations
+            name_tx = applied_rule.name_transformations
+        else:
+            attr_tx = self.attribute_transformations
+            name_tx = self.name_transformations
+
+        # Check if mutation is enabled (both processor-level and per-invocation level)
+        # For now, we only check processor-level since we don't have the invocation yet
+        should_mutate = self.mutate_original_span
+
+        # Mutate attributes
+        if should_mutate and attr_tx:
+            try:
+                if hasattr(span, "_attributes"):
+                    original = dict(span._attributes) if span._attributes else {}  # type: ignore[attr-defined]
+                    mutated = self._apply_attribute_transformations(
+                        original.copy(), attr_tx
+                    )
+                    # Mark as processed
+                    mutated["_traceloop_processed"] = True
+                    # Clear and update the underlying _attributes dict
+                    span._attributes.clear()  # type: ignore[attr-defined]
+                    span._attributes.update(mutated)  # type: ignore[attr-defined]
+                    logging.getLogger(__name__).debug(
+                        "Mutated span %s attributes: %s -> %s keys",
+                        span.name,
+                        len(original),
+                        len(mutated),
+                    )
+                else:
+                    logging.getLogger(__name__).warning(
+                        "Span %s does not have _attributes; mutation skipped", span.name
+                    )
+            except Exception as mut_err:
+                logging.getLogger(__name__).debug(
+                    "Attribute mutation skipped due to error: %s", mut_err
+                )
+
+        # Mutate name
+        if should_mutate and name_tx:
+            try:
+                new_name = self._derive_new_name(span.name, name_tx)
+                if new_name and hasattr(span, "_name"):
+                    span._name = new_name  # type: ignore[attr-defined]
+                    logging.getLogger(__name__).debug(
+                        "Mutated span name: %s -> %s", span.name, new_name
+                    )
+                elif new_name and hasattr(span, "update_name"):
+                    try:
+                        span.update_name(new_name)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+            except Exception as name_err:
+                logging.getLogger(__name__).debug(
+                    "Span name mutation failed: %s", name_err
+                )
+
     def _apply_attribute_transformations(
         self, base: Dict[str, Any], transformations: Optional[Dict[str, Any]]
     ) -> Dict[str, Any]:
