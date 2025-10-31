@@ -65,6 +65,26 @@ from .utils import (
 _SPAN_ALLOWED_SUPPLEMENTAL_KEYS: tuple[str, ...] = (
     "gen_ai.framework",
     "gen_ai.request.id",
+    # Workflow / Agent attributes (from Traceloop translator)
+    "gen_ai.workflow.name",
+    "gen_ai.workflow.path",
+    "gen_ai.workflow.version",
+    "gen_ai.agent.name",
+    "gen_ai.agent.id",
+    "gen_ai.span.kind",
+    "gen_ai.association.properties",
+    "gen_ai.conversation.id",
+    # Prompt registry attributes
+    "gen_ai.prompt.managed",
+    "gen_ai.prompt.key",
+    "gen_ai.prompt.version",
+    "gen_ai.prompt.version_name",
+    "gen_ai.prompt.version_hash",
+    "gen_ai.prompt.template",
+    "gen_ai.prompt.template_variables",
+    # Operation name override (for span name transformation)
+    "gen_ai.override.span_name",
+    # Custom attributes (allow any custom.* prefix for flexibility)
 )
 _SPAN_BLOCKED_SUPPLEMENTAL_KEYS: set[str] = {"request_top_p", "ls_temperature"}
 
@@ -297,16 +317,27 @@ class SpanEmitter(EmitterMeta):
         elif isinstance(invocation, EmbeddingInvocation):
             self._start_embedding(invocation)
         else:
-            # Use operation field for span name (defaults to "chat")
-            operation = getattr(invocation, "operation", "chat")
-            model_name = invocation.request_model
-            span_name = f"{operation} {model_name}"
-            parent_span = getattr(invocation, "parent_span", None)
-            parent_ctx = (
-                trace.set_span_in_context(parent_span)
-                if parent_span is not None
-                else None
+            # Check for span name override first (for Traceloop task/workflow spans)
+            span_name_override = invocation.attributes.get(
+                "gen_ai.override.span_name"
             )
+            if span_name_override:
+                span_name = str(span_name_override)
+            else:
+                # Use operation field for span name (defaults to "chat")
+                operation = getattr(invocation, "operation", "chat")
+                model_name = invocation.request_model
+                span_name = f"{operation} {model_name}"
+
+            # Check for parent context (from TraceloopSpanProcessor) or parent span
+            parent_ctx = getattr(invocation, "parent_context", None)
+            if parent_ctx is None:
+                parent_span = getattr(invocation, "parent_span", None)
+                parent_ctx = (
+                    trace.set_span_in_context(parent_span)
+                    if parent_span is not None
+                    else None
+                )
             cm = self._tracer.start_as_current_span(
                 span_name,
                 kind=SpanKind.CLIENT,

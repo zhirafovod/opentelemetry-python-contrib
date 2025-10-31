@@ -6,5 +6,7 @@
 
 # OpenTelemetry SDK pieces used in the example
 opentelemetry-sdk>=1.31.1
-
+traceloop-sdk
+python-dotenv
+openai
 # (ConsoleSpanExporter is in the SDK extras; no additional exporter deps needed.)
