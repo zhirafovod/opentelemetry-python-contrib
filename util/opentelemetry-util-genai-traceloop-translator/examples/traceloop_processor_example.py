@@ -13,9 +13,16 @@ try:
     from traceloop.sdk.decorators import task, workflow, agent, tool
     from openai import OpenAI
 
+    # Initialize Traceloop - this will also trigger TraceloopSpanProcessor registration
     Traceloop.init(disable_batch=True, api_endpoint="http://localhost:4318")
 except ImportError:
     raise RuntimeError("Install traceloop-sdk: pip install traceloop-sdk")
+except (TypeError, ValueError) as config_error:
+    # Configuration errors should fail-fast during startup
+    raise RuntimeError(f"Traceloop configuration error: {config_error}")
+except Exception as runtime_error:
+    print(f"Warning: Traceloop initialization issue: {runtime_error}")
+    raise
 
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 

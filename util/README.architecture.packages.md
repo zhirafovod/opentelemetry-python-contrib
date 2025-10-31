@@ -2,7 +2,7 @@
 
 Scope (util/ subpackages):
 
-`opentelemetry-util-genai-dev`, `opentelemetry-util-genai-emitters-splunk`, `opentelemetry-util-genai-emitters-traceloop`, `opentelemetry-util-genai-evals-deepeval`, `opentelemetry-util-genai-evals-nltk`
+`opentelemetry-util-genai-dev`, `opentelemetry-util-genai-emitters-splunk`, `opentelemetry-util-genai-emitters-traceloop`, `opentelemetry-util-genai-evals-deepeval`, `opentelemetry-util-genai-evals-nltk`, `opentelemetry-util-genai-traceloop-translator`
 
 ---
 
@@ -167,6 +167,22 @@ src/opentelemetry/util/genai/emitters/traceloop.py
   load_emitters() -> list[EmitterSpec]
 version.py
 ```
+
+---
+
+## Translator Package: `opentelemetry-util-genai-traceloop-translator`
+
+Purpose: Automatically translates Traceloop-instrumented spans into OpenTelemetry GenAI semantic conventions using a span processor approach.
+
+Key mappings:
+- `traceloop.workflow.name` → `gen_ai.workflow.name`
+- `traceloop.entity.name` → `gen_ai.agent.name` 
+- `traceloop.entity.path` → `gen_ai.workflow.path`
+- `traceloop.correlation.id` → `gen_ai.conversation.id`
+- `traceloop.entity.input` → `gen_ai.input.messages`
+- `traceloop.entity.output` → `gen_ai.output.messages`
+
+The translator automatically activates on import via the `opentelemetry_configurator` entry point and intercepts spans with `traceloop.*` attributes, creating corresponding spans with `gen_ai.*` attributes for seamless integration with GenAI observability tools.
 
 ---
 

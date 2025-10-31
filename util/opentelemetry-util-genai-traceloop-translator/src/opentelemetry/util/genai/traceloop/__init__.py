@@ -20,7 +20,7 @@ from typing import Any, Dict
 
 from opentelemetry import trace
 
-_ENV_DISABLE = "OTEL_GENAI_DISABLE_TRACELOOP_TRANSLATOR"
+_ENV_DISABLE = "OTEL_INSTRUMENTATION_GENAI_TRACELOOP_DISABLE"
 _LOGGER = logging.getLogger(__name__)
 
 # Default attribute transformation mappings (traceloop.* -> gen_ai.*)
@@ -71,10 +71,6 @@ def enable_traceloop_translator(
 
     Returns:
         True if the processor was registered, False if already registered or disabled.
-
-    Example:
-        >>> from opentelemetry.util.genai.traceloop import enable_traceloop_translator
-        >>> enable_traceloop_translator()
     """
     # Import here to avoid circular imports
     from ..processor.traceloop_span_processor import TraceloopSpanProcessor
@@ -116,6 +112,14 @@ def enable_traceloop_translator(
             _ENV_DISABLE,
         )
         return True
+    except (TypeError, ValueError) as config_err:
+        # Fail-fast
+        _LOGGER.error(
+            "Invalid configuration for TraceloopSpanProcessor: %s", 
+            config_err, 
+            exc_info=True
+        )
+        raise
     except Exception as exc:
         _LOGGER.warning(
             "Failed to register TraceloopSpanProcessor: %s", exc, exc_info=True
@@ -143,7 +147,6 @@ def _auto_enable() -> None:
         # Real provider exists - register immediately
         enable_traceloop_translator()
     else:
-        # ProxyTracerProvider or None - defer registration
         _LOGGER.debug(
             "TracerProvider not ready yet; deferring TraceloopSpanProcessor registration"
         )

@@ -339,17 +339,12 @@ class TelemetryHandler:
         except Exception:
             pass
 
-    def start_llm(
-        self,
-        invocation: LLMInvocation,
-        parent_context: Context | None = None,
-    ) -> LLMInvocation:
+    def start_llm(self, invocation: LLMInvocation) -> LLMInvocation:
         """Start an LLM invocation and create a pending span entry.
         
         Args:
-            invocation: The LLM invocation to start
-            parent_context: Optional parent context for the span. If provided, the new span
-                          will be a child of the span in this context.
+            invocation: The LLM invocation to start. If invocation.parent_context is set,
+                       the new span will be a child of the span in that context.
         """
         # Ensure capture content settings are current
         self._refresh_capture_content()
@@ -363,9 +358,6 @@ class TelemetryHandler:
                 invocation.agent_name = top_name
             if not invocation.agent_id:
                 invocation.agent_id = top_id
-        # Store parent context if provided for emitter to use
-        if parent_context is not None:
-            invocation.parent_context = parent_context  # type: ignore[attr-defined]
         # Start invocation span; tracer context propagation handles parent/child links
         self._emitter.on_start(invocation)
         # Register span if created

@@ -21,6 +21,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Type, Union
 from uuid import UUID, uuid4
 
+from opentelemetry.context import Context
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAIAttributes,
 )
@@ -67,6 +68,7 @@ class GenAI:
     Span and Context Management:
         - span: The OpenTelemetry span associated with this entity
         - span_context: The span context for distributed tracing
+        - parent_context: Optional parent context for span parenting
         - context_token: Token for managing span context lifecycle
         - trace_id, span_id, trace_flags: Raw trace/span identifiers
     
@@ -88,10 +90,6 @@ class GenAI:
         - conversation_id: Conversation/session identifier
         - data_source_id: Data source identifier for RAG scenarios
     
-    Behavior Control:
-        - mutate_original_span: Whether to modify the original span with transformations
-          (used by span processors like TraceloopSpanProcessor)
-    
     Custom Attributes:
         - attributes: Dictionary for custom/additional attributes not covered by fields
     """
@@ -99,6 +97,7 @@ class GenAI:
     context_token: Optional[ContextToken] = None
     span: Optional[Span] = None
     span_context: Optional[SpanContext] = None
+    parent_context: Optional[Context] = None
     trace_id: Optional[int] = None
     span_id: Optional[int] = None
     trace_flags: Optional[int] = None
@@ -131,14 +130,6 @@ class GenAI:
     data_source_id: Optional[str] = field(
         default=None,
         metadata={"semconv": GenAIAttributes.GEN_AI_DATA_SOURCE_ID},
-    )
-    mutate_original_span: bool = field(
-        default=True,
-        metadata={
-            "description": "Whether to mutate the original span with transformed attributes. "
-            "When True, the original span will be modified with renamed/transformed attributes. "
-            "When False, only new spans will be created with the transformations."
-        },
     )
 
     def semantic_convention_attributes(self) -> dict[str, Any]:

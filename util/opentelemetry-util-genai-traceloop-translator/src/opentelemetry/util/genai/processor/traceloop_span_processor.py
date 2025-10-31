@@ -32,9 +32,8 @@ from opentelemetry.util.genai.handler import (
     get_telemetry_handler,
     TelemetryHandler,
 )
-from opentelemetry.util.genai.emitters.content_normalizer import (
-    normalize_traceloop_content,
-)
+
+from .content_normalizer import normalize_traceloop_content
 
 _ENV_RULES = "OTEL_GENAI_SPAN_TRANSFORM_RULES"
 
@@ -180,9 +179,6 @@ class TraceloopSpanProcessor(SpanProcessor):
         self._processed_span_ids = set()
         # Mapping from original span_id to translated INVOCATION (not span) for parent-child relationship preservation
         self._original_to_translated_invocation: Dict[int, Any] = {}
-        # Buffer spans to process them in the correct order (parents before children)
-        self._span_buffer: List[ReadableSpan] = []
-        self._processing_buffer = False
 
     def _default_span_filter(self, span: ReadableSpan) -> bool:
         """Default filter: Transform spans that look like LLM/AI calls.
@@ -340,7 +336,8 @@ class TraceloopSpanProcessor(SpanProcessor):
                 getattr(span, "context", None), "span_id", None
             )
 
-            handler.start_llm(invocation, parent_context=parent_context)
+            invocation.parent_context = parent_context
+            handler.start_llm(invocation)
             # Set the sentinel attribute immediately on the new span to prevent recursion
             if invocation.span and invocation.span.is_recording():
                 invocation.span.set_attribute("_traceloop_processed", True)
@@ -359,92 +356,32 @@ class TraceloopSpanProcessor(SpanProcessor):
 
     def on_end(self, span: ReadableSpan) -> None:
         """
-        Called when a span is ended. Mutate immediately, then buffer for synthetic span creation.
+        Called when a span is ended. Mutate immediately, then process span translation.
         """
         try:
             # FIRST: Mutate the original span immediately (before other processors/exporters see it)
             # This ensures mutations happen before exporters capture the span
             self._mutate_span_if_needed(span)
             
-            # THEN: Add span to buffer for synthetic span creation
-            self._span_buffer.append(span)
-
-            # Check if this is a root span (no parent) - if so, process the entire buffer
-            if span.parent is None and not self._processing_buffer:
-                self._processing_buffer = True
+            # THEN: Process span translation immediately for real-time telemetry
+            # This ensures evaluations and other downstream processes work correctly
+            result_invocation = self._process_span_translation(span)
+            
+            # Close the invocation immediately if one was created
+            if result_invocation:
+                handler = self.telemetry_handler or get_telemetry_handler()
                 try:
-                    # Sort buffer so parents are processed before children
-                    # We'll build a dependency graph and process in topological order
-                    spans_to_process = self._sort_spans_by_hierarchy(
-                        self._span_buffer
+                    handler.stop_llm(result_invocation)
+                except Exception as stop_err:
+                    logging.getLogger(__name__).warning(
+                        "Failed to stop invocation: %s", stop_err
                     )
-
-                    # Process each span in order (creates spans but doesn't close them yet)
-                    invocations_to_close = []
-                    for buffered_span in spans_to_process:
-                        result_invocation = self._process_span_translation(
-                            buffered_span
-                        )
-                        if result_invocation:
-                            invocations_to_close.append(result_invocation)
-
-                    # Now close all invocations in reverse order (children first, parents last)
-                    handler = self.telemetry_handler or get_telemetry_handler()
-                    for invocation in reversed(invocations_to_close):
-                        try:
-                            handler.stop_llm(invocation)
-                        except Exception as stop_err:
-                            logging.getLogger(__name__).warning(
-                                "Failed to stop invocation: %s", stop_err
-                            )
-
-                    # Clear the buffer and mapping
-                    self._span_buffer.clear()
-                    self._original_to_translated_invocation.clear()
-                finally:
-                    self._processing_buffer = False
 
         except Exception as e:
             # Don't let transformation errors break the original span processing
             logging.warning(
                 f"TraceloopSpanProcessor failed to transform span: {e}"
             )
-
-    def _sort_spans_by_hierarchy(
-        self, spans: List[ReadableSpan]
-    ) -> List[ReadableSpan]:
-        """Sort spans so parents come before children."""
-        # Build a map of span_id to span
-        span_map = {}
-        for s in spans:
-            span_id = getattr(getattr(s, "context", None), "span_id", None)
-            if span_id:
-                span_map[span_id] = s
-
-        # Build dependency graph: child -> parent
-        result = []
-        visited = set()
-
-        def visit(span: ReadableSpan) -> None:
-            span_id = getattr(getattr(span, "context", None), "span_id", None)
-            if not span_id or span_id in visited:
-                return
-
-            # Visit parent first
-            if span.parent:
-                parent_id = getattr(span.parent, "span_id", None)
-                if parent_id and parent_id in span_map:
-                    visit(span_map[parent_id])
-
-            # Then add this span
-            visited.add(span_id)
-            result.append(span)
-
-        # Visit all spans
-        for span in spans:
-            visit(span)
-
-        return result
 
     def shutdown(self) -> None:
         """Called when the tracer provider is shutdown."""

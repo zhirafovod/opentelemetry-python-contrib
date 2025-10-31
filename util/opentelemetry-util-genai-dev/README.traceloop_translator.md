@@ -2,7 +2,7 @@
 
 This optional emitter promotes legacy `traceloop.*` attributes attached to an `LLMInvocation` into
 Semantic Convention (or forward-looking custom `gen_ai.*`) attributes **before** the standard
-Semantic Convention span emitter runs. It does **not** create its own span.
+Semantic Convention span emitter runs. 
 
 ## Why Use It?
 If you have upstream code (or the Traceloop compat emitter) producing `traceloop.*` keys but you
