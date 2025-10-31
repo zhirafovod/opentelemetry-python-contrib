@@ -1,4 +1,4 @@
-#!/usr/bin/env python3                                
+#!/usr/bin/env python3
 
 from __future__ import annotations
 
@@ -31,7 +31,12 @@ client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 def translate_joke_to_pirate(joke: str):
     completion = client.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": f"Translate the below joke to pirate-like english:\n\n{joke}"}],
+        messages=[
+            {
+                "role": "user",
+                "content": f"Translate the below joke to pirate-like english:\n\n{joke}",
+            }
+        ],
     )
 
     history_jokes_tool()
@@ -47,6 +52,7 @@ def history_jokes_tool():
     )
 
     return completion.choices[0].message.content
+
 
 @task(name="joke_creation")
 def create_joke():

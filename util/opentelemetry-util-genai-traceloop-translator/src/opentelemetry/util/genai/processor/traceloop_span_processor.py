@@ -247,7 +247,7 @@ class TraceloopSpanProcessor(SpanProcessor):
         Returns the invocation object if a translation was created, None otherwise.
         """
         logger = logging.getLogger(__name__)
-        
+
         # Skip spans we already produced (recursion guard) - check FIRST before span_filter
         if span.attributes and "_traceloop_processed" in span.attributes:
             return None
@@ -256,10 +256,14 @@ class TraceloopSpanProcessor(SpanProcessor):
         if not self.span_filter(span):
             logger.debug("Span %s filtered out by span_filter", span.name)
             return None
-        
-        logger.debug("Processing span for transformation: %s (kind=%s)", 
-                    span.name, 
-                    span.attributes.get("traceloop.span.kind") if span.attributes else None)
+
+        logger.debug(
+            "Processing span for transformation: %s (kind=%s)",
+            span.name,
+            span.attributes.get("traceloop.span.kind")
+            if span.attributes
+            else None,
+        )
 
         # avoid emitting multiple synthetic spans if on_end invoked repeatedly.
         span_id_int = getattr(getattr(span, "context", None), "span_id", None)
@@ -331,7 +335,6 @@ class TraceloopSpanProcessor(SpanProcessor):
                             translated_parent_span
                         )
 
-            # Store mapping BEFORE starting the span so children can find it
             original_span_id = getattr(
                 getattr(span, "context", None), "span_id", None
             )
@@ -341,12 +344,11 @@ class TraceloopSpanProcessor(SpanProcessor):
             # Set the sentinel attribute immediately on the new span to prevent recursion
             if invocation.span and invocation.span.is_recording():
                 invocation.span.set_attribute("_traceloop_processed", True)
-                # Store the mapping from original span_id to translated INVOCATION (we'll close it later)
+                # Store the mapping from original span_id to translated INVOCATION
                 if original_span_id:
                     self._original_to_translated_invocation[
                         original_span_id
                     ] = invocation
-            # DON'T call stop_llm yet - we'll do that after processing all children
             return invocation
         except Exception as emit_err:  # pragma: no cover - defensive
             logging.getLogger(__name__).warning(
@@ -362,11 +364,11 @@ class TraceloopSpanProcessor(SpanProcessor):
             # FIRST: Mutate the original span immediately (before other processors/exporters see it)
             # This ensures mutations happen before exporters capture the span
             self._mutate_span_if_needed(span)
-            
+
             # THEN: Process span translation immediately for real-time telemetry
             # This ensures evaluations and other downstream processes work correctly
             result_invocation = self._process_span_translation(span)
-            
+
             # Close the invocation immediately if one was created
             if result_invocation:
                 handler = self.telemetry_handler or get_telemetry_handler()
@@ -391,22 +393,19 @@ class TraceloopSpanProcessor(SpanProcessor):
         """Force flush any buffered spans."""
         return True
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
     def _mutate_span_if_needed(self, span: ReadableSpan) -> None:
         """Mutate the original span's attributes and name if configured to do so.
-        
+
         This should be called early in on_end() before other processors see the span.
         """
         # Check if this span should be transformed
         if not self.span_filter(span):
             return
-            
+
         # Skip if already processed
         if span.attributes and "_traceloop_processed" in span.attributes:
             return
-        
+
         # Determine which transformation set to use
         applied_rule: Optional[TransformationRule] = None
         for rule in self.rules:
@@ -433,7 +432,9 @@ class TraceloopSpanProcessor(SpanProcessor):
         if should_mutate and attr_tx:
             try:
                 if hasattr(span, "_attributes"):
-                    original = dict(span._attributes) if span._attributes else {}  # type: ignore[attr-defined]
+                    original = (
+                        dict(span._attributes) if span._attributes else {}
+                    )  # type: ignore[attr-defined]
                     mutated = self._apply_attribute_transformations(
                         original.copy(), attr_tx
                     )
@@ -450,7 +451,8 @@ class TraceloopSpanProcessor(SpanProcessor):
                     )
                 else:
                     logging.getLogger(__name__).warning(
-                        "Span %s does not have _attributes; mutation skipped", span.name
+                        "Span %s does not have _attributes; mutation skipped",
+                        span.name,
                     )
             except Exception as mut_err:
                 logging.getLogger(__name__).debug(

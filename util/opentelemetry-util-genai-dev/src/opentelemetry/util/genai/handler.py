@@ -341,7 +341,7 @@ class TelemetryHandler:
 
     def start_llm(self, invocation: LLMInvocation) -> LLMInvocation:
         """Start an LLM invocation and create a pending span entry.
-        
+
         Args:
             invocation: The LLM invocation to start. If invocation.parent_context is set,
                        the new span will be a child of the span in that context.

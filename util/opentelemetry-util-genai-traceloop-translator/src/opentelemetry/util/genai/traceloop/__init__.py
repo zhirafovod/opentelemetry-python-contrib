@@ -115,9 +115,9 @@ def enable_traceloop_translator(
     except (TypeError, ValueError) as config_err:
         # Fail-fast
         _LOGGER.error(
-            "Invalid configuration for TraceloopSpanProcessor: %s", 
-            config_err, 
-            exc_info=True
+            "Invalid configuration for TraceloopSpanProcessor: %s",
+            config_err,
+            exc_info=True,
         )
         raise
     except Exception as exc:

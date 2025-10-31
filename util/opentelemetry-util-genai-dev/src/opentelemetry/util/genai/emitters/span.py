@@ -318,7 +318,9 @@ class SpanEmitter(EmitterMeta):
             self._start_embedding(invocation)
         else:
             # Check for span name override first (for Traceloop task/workflow spans)
-            span_name_override = invocation.attributes.get("gen_ai.override.span_name")
+            span_name_override = invocation.attributes.get(
+                "gen_ai.override.span_name"
+            )
             if span_name_override:
                 span_name = str(span_name_override)
             else:
@@ -326,7 +328,7 @@ class SpanEmitter(EmitterMeta):
                 operation = getattr(invocation, "operation", "chat")
                 model_name = invocation.request_model
                 span_name = f"{operation} {model_name}"
-            
+
             # Check for parent context (from TraceloopSpanProcessor) or parent span
             parent_ctx = getattr(invocation, "parent_context", None)
             if parent_ctx is None:
