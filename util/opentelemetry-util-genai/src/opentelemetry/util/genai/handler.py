@@ -64,6 +64,7 @@ from contextlib import contextmanager
 from typing import Iterator, Optional
 
 from opentelemetry import context as otel_context
+from opentelemetry._logs import Logger, LoggerProvider, get_logger
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAI,
 )
@@ -77,6 +78,7 @@ from opentelemetry.trace import (
 from opentelemetry.util.genai.span_utils import (
     _apply_error_attributes,
     _apply_finish_attributes,
+    _emit_content_event,
 )
 from opentelemetry.util.genai.types import Error, LLMInvocation
 from opentelemetry.util.genai.version import __version__
@@ -88,12 +90,22 @@ class TelemetryHandler:
     them as spans, metrics, and events.
     """
 
-    def __init__(self, tracer_provider: TracerProvider | None = None):
+    def __init__(
+        self,
+        tracer_provider: TracerProvider | None = None,
+        logger_provider: LoggerProvider | None = None,
+    ):
         self._tracer = get_tracer(
             __name__,
             __version__,
             tracer_provider,
-            schema_url=Schemas.V1_36_0.value,
+            schema_url=Schemas.V1_37_0.value,
+        )
+        self._logger: Logger = get_logger(
+            __name__,
+            __version__,
+            logger_provider=logger_provider,
+            schema_url=Schemas.V1_37_0.value,
         )
 
     def start_llm(
@@ -119,6 +131,7 @@ class TelemetryHandler:
             return invocation
 
         _apply_finish_attributes(invocation.span, invocation)
+        _emit_content_event(self._logger, invocation)
         # Detach context and end span
         otel_context.detach(invocation.context_token)
         invocation.span.end()
@@ -133,6 +146,7 @@ class TelemetryHandler:
             return invocation
 
         _apply_error_attributes(invocation.span, error)
+        _emit_content_event(self._logger, invocation)
         # Detach context and end span
         otel_context.detach(invocation.context_token)
         invocation.span.end()
@@ -165,6 +179,7 @@ class TelemetryHandler:
 
 def get_telemetry_handler(
     tracer_provider: TracerProvider | None = None,
+    logger_provider: LoggerProvider | None = None,
 ) -> TelemetryHandler:
     """
     Returns a singleton TelemetryHandler instance.
@@ -173,6 +188,9 @@ def get_telemetry_handler(
         get_telemetry_handler, "_default_handler", None
     )
     if handler is None:
-        handler = TelemetryHandler(tracer_provider=tracer_provider)
+        handler = TelemetryHandler(
+            tracer_provider=tracer_provider,
+            logger_provider=logger_provider,
+        )
         setattr(get_telemetry_handler, "_default_handler", handler)
     return handler
