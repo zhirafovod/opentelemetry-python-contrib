@@ -21,6 +21,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Type, Union
 from uuid import UUID, uuid4
 
+from opentelemetry.context import Context
 from opentelemetry.semconv._incubating.attributes import (
     gen_ai_attributes as GenAIAttributes,
 )
@@ -59,11 +60,44 @@ def _new_str_any_dict() -> dict[str, Any]:
 
 @dataclass(kw_only=True)
 class GenAI:
-    """Base type for all GenAI telemetry entities."""
+    """Base type for all GenAI telemetry entities.
+
+    All GenAI types (LLMInvocation, EmbeddingInvocation, AgentCreation, AgentInvocation,
+    Workflow, Step, ToolCall, etc.) inherit from this base class and have access to:
+
+    Span and Context Management:
+        - span: The OpenTelemetry span associated with this entity
+        - span_context: The span context for distributed tracing
+        - parent_context: Optional parent context for span parenting
+        - context_token: Token for managing span context lifecycle
+        - trace_id, span_id, trace_flags: Raw trace/span identifiers
+
+    Timing:
+        - start_time: When the operation started (auto-generated)
+        - end_time: When the operation completed
+
+    Identification:
+        - run_id: Unique identifier for this execution (auto-generated UUID)
+        - parent_run_id: Optional parent execution identifier for hierarchies
+
+    Provider and Framework:
+        - provider: AI provider (e.g., "openai", "anthropic", "cohere")
+        - framework: Framework used (e.g., "langchain", "llamaindex")
+        - system: AI system identifier (semantic convention attribute)
+
+    Agent and Conversation Context:
+        - agent_name, agent_id: Agent identification
+        - conversation_id: Conversation/session identifier
+        - data_source_id: Data source identifier for RAG scenarios
+
+    Custom Attributes:
+        - attributes: Dictionary for custom/additional attributes not covered by fields
+    """
 
     context_token: Optional[ContextToken] = None
     span: Optional[Span] = None
     span_context: Optional[SpanContext] = None
+    parent_context: Optional[Context] = None
     trace_id: Optional[int] = None
     span_id: Optional[int] = None
     trace_flags: Optional[int] = None

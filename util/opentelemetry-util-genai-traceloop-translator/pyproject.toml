@@ -28,11 +28,11 @@ dependencies = [
   "opentelemetry-instrumentation ~= 0.52b1",
   "opentelemetry-semantic-conventions ~= 0.52b1",
   "opentelemetry-api>=1.31.0",
+  "opentelemetry-sdk>=1.31.0",
   "opentelemetry-util-genai",  # depends on base utilities & handler
 ]
 
-[project.entry-points."opentelemetry_util_genai_emitters"]
-traceloop_translator = "opentelemetry.util.genai.emitters.traceloop_translator:traceloop_translator_emitters"
+[project.entry-points.opentelemetry_configurator]
 
 [project.optional-dependencies]
 test = ["pytest>=7.0.0"]
@@ -52,3 +52,9 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/opentelemetry"]
+include = [
+  "src/opentelemetry_util_genai_traceloop_translator.pth",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/opentelemetry_util_genai_traceloop_translator.pth" = "opentelemetry_util_genai_traceloop_translator.pth"

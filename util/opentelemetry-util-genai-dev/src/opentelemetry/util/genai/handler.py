@@ -69,6 +69,7 @@ from opentelemetry import _events as _otel_events
 from opentelemetry import _logs
 from opentelemetry import metrics as _metrics
 from opentelemetry import trace as _trace_mod
+from opentelemetry.context import Context
 from opentelemetry.semconv.schemas import Schemas
 from opentelemetry.trace import get_tracer
 from opentelemetry.util.genai.emitters.configuration import (
@@ -338,11 +339,13 @@ class TelemetryHandler:
         except Exception:
             pass
 
-    def start_llm(
-        self,
-        invocation: LLMInvocation,
-    ) -> LLMInvocation:
-        """Start an LLM invocation and create a pending span entry."""
+    def start_llm(self, invocation: LLMInvocation) -> LLMInvocation:
+        """Start an LLM invocation and create a pending span entry.
+
+        Args:
+            invocation: The LLM invocation to start. If invocation.parent_context is set,
+                       the new span will be a child of the span in that context.
+        """
         # Ensure capture content settings are current
         self._refresh_capture_content()
         genai_debug_log("handler.start_llm.begin", invocation)
