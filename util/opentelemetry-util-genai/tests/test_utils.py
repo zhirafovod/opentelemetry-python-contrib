@@ -22,6 +22,11 @@ from opentelemetry.instrumentation._semconv import (
     OTEL_SEMCONV_STABILITY_OPT_IN,
     _OpenTelemetrySemanticConventionStability,
 )
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import (
+    InMemoryLogExporter,
+    SimpleLogRecordProcessor,
+)
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -37,6 +42,7 @@ from opentelemetry.util.genai.environment_variables import (
 from opentelemetry.util.genai.handler import get_telemetry_handler
 from opentelemetry.util.genai.types import (
     ContentCapturingMode,
+    Error,
     InputMessage,
     LLMInvocation,
     OutputMessage,
@@ -108,13 +114,22 @@ class TestTelemetryHandler(unittest.TestCase):
         tracer_provider.add_span_processor(
             SimpleSpanProcessor(self.span_exporter)
         )
+
+        self.log_exporter = InMemoryLogExporter()
+        self.logger_provider = LoggerProvider()
+        self.logger_provider.add_log_record_processor(
+            SimpleLogRecordProcessor(self.log_exporter)
+        )
         self.telemetry_handler = get_telemetry_handler(
-            tracer_provider=tracer_provider
+            tracer_provider=tracer_provider,
+            logger_provider=self.logger_provider,
         )
 
     def tearDown(self):
         # Clear spans and reset the singleton telemetry handler so each test starts clean
         self.span_exporter.clear()
+        self.log_exporter.clear()
+        self.logger_provider.shutdown()
         if hasattr(get_telemetry_handler, "_default_handler"):
             delattr(get_telemetry_handler, "_default_handler")
 
@@ -256,6 +271,100 @@ class TestTelemetryHandler(unittest.TestCase):
         assert child_span.parent.span_id == parent_span.context.span_id
         # Parent should not have a parent (root)
         assert parent_span.parent is None
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="SPAN_AND_EVENT",
+    )
+    def test_llm_stop_emits_event_when_events_enabled(self):
+        message = InputMessage(
+            role="Human", parts=[Text(content="hello world")]
+        )
+        chat_generation = OutputMessage(
+            role="AI", parts=[Text(content="hello back")], finish_reason="stop"
+        )
+
+        with self.telemetry_handler.llm() as invocation:
+            invocation.request_model = "event-model"
+            invocation.input_messages = [message]
+            invocation.provider = "test-provider"
+            invocation.attributes = {"custom_attr": "value"}
+            invocation.output_messages = [chat_generation]
+
+        logs = self.log_exporter.get_finished_logs()
+        assert len(logs) == 1
+        log_record = logs[0].log_record
+        assert (
+            log_record.event_name
+            == "gen_ai.client.inference.operation.details"
+        )
+
+        event_attributes = log_record.attributes
+        assert event_attributes.get("gen_ai.operation.name") == "chat"
+        assert event_attributes.get("gen_ai.request.model") == "event-model"
+        assert event_attributes.get("gen_ai.provider.name") == "test-provider"
+        assert event_attributes.get("custom_attr") == "value"
+
+        body = log_record.body
+        assert body is not None
+        assert "input_messages" in body
+        assert "output_messages" in body
+
+        inputs = json.loads(body["input_messages"])
+        outputs = json.loads(body["output_messages"])
+        assert len(inputs) == 1
+        assert len(outputs) == 1
+        assert inputs[0].get("role") == "Human"
+        assert outputs[0].get("role") == "AI"
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="SPAN_ONLY",
+    )
+    def test_llm_stop_does_not_emit_event_when_events_disabled(self):
+        message = InputMessage(role="Human", parts=[Text(content="hi")])
+
+        with self.telemetry_handler.llm() as invocation:
+            invocation.request_model = "no-event-model"
+            invocation.input_messages = [message]
+            invocation.output_messages = []
+
+        logs = self.log_exporter.get_finished_logs()
+        assert len(logs) == 0
+
+    @patch_env_vars(
+        stability_mode="gen_ai_latest_experimental",
+        content_capturing="EVENT_ONLY",
+    )
+    def test_llm_fail_emits_event_when_events_enabled(self):
+        class BoomError(RuntimeError):
+            pass
+
+        message = InputMessage(role="user", parts=[Text(content="hi")])
+        invocation = LLMInvocation(
+            request_model="fail-event-model",
+            input_messages=[message],
+            provider="provider-x",
+            attributes={"custom_attr": "value"},
+        )
+
+        self.telemetry_handler.start_llm(invocation)
+        self.telemetry_handler.fail_llm(
+            invocation, Error(message="boom", type=BoomError)
+        )
+
+        logs = self.log_exporter.get_finished_logs()
+        assert len(logs) == 1
+        log_record = logs[0].log_record
+        assert (
+            log_record.event_name
+            == "gen_ai.client.inference.operation.details"
+        )
+        event_attributes = log_record.attributes
+        assert (
+            event_attributes.get("gen_ai.request.model") == "fail-event-model"
+        )
+        assert event_attributes.get("gen_ai.provider.name") == "provider-x"
 
     def test_llm_context_manager_error_path_records_error_status_and_attrs(
         self,
